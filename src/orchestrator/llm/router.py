@@ -17,8 +17,10 @@ This module contains zero LLM calls. Routing is decision-path code.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
+from orchestrator.llm.exceptions import NoSuitableModelError
 from orchestrator.llm.protocol import LLMProvider
 from orchestrator.llm.types import (
     AgentLLMConfig,
@@ -77,13 +79,13 @@ class ModelRegistry:
     """
 
     def __init__(self, profiles: dict[ModelId, ModelProfile]) -> None:
-        self._profiles = profiles
+        self._profiles = dict(profiles)
 
     def get(self, model_id: ModelId) -> ModelProfile | None:
-        raise NotImplementedError
+        return self._profiles.get(model_id)
 
     def all(self) -> list[ModelProfile]:
-        raise NotImplementedError
+        return list(self._profiles.values())
 
 
 class ProviderRegistry:
@@ -95,13 +97,13 @@ class ProviderRegistry:
     """
 
     def __init__(self, providers: dict[ProviderId, LLMProvider]) -> None:
-        self._providers = providers
+        self._providers = dict(providers)
 
     def get(self, provider_id: ProviderId) -> LLMProvider | None:
-        raise NotImplementedError
+        return self._providers.get(provider_id)
 
     def all(self) -> list[LLMProvider]:
-        raise NotImplementedError
+        return list(self._providers.values())
 
 
 async def select_model_and_provider(
@@ -158,4 +160,87 @@ async def select_model_and_provider(
             ``decision_trace`` attached to the exception explains
             each rejection in order.
     """
-    raise NotImplementedError
+    candidates: list[RouteCandidate] = []
+    chain: list[ModelId] = [
+        agent_config.default_model,
+        *agent_config.fallback_chain,
+    ]
+
+    for model_id in chain:
+        profile = models.get(model_id)
+        if profile is None:
+            candidates.append(
+                RouteCandidate(
+                    model_id=model_id,
+                    provider_id=None,
+                    accepted=False,
+                    reason="model not in registry",
+                )
+            )
+            continue
+
+        missing = set(agent_config.required_capabilities) - set(profile.capabilities)
+        if missing:
+            candidates.append(
+                RouteCandidate(
+                    model_id=model_id,
+                    provider_id=profile.provider,
+                    accepted=False,
+                    reason=f"missing capability: {sorted(c.value for c in missing)}",
+                )
+            )
+            continue
+
+        provider = providers.get(profile.provider)
+        if provider is None:
+            candidates.append(
+                RouteCandidate(
+                    model_id=model_id,
+                    provider_id=profile.provider,
+                    accepted=False,
+                    reason="provider not in registry",
+                )
+            )
+            continue
+
+        if request.tools and not provider.can_use_orchestrator_tools():
+            candidates.append(
+                RouteCandidate(
+                    model_id=model_id,
+                    provider_id=profile.provider,
+                    accepted=False,
+                    reason="provider cannot use orchestrator tools",
+                )
+            )
+            continue
+
+        if not provider.health_check():
+            candidates.append(
+                RouteCandidate(
+                    model_id=model_id,
+                    provider_id=profile.provider,
+                    accepted=False,
+                    reason="provider health_check returned False",
+                )
+            )
+            continue
+
+        candidates.append(
+            RouteCandidate(
+                model_id=model_id,
+                provider_id=profile.provider,
+                accepted=True,
+                reason="matched",
+            )
+        )
+        return RouteResult(
+            model=profile,
+            provider=provider,
+            model_id_requested=agent_config.default_model,
+            decision_trace=tuple(candidates),
+        )
+
+    raise NoSuitableModelError(
+        f"no suitable model in chain {chain}",
+        decision_trace=[dataclasses.asdict(c) for c in candidates],
+    )

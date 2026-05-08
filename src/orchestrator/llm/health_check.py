@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from orchestrator.core.event import TimestampMs
+from orchestrator.core.event import TimestampMs, now_ms
 from orchestrator.llm.router import ProviderRegistry
 from orchestrator.llm.types import ProviderId
 
@@ -41,8 +41,24 @@ def check_all_providers(
     DeepSeek key is fatal if any agent requires DeepSeek; a missing
     Ollama is only fatal if Ollama is in someone's fallback chain).
 
-    Implementation (commit 2) will use
-    :func:`orchestrator.core.event.now_ms` for ``checked_at_ms`` so
-    all timestamps in the system come from one source.
+    Uses :func:`orchestrator.core.event.now_ms` for ``checked_at_ms``
+    so all timestamps in the system come from one source.
     """
-    raise NotImplementedError
+    timestamp = now_ms()
+    results: list[ProviderHealth] = []
+    for provider in registry.all():
+        try:
+            healthy = provider.health_check()
+            error: str | None = None
+        except Exception as e:
+            healthy = False
+            error = f"{type(e).__name__}: {e}"
+        results.append(
+            ProviderHealth(
+                provider_id=provider.provider_id,
+                healthy=healthy,
+                error=error,
+                checked_at_ms=timestamp,
+            )
+        )
+    return results

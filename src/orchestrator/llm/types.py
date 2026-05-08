@@ -26,10 +26,12 @@ from orchestrator.llm.purposes import LLMPurpose
 # ---------------------------------------------------------------------------
 
 ModelId = NewType("ModelId", str)
-"""A model id from llm_models.yaml, e.g. ``claude_code_sonnet_46``."""
+"""A model id from llm_models.yaml — the keys of the ``models:`` map.
+Specific values live in yaml, never in source."""
 
 ProviderId = NewType("ProviderId", str)
-"""A provider id from llm_providers.yaml, e.g. ``deepseek``."""
+"""A provider id from llm_providers.yaml — the keys of the
+``providers:`` map. Specific values live in yaml, never in source."""
 
 RequestId = NewType("RequestId", str)
 """Per-call uuid for trace correlation across event log entries."""
@@ -81,7 +83,8 @@ class Capability(StrEnum):
 
     EFFORT = "effort"
     """The model honors ``LLMRequest.effort_level``. Currently true
-    only for Claude Code routing (Opus 4.7 / Sonnet 4.6)."""
+    only for Claude Code CLI routing — ADR-002 explains why effort
+    is a model-profile property, not an agent one."""
 
     VISION = "vision"
     """Future — accepts image content blocks."""
@@ -269,9 +272,9 @@ class ModelProfile(BaseModel):
     load time."""
 
     provider_model_id: str = Field(min_length=1)
-    """Provider-specific id. For openai_compatible, the API model name
-    (e.g., ``deepseek-v4-flash``). For claude_code_cli, the CLI's
-    model arg (e.g., ``claude-opus-4-7``)."""
+    """Provider-specific id. For openai_compatible, the API model
+    name the backend expects. For claude_code_cli, the value passed
+    to the CLI's ``--model`` argument."""
 
     capabilities: list[Capability] = Field(default_factory=list)
 

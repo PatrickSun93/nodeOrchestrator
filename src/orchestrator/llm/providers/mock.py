@@ -30,6 +30,7 @@ from orchestrator.llm.types import (
     LLMResponse,
     ModelProfile,
     ProviderId,
+    Usage,
 )
 
 MockKey = tuple[LLMPurpose, str | None]
@@ -85,9 +86,56 @@ class MockProvider:
         2. ``(request.purpose, None)`` purpose-only fallback.
         3. Raise ``MockResponseExhaustedError``.
 
-        Round-robin cursor is per matched key.
+        Round-robin cursor is per matched key — once exact match is
+        chosen, cursor advances on that key, never falling through to
+        the fallback. Per-agent stories don't bleed into each other.
+
+        Exhausting the list raises ``MockResponseExhaustedError`` —
+        registered list length is the test's stated expectation, so
+        going past it indicates a test that hasn't fully thought
+        through the call sequence.
         """
-        raise NotImplementedError
+        self._calls.append(request)
+
+        exact = (request.purpose, request.caller_agent_id)
+        fallback = (request.purpose, None)
+
+        matched_key: MockKey | None = None
+        if exact in self.responses:
+            matched_key = exact
+        elif fallback in self.responses:
+            matched_key = fallback
+
+        if matched_key is None:
+            raise MockResponseExhaustedError(
+                f"no canned responses registered for "
+                f"purpose={request.purpose.value!r} "
+                f"caller_agent_id={request.caller_agent_id!r}"
+            )
+
+        response_list = self.responses[matched_key]
+        cursor = self._cursors[matched_key]
+        if cursor >= len(response_list):
+            raise MockResponseExhaustedError(
+                f"canned responses exhausted for matched_key={matched_key}: "
+                f"{len(response_list)} response(s) registered, "
+                f"this would be call #{cursor + 1}"
+            )
+
+        content = response_list[cursor]
+        self._cursors[matched_key] = cursor + 1
+
+        return LLMResponse(
+            request_id=request.request_id,
+            content=content,
+            tool_calls=[],
+            model_id_requested=model.id,
+            model_id_used=model.id,
+            provider_id_used=self.provider_id,
+            usage=Usage(input_tokens=0, output_tokens=0),
+            latency_ms=0,
+            finish_reason="stop",
+        )
 
     @property
     def calls(self) -> list[LLMRequest]:

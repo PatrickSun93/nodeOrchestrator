@@ -1,0 +1,35 @@
+{
+  "name": "sample_prober_clarifying_question",
+  "request_hash": "sha256:placeholder_will_be_recomputed_from_request",
+  "request": {
+    "request_id": "llmreq_sample_001",
+    "purpose": "agent_response",
+    "messages": [
+      {"role": "user", "content": "How do I structure module X?", "tool_call_id": null}
+    ],
+    "system": "You are the prober. Ask a clarifying question, do not propose a solution.",
+    "tools": [],
+    "temperature": 0.5,
+    "max_tokens": null,
+    "effort_level": null,
+    "caller_agent_id": "agent:prober",
+    "extra_params": {}
+  },
+  "response": {
+    "request_id": "llmreq_sample_001",
+    "content": "What constraints already exist on X — any code that depends on its current shape, or any planned consumers?",
+    "tool_calls": [],
+    "model_id_requested": "claude_code_sonnet_46",
+    "model_id_used": "claude_code_sonnet_46",
+    "provider_id_used": "anthropic_via_claude_code",
+    "usage": {
+      "input_tokens": 47,
+      "output_tokens": 28,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "cost_usd": null
+    },
+    "latency_ms": 2340,
+    "finish_reason": "stop"
+  }
+}

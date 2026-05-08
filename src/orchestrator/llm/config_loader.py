@@ -32,12 +32,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import yaml
+from pydantic import ValidationError
+
+from orchestrator.llm.exceptions import ConfigError
+from orchestrator.llm.protocol import LLMProvider
 from orchestrator.llm.providers.claude_code_cli import ClaudeCodeCliProvider
 from orchestrator.llm.providers.mock import MockProvider
 from orchestrator.llm.providers.openai_compatible import OpenAICompatibleProvider
 from orchestrator.llm.router import ModelRegistry, ProviderRegistry
 from orchestrator.llm.types import (
     AgentLLMConfig,
+    Capability,
+    ModelId,
+    ModelProfile,
+    ProviderId,
     ProviderType,
 )
 
@@ -61,6 +70,19 @@ and the registry only ever instantiates these classes through one
 code path (``load_providers``)."""
 
 
+def _read_yaml(path: Path) -> dict[str, Any]:
+    """Read a yaml file; raise ConfigError on missing file or non-dict root."""
+    if not path.exists():
+        raise ConfigError(f"yaml file does not exist: {path}")
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ConfigError(f"yaml parse error in {path}: {e}") from e
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path}: top-level must be a mapping, got {type(raw).__name__}")
+    return raw
+
+
 def load_providers(path: Path) -> ProviderRegistry:
     """Parse ``llm_providers.yaml``, instantiate provider classes per
     ``type``, return a registry.
@@ -69,19 +91,106 @@ def load_providers(path: Path) -> ProviderRegistry:
         ConfigError: malformed yaml, missing fields, unknown
             ``ProviderType``, or instantiation error.
     """
-    raise NotImplementedError
+    raw = _read_yaml(path)
+    entries = raw.get("providers")
+    if not isinstance(entries, dict):
+        raise ConfigError(f"{path}: missing or non-dict 'providers' top-level key")
+
+    instances: dict[ProviderId, LLMProvider] = {}
+    violations: list[str] = []
+
+    for pid_str, entry in entries.items():
+        if not isinstance(entry, dict):
+            violations.append(
+                f"provider {pid_str!r}: entry must be a mapping, got {type(entry).__name__}"
+            )
+            continue
+        type_str = entry.get("type")
+        if not isinstance(type_str, str):
+            violations.append(f"provider {pid_str!r}: missing or non-string 'type'")
+            continue
+        try:
+            ptype = ProviderType(type_str)
+        except ValueError:
+            violations.append(
+                f"provider {pid_str!r}: unknown type {type_str!r} "
+                f"(known: {[t.value for t in ProviderType]})"
+            )
+            continue
+
+        cls = PROVIDER_TYPE_REGISTRY.get(ptype)
+        if cls is None:
+            violations.append(f"provider {pid_str!r}: type {type_str!r} has no registered class")
+            continue
+
+        params = entry.get("params") or {}
+        if not isinstance(params, dict):
+            violations.append(f"provider {pid_str!r}: 'params' must be a mapping")
+            continue
+
+        try:
+            instance = cls(provider_id=ProviderId(pid_str), **params)
+        except TypeError as e:
+            violations.append(f"provider {pid_str!r}: instantiation failed — {e}")
+            continue
+
+        instances[ProviderId(pid_str)] = instance
+
+    if violations:
+        raise ConfigError(
+            f"{path}: provider config has {len(violations)} violation(s)",
+            violations=violations,
+        )
+    return ProviderRegistry(instances)
 
 
 def load_models(path: Path, providers: ProviderRegistry) -> ModelRegistry:
     """Parse ``llm_models.yaml``. Validates each model's ``provider``
     exists in the given ``ProviderRegistry`` and that
-    ``default_effort`` matches capabilities.
+    ``default_effort`` matches capabilities (the latter is enforced
+    by ``ModelProfile``'s validator).
 
     Raises:
         ConfigError: dangling provider reference or capability /
             effort mismatch.
     """
-    raise NotImplementedError
+    raw = _read_yaml(path)
+    entries = raw.get("models")
+    if not isinstance(entries, dict):
+        raise ConfigError(f"{path}: missing or non-dict 'models' top-level key")
+
+    profiles: dict[ModelId, ModelProfile] = {}
+    violations: list[str] = []
+
+    for mid_str, entry in entries.items():
+        if not isinstance(entry, dict):
+            violations.append(
+                f"model {mid_str!r}: entry must be a mapping, got {type(entry).__name__}"
+            )
+            continue
+        try:
+            profile = ModelProfile(id=ModelId(mid_str), **entry)
+        except ValidationError as e:
+            violations.append(f"model {mid_str!r}: validation failed — {e}")
+            continue
+        except TypeError as e:
+            violations.append(f"model {mid_str!r}: unexpected field — {e}")
+            continue
+
+        if providers.get(profile.provider) is None:
+            violations.append(
+                f"model {mid_str!r}: provider {profile.provider!r} not in providers registry"
+            )
+            continue
+
+        profiles[profile.id] = profile
+
+    if violations:
+        raise ConfigError(
+            f"{path}: model config has {len(violations)} violation(s)",
+            violations=violations,
+        )
+    return ModelRegistry(profiles)
 
 
 def load_agent_llm_config(path: Path, models: ModelRegistry) -> AgentLLMConfig:
@@ -94,7 +203,30 @@ def load_agent_llm_config(path: Path, models: ModelRegistry) -> AgentLLMConfig:
     Raises:
         ConfigError: missing ``llm_config`` key, dangling model ref.
     """
-    raise NotImplementedError
+    raw = _read_yaml(path)
+    llm_config_data = raw.get("llm_config")
+    if not isinstance(llm_config_data, dict):
+        raise ConfigError(f"{path}: missing or non-dict 'llm_config' key")
+
+    try:
+        config = AgentLLMConfig(**llm_config_data)
+    except ValidationError as e:
+        raise ConfigError(
+            f"{path}: llm_config validation failed — {e}",
+            violations=[str(e)],
+        ) from e
+
+    violations: list[str] = []
+    for mid in [config.default_model, *config.fallback_chain]:
+        if models.get(mid) is None:
+            violations.append(f"{path}: references model {mid!r} not in models registry")
+
+    if violations:
+        raise ConfigError(
+            f"{path}: agent llm_config has {len(violations)} violation(s)",
+            violations=violations,
+        )
+    return config
 
 
 def validate_full_config(
@@ -119,4 +251,40 @@ def validate_full_config(
     Does NOT call providers (no health checks here — those are
     inherently fallible at startup time and may transiently fail).
     """
-    raise NotImplementedError
+    violations: list[str] = []
+
+    for profile in models.all():
+        if providers.get(profile.provider) is None:
+            violations.append(f"model {profile.id!r}: provider {profile.provider!r} not registered")
+
+    for agent_name, config in agent_configs.items():
+        for mid in [config.default_model, *config.fallback_chain]:
+            if models.get(mid) is None:
+                violations.append(f"agent {agent_name!r}: model {mid!r} not registered")
+
+        if Capability.TOOLS not in config.required_capabilities:
+            continue
+        has_routable_with_tools = False
+        for mid in [config.default_model, *config.fallback_chain]:
+            candidate = models.get(mid)
+            if candidate is None or Capability.TOOLS not in candidate.capabilities:
+                continue
+            candidate_provider = providers.get(candidate.provider)
+            if candidate_provider is None or not candidate_provider.can_use_orchestrator_tools():
+                continue
+            has_routable_with_tools = True
+            break
+        if not has_routable_with_tools:
+            violations.append(
+                f"agent {agent_name!r} requires 'tools' capability but "
+                f"no model in [default_model, *fallback_chain] resolves "
+                f"to a provider that accepts orchestrator tools "
+                f"(canonical case: agent pointed only at claude_code_cli, "
+                f"see ADR-003)"
+            )
+
+    if violations:
+        raise ConfigError(
+            f"full config validation failed with {len(violations)} violation(s)",
+            violations=violations,
+        )
