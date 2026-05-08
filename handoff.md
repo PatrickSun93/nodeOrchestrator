@@ -373,83 +373,65 @@ providers:
       timeout_s: 600
 ```
 
-**Provider type 只有两种**:`openai_compatible` 和 `claude_code_cli`。其他 backend(DeepSeek、Ollama、oMLX、未来 OpenAI/OpenRouter)都通过 `openai_compatible` + 不同 base_url 实现。
+**Provider type 只有两种**(P1):`openai_compatible` 和 `claude_code_cli`,加上测试用的 `mock`。其他 backend(DeepSeek、Ollama、MLX、未来 OpenAI/OpenRouter)都通过 `openai_compatible` + 不同 base_url 实现。
 
 #### Layer 2: Model Profiles(逻辑层)
 
 ```yaml
-# config/llm_models.yaml
-version: 1
+# config/llm_models.yaml — top-level key is `models:` (map form).
+# Model id is the map key; fields are flat (no `params:` sub-map).
+# Canonical reference: config/llm_models.yaml.example.
+# Capability values come from `Capability` enum: tools / effort /
+# vision / json_mode (vision and json_mode are P2+ placeholders).
 
 models:
-  # === Claude Code 系列(Max 订阅) ===
-  - id: claude_code_opus_47
-    connection: claude_code
-    model_name: opus              # 传给 --model 参数
-    effort_level: xhigh           # Claude Code 特有
-    context_window: 1000000       # Opus 4.7 1M
-    capabilities: [text, extended_thinking]
-    speed_tier: slow              # subprocess + Opus 慢
-    quality_tier: high
-    cost_per_1m_input: null       # 订阅制,不算 token
-    cost_per_1m_output: null
-  
-  - id: claude_code_sonnet_46
-    connection: claude_code
-    model_name: sonnet
-    effort_level: high
+  # === Claude Code via Max subscription quota ===
+  claude_code_opus_47:
+    provider: anthropic_via_claude_code
+    provider_model_id: claude-opus-4-7      # passed to --model
+    capabilities: [effort]
+    default_effort: xhigh                    # honored by EFFORT capability
+    context_window: 1000000
+    # Subscription quota — pricing not exposed at the API surface,
+    # so cost_per_1m_input / cost_per_1m_output are omitted.
+
+  claude_code_sonnet_46:
+    provider: anthropic_via_claude_code
+    provider_model_id: claude-sonnet-4-6
+    capabilities: [effort]
+    default_effort: high
+    context_window: 1000000
+
+  claude_code_haiku_45:
+    provider: anthropic_via_claude_code
+    provider_model_id: claude-haiku-4-5
+    capabilities: []                         # no effort, no tools
     context_window: 200000
-    capabilities: [text, extended_thinking]
-    speed_tier: medium
-    quality_tier: high
-  
-  - id: claude_code_haiku_45
-    connection: claude_code
-    model_name: haiku
-    context_window: 200000
-    capabilities: [text]
-    speed_tier: medium
-    quality_tier: medium
-  
-  # === DeepSeek 系列 ===
-  - id: deepseek_v4_flash
-    connection: deepseek_api
-    model_name: deepseek-v4-flash
+
+  # === DeepSeek (OpenAI-compatible API) ===
+  deepseek_v4_flash:
+    provider: deepseek
+    provider_model_id: deepseek-v4-flash
+    capabilities: [tools]
     context_window: 128000
-    capabilities: [text, json_mode, tools]
-    speed_tier: fast
-    quality_tier: medium
+    cost_per_1m_input: 0.07
+    cost_per_1m_output: 0.27
+
+  deepseek_v4_pro:
+    provider: deepseek
+    provider_model_id: deepseek-v4-pro
+    capabilities: [tools]
+    context_window: 128000
     cost_per_1m_input: 0.27
     cost_per_1m_output: 1.10
-  
-  - id: deepseek_v4_pro
-    connection: deepseek_api
-    model_name: deepseek-v4-pro
-    context_window: 128000
-    capabilities: [text, json_mode, tools]
-    speed_tier: medium
-    quality_tier: high
-  
-  # === Local 系列 ===
-  - id: qwen_local_ollama
-    connection: ollama_local
-    model_name: qwen2.5:14b
-    context_window: 32768
-    capabilities: [text, json_mode]    # 注意:有些 local model 没 tools
-    speed_tier: medium
-    quality_tier: low
-    cost_per_1m_input: 0
-    cost_per_1m_output: 0
-  
-  - id: qwen_mlx_30b
-    connection: omlx_local
-    model_name: Qwen3-Next-30B-A3B-4bit
-    context_window: 65536
-    capabilities: [text, json_mode, tools]
-    speed_tier: fast
-    quality_tier: medium
-    cost_per_1m_input: 0
-    cost_per_1m_output: 0
+
+  # === Local (MLX or Ollama) ===
+  qwen_mlx_30b:
+    provider: mlx_local
+    provider_model_id: qwen2.5-30b-instruct
+    capabilities: [tools]
+    context_window: 32000
+    # No cost — local hardware.
 ```
 
 **关键设计**:`capabilities` 是必填字段。Router 用它做约束求解。

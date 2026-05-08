@@ -43,6 +43,15 @@ def check_all_providers(
 
     Uses :func:`orchestrator.core.event.now_ms` for ``checked_at_ms``
     so all timestamps in the system come from one source.
+
+    Note on ``checked_at_ms`` semantics: a single timestamp is captured
+    at the start of the pass and shared across every ``ProviderHealth``
+    in the result. It is NOT per-provider completion time. If one
+    provider's ``health_check()`` takes 3 seconds, its row still
+    reports the timestamp from when the pass began. Per-provider
+    completion timestamps would require a per-provider variant; they
+    are not needed for current callers (startup probe, dashboard
+    staleness) where pass-level granularity is sufficient.
     """
     timestamp = now_ms()
     results: list[ProviderHealth] = []

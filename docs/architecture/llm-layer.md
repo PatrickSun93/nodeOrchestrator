@@ -109,9 +109,24 @@ class LLMProvider(Protocol):
     def can_use_orchestrator_tools(self) -> bool: ...
     def health_check(self) -> bool: ...
     async def call(
-        self, request: LLMRequest, model: ModelProfile
+        self,
+        request: LLMRequest,
+        model: ModelProfile,
+        *,
+        model_id_requested: ModelId,
     ) -> LLMResponse: ...
 ```
+
+`model_id_requested` is the keyword-only parameter the caller (agent
+runtime, P1.3) supplies from `RouteResult.model_id_requested`. It is
+the head of the agent's fallback chain — `agent_config.default_model`
+— and is what the response's `model_id_requested` should report.
+The provider cannot infer it because, by the time the call reaches
+the provider, the router has already resolved to whichever model in
+the chain was viable; only the caller knows what was originally
+requested. Without this parameter, the response would have to fill
+`model_id_requested` from `model.id`, silently swallowing fallback
+signal in the audit log.
 
 `call()` is the workhorse. It is the provider's job to:
 

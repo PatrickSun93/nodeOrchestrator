@@ -147,9 +147,11 @@ class ClaudeCodeCliProvider:
         ]
         effort = request.effort_level or model.default_effort
         if effort is not None:
-            # CLI flag name TBD — confirm against installed claude CLI
-            # version in commit 3+ live testing. The value is the enum
-            # string ("xhigh", "high", …).
+            # `--effort <level>` confirmed against installed claude CLI
+            # via `claude --help` (2026-05-08). Accepted values:
+            # low | medium | high | xhigh | max — EffortLevel mirrors
+            # this set exactly. Any drift between the enum and the CLI
+            # would surface here as an "invalid argument" CLI error.
             args.extend(["--effort", effort.value])
 
         prompt_parts: list[str] = []

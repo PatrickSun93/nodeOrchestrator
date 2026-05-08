@@ -20,6 +20,7 @@ specific class's docstring contract.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 from inspect import iscoroutinefunction
 from pathlib import Path
 
@@ -67,6 +68,60 @@ def test_constitution_all_registered_types_implement_protocol() -> None:
         assert iscoroutinefunction(cls.call), (  # type: ignore[attr-defined]
             f"{label}: call must be 'async def' (see ADR-002 reasoning on async-first)"
         )
+
+
+def test_constitution_provider_call_signature_consistency() -> None:
+    """All registered provider classes' ``.call`` methods have the
+    same parameter set. Catches **freeze-vs-impl drift** on the
+    Protocol surface — adding/removing a parameter on Protocol but
+    not propagating to all implementations, or vice versa.
+
+    The check is a pure structural comparison; if Protocol ever
+    legitimately gains a parameter, this test fails until every
+    provider's ``call`` is updated to match. That failure is the
+    forcing function: silent signature changes don't ship.
+
+    Locks (P1.1 commit 2 + third review): ``self``, ``request``,
+    ``model``, ``model_id_requested``. Updating this set requires:
+    1. Updating ``LLMProvider`` Protocol in ``protocol.py``,
+    2. Updating every concrete provider in ``providers/``,
+    3. Updating this expected set,
+    4. Disclosing the change in the commit message tracking table.
+    """
+    expected = {"self", "request", "model", "model_id_requested"}
+    for ptype, cls in PROVIDER_TYPE_REGISTRY.items():
+        actual = set(inspect.signature(cls.call).parameters.keys())
+        assert actual == expected, (
+            f"PROVIDER_TYPE_REGISTRY[{ptype.value!r}] = {cls.__name__}: "
+            f"call signature drift. expected {sorted(expected)}, got {sorted(actual)}"
+        )
+
+
+def test_constitution_no_provider_class_accepts_kwargs() -> None:
+    """Provider classes don't accept ``**kwargs`` on ``__init__`` or
+    ``.call``.
+
+    Why: ``**kwargs`` lets yaml mistypes silently slip through.
+    A user typo like ``api_key_envv: DEEPSEEK_API_KEY`` would be
+    accepted by a kwargs-accepting constructor and only surface as
+    "401 Unauthorized" on the first call, with no obvious link back
+    to the typo. Per the project's schema-level enforcement
+    preference (memory ``feedback_schema_enforcement``), unknown
+    fields must fail at construction.
+
+    The closed signature plus ``config_loader``'s try/except around
+    instantiation is the project's catch for yaml typos.
+    """
+    for ptype, cls in PROVIDER_TYPE_REGISTRY.items():
+        for method_name in ("__init__", "call"):
+            method = getattr(cls, method_name)
+            sig = inspect.signature(method)
+            for param in sig.parameters.values():
+                assert param.kind != inspect.Parameter.VAR_KEYWORD, (
+                    f"{cls.__name__}.{method_name} accepts **{param.name} "
+                    f"(provider type {ptype.value!r}). Forbidden — yaml "
+                    f"typos must fail at construction, not at first call."
+                )
 
 
 def test_constitution_no_hardcoded_model_names() -> None:

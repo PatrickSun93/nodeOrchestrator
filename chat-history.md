@@ -1451,19 +1451,22 @@ DeepSeek、Ollama、oMLX、未来 OpenAI/OpenRouter——**全部走 `openai_com
 ### Layer 2 的设计:命名 model + capabilities
 
 ```yaml
-- id: deepseek_v4_flash
-  connection: deepseek_api
-  model_name: deepseek-v4-flash
+deepseek_v4_flash:
+  provider: deepseek
+  provider_model_id: deepseek-v4-flash
+  capabilities: [tools]
   context_window: 128000
-  capabilities: [text, json_mode, tools]
-  speed_tier: fast
-  quality_tier: medium
+  cost_per_1m_input: 0.07
+  cost_per_1m_output: 0.27
 ```
 
 **关键决策**:
-- `capabilities` 是必填字段(Router 用它做约束求解)
-- `speed_tier` / `quality_tier` 给 Layer 4(P2)留 hook
-- `cost_per_1m_*` 可选(订阅制 model 是 null)
+- `capabilities` 是必填字段(Router 用它做约束求解)。值来自
+  `Capability` enum:`tools` / `effort` / `vision` / `json_mode`。
+- `cost_per_1m_*` 可选(订阅制 model 没法暴露 token 价格)。
+- 未来全局覆盖模式(P2)如果需要 cost-tier / quality-tier,
+  到时再加字段到 `ModelProfile`。当前 `ModelProfile` 只装路由
+  实际用到的字段——避免投机性 spec。
 
 ### Layer 3 的设计:agent 只引用 model_id
 

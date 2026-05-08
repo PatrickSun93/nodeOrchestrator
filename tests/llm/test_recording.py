@@ -143,9 +143,29 @@ class TestSampleRecording:
         assert rec.request.purpose == LLMPurpose.AGENT_RESPONSE
         assert rec.request.caller_agent_id == "agent:prober"
         assert "clarifying" in rec.response.content or "constraint" in rec.response.content
-        # Sample has placeholder hash; not validated for correctness here —
-        # in commit 2+ when we re-record with a real LLM, the hash check
-        # against hash_request(rec.request) becomes part of the workflow.
 
     def test_recordings_dir_exists(self) -> None:
         assert RECORDINGS_DIR.is_dir()
+
+
+class TestRecordingHashConsistency:
+    """For every recording file shipped in tests/llm/recordings/, the
+    stored ``request_hash`` must equal ``hash_request(request)``.
+    Catches future re-records where the request changed but the
+    hash wasn't recomputed (would silently let a stale recording
+    answer for a different prompt). Project-wide invariant for any
+    new recording added.
+    """
+
+    def test_all_recordings_have_correct_hash(self) -> None:
+        recording_paths = sorted(RECORDINGS_DIR.glob("*.json"))
+        assert recording_paths, "expected at least one recording in tests/llm/recordings/"
+        violations: list[str] = []
+        for path in recording_paths:
+            recording = load_recording(path.stem)
+            expected = hash_request(recording.request)
+            if recording.request_hash != expected:
+                violations.append(
+                    f"{path.name}: stored {recording.request_hash}, computed {expected}"
+                )
+        assert not violations, "recording request_hash mismatches:\n" + "\n".join(violations)

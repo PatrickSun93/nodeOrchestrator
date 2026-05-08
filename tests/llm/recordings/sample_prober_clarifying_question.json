@@ -1,6 +1,6 @@
 {
   "name": "sample_prober_clarifying_question",
-  "request_hash": "sha256:placeholder_will_be_recomputed_from_request",
+  "request_hash": "sha256:6018f1955c5d937f86b853e4177fe7de450b62f6fdff81f4a1bc2a264e349a59",
   "request": {
     "request_id": "llmreq_sample_001",
     "purpose": "agent_response",

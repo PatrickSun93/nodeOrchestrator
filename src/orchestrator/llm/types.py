@@ -101,13 +101,18 @@ class EffortLevel(StrEnum):
     effort_level lives in the model profile" — agent yaml should NOT
     override this; the model profile's ``default_effort`` is the
     intended ceiling, set per model not per agent.
+
+    The five values mirror Claude Code CLI's ``--effort <level>``
+    argument exactly: ``low | medium | high | xhigh | max``. Verified
+    by running ``claude --help`` 2026-05-08. Adding or removing a
+    level requires confirming against the installed CLI.
     """
 
-    MINIMAL = "minimal"
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     XHIGH = "xhigh"
+    MAX = "max"
 
 
 # ---------------------------------------------------------------------------

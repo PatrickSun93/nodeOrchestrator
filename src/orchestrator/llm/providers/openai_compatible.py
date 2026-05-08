@@ -67,6 +67,18 @@ class OpenAICompatibleProvider:
     timeout_s: float = 60.0
     transport: Any = None
 
+    def __post_init__(self) -> None:
+        # Construction-time validation: catch mistyped yaml that would
+        # otherwise sneak past until the first call/health_check raised.
+        # The ``transport`` field is typed Any (test-only injection point)
+        # but production yaml has no business setting it; only
+        # httpx.BaseTransport instances are valid.
+        if self.transport is not None and not isinstance(self.transport, httpx.BaseTransport):
+            raise TypeError(
+                f"OpenAICompatibleProvider.transport must be httpx.BaseTransport "
+                f"or None; got {type(self.transport).__name__}"
+            )
+
     def can_use_orchestrator_tools(self) -> bool:
         return True
 
