@@ -461,14 +461,13 @@ models:
 # config/agents/prober.yaml.example
 llm_config:
   default_model: claude_code_sonnet_46
-  fallback_chain: [claude_code_sonnet_46, deepseek_v4_flash]
+  fallback_chain: [deepseek_v4_flash]   # default 不重复列入(ADR-002 §3)
   temperature: 0.5
 
 # config/agents/skeptic.yaml.example
 llm_config:
   default_model: claude_code_opus_47    # Opus 4.7 给最难的角色
   fallback_chain: 
-    - claude_code_opus_47
     - claude_code_sonnet_46
     - deepseek_v4_pro
   temperature: 0.3                       # 稳定输出
@@ -476,18 +475,18 @@ llm_config:
 # config/agents/divergence_mapper.yaml.example
 llm_config:
   default_model: claude_code_sonnet_46
-  fallback_chain: [claude_code_sonnet_46, deepseek_v4_flash]
+  fallback_chain: [deepseek_v4_flash]
 
 # config/agents/logger.yaml.example
 llm_config:
   default_model: claude_code_haiku_45    # 浓缩日志,要快
-  fallback_chain: [claude_code_haiku_45, deepseek_v4_flash]
+  fallback_chain: [deepseek_v4_flash]
   temperature: 0.2
 
 # config/agents/operator.yaml.example
 llm_config:
   default_model: deepseek_v4_flash       # 必须 API,Claude Code 不能调 orchestrator tools
-  fallback_chain: [deepseek_v4_flash, qwen_mlx_30b]
+  fallback_chain: [qwen_mlx_30b]
   required_capabilities: [tools]         # 启动时校验 fallback 全部支持 tools
 ```
 
@@ -691,7 +690,7 @@ def select_model(req: LLMRequest, agent: Agent) -> ModelProfile:
 - `get_thread(unknown_id)` 改为 raise `EventNotFoundError`(不返回 [])
 - `InvalidParentError` 加 `reason: Literal["cross_room", "self_parent", "not_found"]` 字段
 - 索引改为 `(room_id, timestamp, id)` 三列(让 ORDER BY 完全走索引)
-- Fixture 加 retraction 节点(8 节点),retraction 是 hypothesis 的 child(从同一父分叉,不是 decision 的 child)
+- Fixture 加 retraction 节点(8 节点),retraction 是 **decision** 的 child(详见 ADR-001 §8;接口冻结期我倾向 hypothesis 的 child 演示 fork 语义,实现期被反向 push back —— `get_thread(retraction)` 必须包含被 retract 的 decision 才让上下文完整)
 
 待完成(commit 3,独立 PR):
 - ADR-001-event-store-foundation.md

@@ -51,6 +51,34 @@ This applies even to "obviously correct" decisions. If the code is correct,
 the trace is cheap. If the code becomes wrong later, the trace is the
 fastest path to the bug.
 
+### Q3. For schema-changing PRs: did you scan all five reference surfaces?
+
+When the PR changes a schema — a data field, validator, type, structure,
+required vs optional, the shape of a config block — every reference must
+be updated. Five surfaces to scan:
+
+1. **Main code** — `src/orchestrator/**/*.py` (types, protocol, router,
+   loader, providers, …).
+2. **Example YAML** — `config/**/*.yaml.example`.
+3. **Architecture Decision Records** — `docs/decisions/*.md`. Especially
+   the ADR that established the schema; if its decision text or
+   reversibility row references the old shape, fix it.
+4. **Architecture docs** — `docs/architecture/*.md` (`event-model.md`,
+   `llm-layer.md`, …).
+5. **Project narrative** — `handoff.md` and `chat-history.md` at the
+   repo root.
+
+If a schema change appears in code but not in the example YAML, or in
+an ADR but not in `handoff.md`, that is **doc-spec drift**: the schema's
+mentioned-in-code definition and its mentioned-in-docs definition
+silently diverge, and future readers can't tell which one is canonical.
+
+In the followup-commit tracking table, a `Status: Done` row is not
+legitimately checked until all five surfaces are consistent. If a
+surface is intentionally left at the old shape (e.g. an ADR being
+superseded keeps its text), call that out explicitly in the row's
+status field, not silently.
+
 ## Architecture decisions (ADRs)
 
 Decisions that change the shape of the system live in `docs/decisions/`

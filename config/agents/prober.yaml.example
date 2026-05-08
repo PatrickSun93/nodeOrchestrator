@@ -7,7 +7,6 @@
 llm_config:
   default_model: claude_code_sonnet_46
   fallback_chain:
-    - claude_code_sonnet_46
     - deepseek_v4_flash
   temperature: 0.5
   required_capabilities: []

@@ -307,27 +307,35 @@ class AgentLLMConfig(BaseModel):
     """
 
     default_model: ModelId
-    """The first model attempted. Must equal ``fallback_chain[0]``."""
+    """The model the router tries first."""
 
-    fallback_chain: list[ModelId] = Field(min_length=1)
-    """Ordered list of models to try. The first element is the
-    default; subsequent are fallbacks attempted only on transient
-    or unhealthy errors. Permanent errors do not trigger fallback."""
+    fallback_chain: list[ModelId] = Field(default_factory=list)
+    """Models to try AFTER ``default_model`` fails (transient or unhealthy
+    errors only — permanent errors raise through). Does NOT include
+    ``default_model``; the router walks
+    ``[default_model, *fallback_chain]`` internally. Per Principle 9
+    term audit — duplicating the default in both fields would be
+    one concept under two names."""
 
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, gt=0)
 
     required_capabilities: list[Capability] = Field(default_factory=list)
-    """Models lacking any of these are skipped in the fallback chain.
-    The router raises ``NoSuitableModelError`` if none pass."""
+    """Models lacking any of these are skipped in the effective fallback
+    chain. The router raises ``NoSuitableModelError`` if every candidate
+    is rejected."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     @model_validator(mode="after")
-    def _check_default_in_chain(self) -> AgentLLMConfig:
-        if self.fallback_chain[0] != self.default_model:
+    def _check_default_not_in_chain(self) -> AgentLLMConfig:
+        if self.default_model in self.fallback_chain:
             raise ValueError(
-                f"fallback_chain[0] ({self.fallback_chain[0]!r}) must equal "
-                f"default_model ({self.default_model!r})"
+                f"default_model ({self.default_model!r}) must not appear in "
+                f"fallback_chain ({self.fallback_chain!r}). "
+                f"fallback_chain lists alternatives tried AFTER default_model "
+                f"fails on transient/unhealthy errors; the router walks "
+                f"[default_model, *fallback_chain] internally. "
+                f"See ADR-002 decision 3."
             )
         return self

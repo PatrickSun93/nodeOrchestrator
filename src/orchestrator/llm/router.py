@@ -51,10 +51,20 @@ class RouteCandidate:
 
 @dataclass(frozen=True)
 class RouteResult:
-    """Successful routing outcome."""
+    """Successful routing outcome.
+
+    ``model`` is what the router resolved to (may differ from
+    ``model_id_requested`` if a fallback fired). ``model_id_requested``
+    is the head of the chain — i.e., ``agent_config.default_model`` —
+    captured here so the caller (agent runtime) does not need to plumb
+    ``agent_config`` through to populate
+    ``LLMResponse.model_id_requested``. Fallback events stay visible in
+    the audit log because requested != used.
+    """
 
     model: ModelProfile
     provider: LLMProvider
+    model_id_requested: ModelId
     decision_trace: tuple[RouteCandidate, ...]
 
 
@@ -94,18 +104,23 @@ class ProviderRegistry:
         raise NotImplementedError
 
 
-def select_model_and_provider(
+async def select_model_and_provider(
     agent_config: AgentLLMConfig,
     request: LLMRequest,
     models: ModelRegistry,
     providers: ProviderRegistry,
 ) -> RouteResult:
-    """Walk the agent's fallback chain; pick the first viable model.
+    """Walk the agent's effective fallback chain; pick the first viable model.
+
+    The effective chain is ``[default_model, *fallback_chain]``.
+    ``fallback_chain`` does NOT include ``default_model`` — the router
+    prepends it. See ADR-002 for why we don't store the default twice.
 
     Algorithm::
 
         candidates = []
-        for model_id in agent_config.fallback_chain:
+        chain = [agent_config.default_model, *agent_config.fallback_chain]
+        for model_id in chain:
             profile = models.get(model_id)
             if profile is None:
                 candidates.append(reject "model not in registry")
@@ -125,8 +140,18 @@ def select_model_and_provider(
                 candidates.append(reject "unhealthy")
                 continue
             candidates.append(accept "matched")
-            return RouteResult(profile, provider, tuple(candidates))
+            return RouteResult(
+                model=profile,
+                provider=provider,
+                model_id_requested=agent_config.default_model,
+                decision_trace=tuple(candidates),
+            )
         raise NoSuitableModelError(decision_trace=candidates)
+
+    ``async def`` even though no awaitable is currently invoked here:
+    P1.4 will add concurrent routing for multi-agent turns, and
+    changing the function signature later means refactoring every
+    caller. Async is the right shape from day one.
 
     Raises:
         NoSuitableModelError: every model was rejected. The

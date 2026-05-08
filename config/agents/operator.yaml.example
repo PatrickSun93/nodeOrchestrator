@@ -12,7 +12,6 @@
 llm_config:
   default_model: deepseek_v4_flash
   fallback_chain:
-    - deepseek_v4_flash
     - qwen_mlx_30b
   temperature: 0.3
   required_capabilities:

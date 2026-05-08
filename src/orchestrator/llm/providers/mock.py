@@ -77,7 +77,7 @@ class MockProvider:
     def health_check(self) -> bool:
         return self.healthy
 
-    def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
+    async def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
         """Record the call, look up a canned response, and return.
 
         Lookup order:

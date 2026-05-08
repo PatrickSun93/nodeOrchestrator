@@ -52,8 +52,13 @@ class ClaudeCodeCliProvider:
         or timeout — does NOT raise."""
         raise NotImplementedError
 
-    def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
+    async def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
         """Invoke the CLI with the request serialized as input.
+
+        Uses ``asyncio.create_subprocess_exec`` so the orchestrator
+        process stays responsive while the CLI runs (potentially several
+        minutes at xhigh effort). This is the load-bearing reason the
+        provider Protocol is async.
 
         Build process:
 

@@ -59,14 +59,16 @@ Each agent's yaml has an `llm_config` block:
 ```yaml
 llm_config:
   default_model: claude_code_opus_47
-  fallback_chain: [claude_code_opus_47, claude_code_sonnet_46, deepseek_v4_pro]
+  fallback_chain: [claude_code_sonnet_46, deepseek_v4_pro]
   temperature: 0.3
   required_capabilities: []
 ```
 
-`fallback_chain[0] == default_model` is enforced by validator (the
-default is conceptually the head of the chain; explicitly listing it
-in both fields makes the yaml self-documenting).
+`fallback_chain` is the list of alternates to try AFTER `default_model`
+fails on transient or unhealthy errors. It does NOT include
+`default_model` — the router walks `[default_model, *fallback_chain]`
+internally. Per Principle 9 (term audit / naming the trap), duplicating
+the default in both fields would be one concept under two names.
 
 `required_capabilities` is the routing constraint: a model in the chain
 that doesn't satisfy these is skipped. The canonical case is
@@ -106,7 +108,9 @@ class LLMProvider(Protocol):
     def provider_id(self) -> ProviderId: ...
     def can_use_orchestrator_tools(self) -> bool: ...
     def health_check(self) -> bool: ...
-    def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse: ...
+    async def call(
+        self, request: LLMRequest, model: ModelProfile
+    ) -> LLMResponse: ...
 ```
 
 `call()` is the workhorse. It is the provider's job to:
@@ -182,26 +186,52 @@ plus a purpose-only catch-all.
 `MockProvider.calls` captures every request for assertions (prompt
 content, tools sent, etc.).
 
-## Why sync (not async)
+## Why async (not sync)
 
-Claude/DeepSeek/Ollama SDKs all expose async clients, and async LLM
-calls are the modern default. We chose sync interfaces for P1
-nonetheless:
+`LLMProvider.call()` is `async def`. The router's
+`select_model_and_provider()` is also `async def`, even though P1.1
+doesn't yet have concurrent calls — it future-proofs P1.4.
 
-- **One LLM call per agent turn.** Within an agent's response cycle,
-  there is no concurrent LLM work. The dominant pattern is sequential.
-- **Test ergonomics.** Sync code is easier to assert against. Async
-  fixtures require `pytest-asyncio`, async fixtures, and care around
-  event-loop reuse — all friction we'd rather not pay before P3.
-- **Async reachability.** When concurrent calls do become needed
-  (parallel tool execution; multiple agents speaking simultaneously),
-  wrapping a sync provider in `concurrent.futures` is straightforward.
-  Going from sync to async at the contract is a one-time refactor;
-  going from async-everywhere to sync-where-not-needed is harder.
+Reasoning:
+
+- **P1.4 multi-agent coordination requires concurrent LLM calls.**
+  When prober + skeptic + operator are all in the room and event-
+  triggered, two or more agents may be eligible to speak in the same
+  turn. Sync would force serialization, increasing per-turn latency
+  by Nx (one model's latency × number of agents). Async lets them
+  run in parallel via `asyncio.gather`.
+- **Async is the natural fit for subprocess providers.** The
+  Claude Code CLI runs for tens of seconds at xhigh effort. Sync
+  subprocess calls block the entire process; async subprocess
+  (`asyncio.create_subprocess_exec`) waits without blocking. With sync,
+  every Claude Code call would need a thread pool just to maintain
+  responsiveness — a 200μs thread-pool dispatch overhead per call,
+  and an extra thread tied up for each long-running request.
+- **Modern SDKs are async-first.** Anthropic, OpenAI, DeepSeek SDKs
+  all ship native async clients. Sync wrappers exist but are second-
+  class. Going async lets us use the SDKs as designed.
+- **`pytest-asyncio` is mature in 2026.** The test ergonomics
+  argument that originally favored sync is no longer load-bearing —
+  async fixtures and `@pytest.mark.asyncio` tests are well-trodden.
+
+The cost of going async-first when not strictly needed (P1.1) is
+small: a few `async`/`await` keywords. The cost of being sync-first
+and discovering you need async (P1.4) is large: refactoring every
+provider, every caller, every test fixture. The asymmetry favors
+going async now. The earlier "wrap sync in `concurrent.futures`"
+argument was wrong-direction: `concurrent.futures` lets you run sync
+code from async, not the other way around.
+
+`health_check()` stays sync. It runs once at startup, is cheap, and
+doesn't benefit from concurrency at the orchestrator's scale. If a
+future use case demands probing many endpoints in parallel, the
+function can be wrapped in `asyncio.to_thread()` at the call site
+without changing the Protocol.
 
 If a future use case demands streaming (e.g., live "agent typing"
-indicators in the UI), we'll add a streaming variant of `call()` then,
-not retrofit async into the whole stack now.
+indicators in the UI), we'll add a streaming variant of `call()` —
+async lays the groundwork, since async streaming is the natural
+shape (`AsyncIterator[str]`).
 
 ## Configuration validation flow
 
@@ -234,7 +264,8 @@ broken agent yaml shouldn't hide three other broken yamls behind it.
 
 ```
 candidates = []
-for model_id in agent_config.fallback_chain:
+chain = [agent_config.default_model, *agent_config.fallback_chain]
+for model_id in chain:
     profile = models.get(model_id)
     if profile is None:
         candidates.append(reject "model not in registry")

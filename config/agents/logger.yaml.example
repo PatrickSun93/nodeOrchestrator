@@ -8,7 +8,6 @@
 llm_config:
   default_model: claude_code_haiku_45
   fallback_chain:
-    - claude_code_haiku_45
     - deepseek_v4_flash
   temperature: 0.2
   required_capabilities: []

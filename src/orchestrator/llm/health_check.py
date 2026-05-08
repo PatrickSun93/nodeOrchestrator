@@ -10,9 +10,9 @@ session.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 
+from orchestrator.core.event import TimestampMs
 from orchestrator.llm.router import ProviderRegistry
 from orchestrator.llm.types import ProviderId
 
@@ -27,7 +27,7 @@ class ProviderHealth:
     """Set when ``healthy=False``. Captures whatever the provider's
     health_check() recorded (provider exception or "down")."""
 
-    checked_at_ms: int
+    checked_at_ms: TimestampMs
 
 
 def check_all_providers(
@@ -40,12 +40,9 @@ def check_all_providers(
     failed; callers decide which failures are fatal (e.g., a missing
     DeepSeek key is fatal if any agent requires DeepSeek; a missing
     Ollama is only fatal if Ollama is in someone's fallback chain).
+
+    Implementation (commit 2) will use
+    :func:`orchestrator.core.event.now_ms` for ``checked_at_ms`` so
+    all timestamps in the system come from one source.
     """
     raise NotImplementedError
-
-
-def _now_ms() -> int:
-    """Wall-clock in epoch milliseconds. Internal helper kept here
-    rather than imported from ``orchestrator.core.event`` to keep
-    the LLM layer's dependency surface small."""
-    return int(time.time() * 1000)

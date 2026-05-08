@@ -10,7 +10,6 @@
 llm_config:
   default_model: claude_code_opus_47
   fallback_chain:
-    - claude_code_opus_47
     - claude_code_sonnet_46
     - deepseek_v4_pro
   temperature: 0.3

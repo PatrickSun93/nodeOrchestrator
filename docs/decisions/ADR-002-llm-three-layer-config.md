@@ -60,15 +60,22 @@ encoded effort, swapping models (Opus → Sonnet) would also need
 effort tuning (Sonnet at xhigh is overkill); effort-on-model means
 the swap is one line in the agent yaml.
 
-### 3. `fallback_chain[0] == default_model`
+### 3. `fallback_chain` does NOT include `default_model`
 
-Both fields are required in the agent yaml. The first element of the
-chain must equal `default_model`. A Pydantic `model_validator`
-enforces this.
+Both fields are required, but they are non-overlapping:
+`fallback_chain` only lists models tried *after* `default_model`
+if the primary fails. Router walks `[default_model, *fallback_chain]`
+internally.
 
-This is mild redundancy in service of self-documenting yaml: a
-reader scanning the yaml sees both "what's the primary" and "what
-fallbacks exist" without inferring from list position.
+Why not "first element must equal default": that is the same
+concept named twice, violating Principle 9 (term audit).
+`default_model` and `fallback_chain[0]` always being equal means
+one concept with two names — subtle term accumulation that grows
+future complexity. The yaml stays self-documenting as long as
+both fields are present: "primary is X, backups are Y, Z."
+
+Pydantic validator: `fallback_chain` must NOT contain
+`default_model` (catches accidental duplication).
 
 ### 4. Fallback only on transient / unhealthy errors
 
@@ -169,7 +176,7 @@ the conceptual fit (effort is a model dial, not a task dial).
 |---|---|
 | Three-layer YAML | Collapsing back to two layers: medium (re-flatten ~100 lines, update validators). Worth keeping unless a yaml-tax becomes a real complaint. |
 | Effort on model | Moving to agent: low refactor (~20 lines), but defeats the model-swap ergonomic. Don't unless the rule itself is wrong. |
-| `fallback_chain[0] == default_model` | Trivial (drop the validator, document the new rule). |
+| `fallback_chain` excludes `default_model` | Trivial (re-add validator allowing duplicates, document the change). |
 | Fallback only on transient errors | Trivial (change router error handling). |
 | Fail-loud startup validation | Trivial (relax to lazy). |
 

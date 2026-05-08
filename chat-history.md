@@ -1392,12 +1392,18 @@ user_input (root)
         └── tool_call (agent:operator, call_id=c1)
               └── tool_result (system, call_id=c1, success=true)
                     └── hypothesis (agent:operator, confidence=0.7)
-                          ├── decision (agent:operator, based_on=[hypothesis_id])
-                          │     └── rejection (agent:skeptic, rejects=decision_id)
-                          └── retraction (agent:operator, retracts=decision_id)
+                          └── decision (agent:operator, based_on=[hypothesis_id])
+                                ├── rejection (agent:skeptic, rejects=decision_id)
+                                └── retraction (user, retracts=decision_id)
 ```
 
-**关键设计**:retraction 是 hypothesis 的 child(从同一父分叉),不是 decision 的 child。理由:retraction 是"我在那个决策点选了不同路径"的语义,树形上应该是 sibling 不是 child。让"分叉"这个核心机制在 fixture 里就被覆盖。
+**关键设计**:retraction 是 **decision** 的 child(不是 hypothesis 的 child)。接口冻结期我倾向后者——retraction 演示"在决策点选了不同路径"的语义,树形上是 sibling,顺便让"分叉"这个核心机制在 fixture 里被覆盖。
+
+**实现期 Claude Code 反向 push back**:`get_thread(retraction)` 重建出的就是用户回到房间看到的语境。如果 retraction 的 parent 是 hypothesis,thread 不包含 decision——你不可能在不知道 decision 存在的情况下 retract 它。retraction 的语义是"我们之前的承诺不算数了,但事情发生过",temporally 必须在 decision 之后,structurally 必须是 child。
+
+"在决策点选了不同路径"的语义是 `decision_pivot`(reframe,"那个问题问错了/那条路是错的,我们换个方向"),不是 retraction。两个不同的 type,设计文档分开。fork 机制改用 decision 节点下的 rejection + retraction 两个 children 演示。
+
+**Meta 教训**:接口冻结期的设计决策也可能被实现期 push back,而且应该。不是所有问题都能在接口期看到——这次"retraction-as-child"是健康的反向 push back。**ADR-001 §8 是诚实的记录**:接口期决策不是终点,实现期发现问题反过来 push back 是工程纪律,不是 process 失败。
 
 ### 性能基线测试
 
@@ -1465,8 +1471,7 @@ DeepSeek、Ollama、oMLX、未来 OpenAI/OpenRouter——**全部走 `openai_com
 # config/agents/skeptic.yaml
 llm_config:
   default_model: claude_code_opus_47
-  fallback_chain: [claude_code_opus_47, claude_code_sonnet_46, deepseek_v4_pro]
-  required_capabilities: [tools]    # 启动时校验
+  fallback_chain: [claude_code_sonnet_46, deepseek_v4_pro]
   temperature: 0.3
 ```
 

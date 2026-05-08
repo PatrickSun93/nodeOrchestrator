@@ -5,10 +5,12 @@ Each provider implementation (``openai_compatible``, ``claude_code_cli``,
 Protocol type; concrete classes are instantiated by ``config_loader``
 based on each ``ProviderConnection.type``.
 
-Sync interface — see ``llm-layer.md`` §"Why sync, not async". Briefly:
-P1's call sites are sequential within an agent's turn; concurrent
-calls (when needed) can run providers in a thread pool without
-contaminating the rest of the codebase with async.
+Async interface — ``call()`` is ``async def`` so P1.4 multi-agent
+coordination can run concurrent calls without thread-pool gymnastics,
+and so subprocess providers (Claude Code CLI) can run for tens of
+seconds at xhigh effort without blocking the process. ``health_check()``
+stays sync — runs once at startup, doesn't benefit from concurrency.
+See ``llm-layer.md`` §"Why async (not sync)" for the full argument.
 """
 
 from __future__ import annotations
@@ -62,7 +64,7 @@ class LLMProvider(Protocol):
         """
         ...
 
-    def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
+    async def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
         """Execute one LLM request against ``model`` via this provider.
 
         Provider responsibilities:

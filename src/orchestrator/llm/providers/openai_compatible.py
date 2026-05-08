@@ -47,9 +47,10 @@ class OpenAICompatibleProvider:
         on connection errors, 4xx, or 5xx — does NOT raise."""
         raise NotImplementedError
 
-    def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
+    async def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
         """Translate ``LLMRequest`` into Chat Completions format,
-        POST to ``{base_url}/chat/completions``, parse response.
+        POST to ``{base_url}/chat/completions`` via httpx.AsyncClient,
+        parse response.
 
         Maps:
         - ``messages`` and ``system`` → OpenAI ``messages``.

@@ -48,7 +48,17 @@ PROVIDER_TYPE_REGISTRY: dict[ProviderType, type[Any]] = {
 }
 """Maps each ``ProviderType`` to its concrete class. Adding a new
 provider type requires extending this map plus a new module under
-``providers/``."""
+``providers/``.
+
+TODO(P1.1 commit 2): Currently typed as ``type[Any]``. If commit 2
+finds it needs type-narrowing (static dispatch on type-specific
+``params`` fields), upgrade to ``TypeVar`` bound to ``LLMProvider``.
+Until then, ``type[Any]`` plus a runtime constitutional test —
+``test_all_registered_types_implement_protocol``, committed for
+P1.1 commit 2 alongside provider instantiation — suffices. The
+Protocol's runtime_checkable decorator catches structural drift,
+and the registry only ever instantiates these classes through one
+code path (``load_providers``)."""
 
 
 def load_providers(path: Path) -> ProviderRegistry:

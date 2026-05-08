@@ -29,10 +29,12 @@ need to expose their own tools — `read_file`, `search_text`,
 must reach the LLM whose response we then route back through our own
 autonomy gateway, event log, and tool execution layer.
 
-## Decision
+## Decisions
 
-`ClaudeCodeCliProvider.can_use_orchestrator_tools()` returns
-`False`.
+### 1. `ClaudeCodeCliProvider.can_use_orchestrator_tools()` returns `False`
+
+The provider hard-codes `False`. Concrete consequences in the
+"Concretely" list below.
 
 Concretely:
 
@@ -52,7 +54,68 @@ Ollama with tool-aware models, MLX with tool-aware models. Agents
 producing text only (prober, skeptic, divergence_mapper, logger)
 freely use Claude Code or anything else.
 
-## Considered alternatives
+## Three architectural strategies considered
+
+The "Claude Code CLI exists; orchestrator agents need tools" tension
+admits three architectural approaches at the layer above provider
+implementation. Naming and comparing them up front prevents the
+"narrow-implementation alternatives" section below from masking the
+broader call.
+
+### Strategy 1: boundary by purpose / agent
+
+Hardcode a partition: each `LLMPurpose` (or each agent role) is
+declared "may use Claude Code" or "may not." Routing checks the
+request's purpose against an allowlist before considering Claude
+Code as a candidate.
+
+Why rejected: the constraint is structural to the *provider*
+(Claude Code CLI cannot accept orchestrator tools), not to the
+*purpose*. A purpose-driven partition would still need updating
+every time a new agent role appears or a purpose's tool needs change.
+The provider-level check is the boundary that doesn't drift.
+
+### Strategy 2: Claude Code as a compound operation
+
+Treat `claude --print` as a single compound op recorded in the event
+stream. The CLI's internal tool calls (Bash, Read, WebFetch, …) run
+inside a black box; we record only the wrapping call, not the
+internal trajectory.
+
+Why rejected: this violates the "no compound tools" principle from
+ADR-001's tool design (handoff.md §5.4 third layer). Compound tools
+make agents into dispatchers — the model picks one big lever and the
+internal logic is unauditable. We deliberately give agents small,
+specific tools so the *recipe* is visible, not just the *outcome*.
+Treating Claude Code as a compound would import that anti-pattern
+through the back door.
+
+A subtler issue: the orchestrator agent on the *outside* of a Claude
+Code call cannot enforce autonomy levels on the *inside* tool uses.
+Operator's `propose_edit` runs through the autonomy gateway; if we
+let Claude Code run `Edit` internally, the gateway is bypassed.
+Strategy 2 would erode the project's safety story to recover one
+provider option.
+
+### Strategy 3 (chosen): provider declares capability; routing constrains
+
+Each provider declares `can_use_orchestrator_tools()` as a capability
+flag. The router rejects (provider, tools-bearing-request) pairs at
+selection time. Agents declare `required_capabilities: [tools]`;
+config validation catches the operator-pointed-at-Claude-Code
+misconfiguration at startup, not at first call.
+
+This is the chosen strategy because (a) the constraint sits where
+the constraint actually exists (provider level), (b) routing logic
+is one boolean check, (c) misconfigurations are caught before any
+LLM call, (d) future provider changes (e.g., Claude Code adding tool
+injection) flip the boolean without touching agents or routing.
+
+The implementation alternatives below (A-D) are choices *within*
+strategy 3 — different ways the provider's capability flag could
+be exposed.
+
+## Implementation alternatives within strategy 3
 
 ### A. Make the flag per-instance configurable
 
