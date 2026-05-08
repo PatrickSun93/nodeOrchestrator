@@ -1,0 +1,89 @@
+"""LLM layer custom exceptions.
+
+Hierarchy::
+
+    LLMError
+    ├── ConfigError              (yaml malformed, dangling refs)
+    ├── NoSuitableModelError     (router exhausted fallback chain)
+    ├── ToolsNotSupportedError   (capability mismatch caught at runtime)
+    └── ProviderError            (provider-level)
+        ├── TransientProviderError    (retry may help; router tries fallback)
+        ├── PermanentProviderError    (caller bug; do NOT try fallback)
+        └── ProviderUnhealthyError    (failed health check; router skips)
+
+Routing decision: ``TransientProviderError`` causes the router to try
+the next model in the fallback chain. ``PermanentProviderError`` is
+raised through to the caller — fallbacks won't fix a malformed request.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+class LLMError(Exception):
+    """Base for all LLM layer errors."""
+
+
+class ConfigError(LLMError):
+    """A YAML config file was invalid or referenced something missing.
+
+    E.g., an agent references a model id that doesn't exist in
+    ``llm_models.yaml``, or a model references a missing provider.
+    Raised by ``config_loader``; collects every violation in one
+    raise (don't fail-fast at the first error during validation).
+    """
+
+    def __init__(self, message: str, violations: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.violations: list[str] = violations or []
+
+
+class NoSuitableModelError(LLMError):
+    """The router walked an agent's ``fallback_chain`` and none of the
+    candidates were usable.
+
+    Causes include: missing required capabilities, all providers
+    unhealthy, models removed from the registry. The attached
+    ``decision_trace`` lists the per-model rejection reason; this
+    structure is appended to the LLM call event for audit.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        decision_trace: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.decision_trace: list[dict[str, Any]] = decision_trace or []
+
+
+class ToolsNotSupportedError(LLMError):
+    """Routing produced a (model, provider) pair where the provider
+    cannot accept orchestrator tools, but the request includes them.
+
+    Most commonly: an agent with ``required_capabilities: [tools]``
+    was pointed at a Claude Code model. ADR-003 explains why Claude
+    Code cannot accept orchestrator tool definitions.
+
+    Should be caught at config validation time
+    (``validate_full_config``); at runtime, this is a defensive raise.
+    """
+
+
+class ProviderError(LLMError):
+    """A provider-level error. Subclasses indicate retryability."""
+
+
+class TransientProviderError(ProviderError):
+    """Network blip, rate limit, brief unavailability — retry may help.
+    The router tries the next model in the fallback chain."""
+
+
+class PermanentProviderError(ProviderError):
+    """Authentication failure, malformed request, etc. — retry won't
+    help. Do NOT try fallbacks; this is the caller's bug."""
+
+
+class ProviderUnhealthyError(ProviderError):
+    """Health check failed before the call. Router skips this provider."""

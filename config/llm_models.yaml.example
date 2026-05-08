@@ -1,0 +1,70 @@
+# Example llm_models.yaml. Copy to config/llm_models.yaml and adapt.
+#
+# Each entry under `models` is one model profile. `provider` references
+# an entry in llm_providers.yaml. `capabilities` controls routing —
+# an agent's `required_capabilities` must be a subset of a model's
+# `capabilities` for the model to be eligible.
+#
+# Capabilities:
+#   tools     — model accepts orchestrator tool definitions
+#   effort    — model honors EffortLevel (currently Anthropic-only)
+#   vision    — accepts image content blocks (future)
+#   json_mode — native JSON output (future)
+#
+# `default_effort` is set ONLY when capabilities include `effort`.
+# This is enforced by the dataclass validator. See ADR-002 for why
+# effort_level lives on the model profile, not the agent.
+
+models:
+  # ---- Anthropic via Claude Code CLI ---------------------------------
+  # `provider_model_id` is the CLI's --model argument.
+
+  claude_code_opus_47:
+    provider: anthropic_via_claude_code
+    provider_model_id: claude-opus-4-7
+    capabilities: [effort]      # NOT tools — see ADR-003
+    default_effort: xhigh        # Max subscription absorbs the cost
+    context_window: 1000000
+
+  claude_code_sonnet_46:
+    provider: anthropic_via_claude_code
+    provider_model_id: claude-sonnet-4-6
+    capabilities: [effort]
+    default_effort: high
+    context_window: 1000000
+
+  claude_code_haiku_45:
+    provider: anthropic_via_claude_code
+    provider_model_id: claude-haiku-4-5
+    capabilities: []             # no effort, no orchestrator tools
+    context_window: 200000
+
+  # ---- DeepSeek ------------------------------------------------------
+  # `provider_model_id` is the API model name. Pricing is approximate
+  # (in USD per 1M tokens) for cost reporting; routing does not use it.
+
+  deepseek_v4_pro:
+    provider: deepseek
+    provider_model_id: deepseek-v4-pro
+    capabilities: [tools]
+    context_window: 128000
+    cost_per_1m_input: 0.27
+    cost_per_1m_output: 1.10
+
+  deepseek_v4_flash:
+    provider: deepseek
+    provider_model_id: deepseek-v4-flash
+    capabilities: [tools]
+    context_window: 128000
+    cost_per_1m_input: 0.07
+    cost_per_1m_output: 0.27
+
+  # ---- Local MLX (Apple Silicon) -------------------------------------
+  # Local models have no cost. Tool support depends on the specific
+  # model — Qwen 2.5 30B handles them well in our experience.
+
+  qwen_mlx_30b:
+    provider: mlx_local
+    provider_model_id: qwen2.5-30b-instruct
+    capabilities: [tools]
+    context_window: 32000

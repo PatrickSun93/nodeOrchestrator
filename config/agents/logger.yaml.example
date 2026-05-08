@@ -1,0 +1,14 @@
+# Logger — maintains decision log, generates structured snapshots.
+#
+# Stability and faithfulness are everything: low temperature,
+# smallest capable model, deterministic-ish output. The logger MUST
+# NOT paraphrase or compress beyond what's structurally required —
+# its forbidden_behaviors (P1.3) include "转述化" and "失真压缩".
+
+llm_config:
+  default_model: claude_code_haiku_45
+  fallback_chain:
+    - claude_code_haiku_45
+    - deepseek_v4_flash
+  temperature: 0.2
+  required_capabilities: []

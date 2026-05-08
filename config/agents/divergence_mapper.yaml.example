@@ -1,0 +1,13 @@
+# Divergence mapper — maps disagreements; never synthesizes.
+#
+# Output_schema (added P1.3) will forbid a `synthesis` field; this
+# agent is the explicit refusal of "let's just average the
+# perspectives" (handoff.md Principle 6).
+
+llm_config:
+  default_model: claude_code_sonnet_46
+  fallback_chain:
+    - claude_code_sonnet_46
+    - deepseek_v4_flash
+  temperature: 0.4
+  required_capabilities: []

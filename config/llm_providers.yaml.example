@@ -1,0 +1,52 @@
+# Example llm_providers.yaml. Copy to config/llm_providers.yaml and
+# adapt to your environment.
+#
+# Each entry under `providers` is one physical provider connection.
+# `id` is referenced by llm_models.yaml's `provider` field.
+#
+# Provider types:
+#   openai_compatible  — DeepSeek, Ollama, MLX, anything OpenAI-API-shaped
+#   claude_code_cli    — Anthropic models via Claude Code CLI subprocess
+#                        (uses Max subscription quota; see ADR-003 for
+#                        capability constraints — cannot accept
+#                        orchestrator tool definitions)
+#   mock               — test-only, deterministic responses
+
+providers:
+  # Anthropic models routed through the Claude Code CLI.
+  # Requires `npm install -g @anthropic/claude-code` and a logged-in
+  # Max subscription. See ADR-003.
+  anthropic_via_claude_code:
+    type: claude_code_cli
+    params:
+      cli_path: claude          # absolute path or PATH-resolved
+      timeout_s: 600            # generous for xhigh effort
+
+  # DeepSeek hosted API (OpenAI-compatible).
+  deepseek:
+    type: openai_compatible
+    params:
+      base_url: https://api.deepseek.com/v1
+      api_key_env: DEEPSEEK_API_KEY
+      timeout_s: 60
+
+  # Local Ollama. Empty api_key_env => no auth header.
+  ollama_local:
+    type: openai_compatible
+    params:
+      base_url: http://localhost:11434/v1
+      api_key_env: ""
+      timeout_s: 120            # local can be slow on first model load
+
+  # Local MLX (Apple Silicon). Same shape as Ollama.
+  mlx_local:
+    type: openai_compatible
+    params:
+      base_url: http://localhost:8080/v1
+      api_key_env: ""
+      timeout_s: 120
+
+  # Test-only. Production configs should NOT include this entry.
+  mock:
+    type: mock
+    params: {}

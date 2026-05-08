@@ -1,0 +1,13 @@
+# Prober agent — explores, asks, surfaces assumptions.
+#
+# In P1.3 this file gains: persona, dissent_dimensions,
+# forbidden_behaviors, speaking_triggers, output_schema, cooldown_seconds.
+# P1.1 freezes only the `llm_config` block.
+
+llm_config:
+  default_model: claude_code_sonnet_46
+  fallback_chain:
+    - claude_code_sonnet_46
+    - deepseek_v4_flash
+  temperature: 0.5
+  required_capabilities: []

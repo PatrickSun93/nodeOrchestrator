@@ -1,0 +1,17 @@
+# Skeptic agent — challenges, finds holes, provides dissent.
+#
+# Defaults to Opus 4.7 because dissent quality is the most direct
+# product value of this project. Falls back through Sonnet 4.6 to
+# DeepSeek pro on Anthropic outage / rate limit.
+#
+# `effort_level` is NOT set here — it comes from the model profile
+# (xhigh for Opus 4.7). Per ADR-002, effort lives on the profile.
+
+llm_config:
+  default_model: claude_code_opus_47
+  fallback_chain:
+    - claude_code_opus_47
+    - claude_code_sonnet_46
+    - deepseek_v4_pro
+  temperature: 0.3
+  required_capabilities: []
