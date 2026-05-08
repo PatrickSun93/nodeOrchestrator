@@ -1,5 +1,7 @@
-# Chat History — Orchestrator 设计推理过程
+# Chat History — Orchestrator 设计推理过程 v2
 
+> **v2 改动(相对 v1)**:加入 P0 接口冻结 review 过程、LLM 层三层架构设计、model 选择讨论、P1 重新拆分的推理。
+>
 > 这是 handoff.md 的**配套文档**。
 > 记录设计推理过程,帮助理解每个决策"为什么"是这样。
 > Claude Code 读这个文档时,**不要把对话逐字当成需求**——这是讨论过程,有的方向被推翻、有的被精炼。
@@ -32,6 +34,11 @@
 13. [Design System](#13-design-system)
 14. [端到端场景走查](#14-端到端场景走查)
 15. [反 pattern 汇总](#15-反-pattern-汇总)
+16. [P0 实施过程](#16-p0-实施过程) **(v2 新增)**
+17. [LLM 层三层配置架构](#17-llm-层三层配置架构) **(v2 新增)**
+18. [Model 选择策略](#18-model-选择策略) **(v2 新增)**
+19. [P1 重新拆分的推理](#19-p1-重新拆分的推理) **(v2 新增)**
+20. [Claude Code 协作中的 dissent 模式](#20-claude-code-协作中的-dissent-模式) **(v2 新增)**
 
 ---
 
@@ -1288,3 +1295,497 @@ L1 主界面(95%)→ L2 设置(4%)→ L3 高级(1%)→ L4 配置(0.1%)
 ---
 
 **最后**:这个项目的核心价值不是"AI 多聪明",是"AI 让人想得更清楚"。如果代码让 AI 替用户做决定,就走错方向了。
+
+---
+
+## 16. P0 实施过程
+
+### 起点
+
+P0 原计划是"最薄端到端骨架 + 简陋功能"。Claude Code 第一次反馈时**push back 了这个定义**:
+
+> "P0 验收标准看起来就是个普通 chatbot,没有架构红利。等到 P1 才发现事件类型系统、线程化、关系提取这些核心地基有 bug,代价巨大。P0 应该是'地基完整,功能少',不是'功能勉强能跑,地基简陋'。"
+
+这个 push back 被接受。P0 重新定义为**事件流地基**,无 LLM、无 UI、无 agent。
+
+### 关键流程:接口冻结 → 实现 → ADR 三段式
+
+Claude Code 第一个 PR 用了一个**值得复用的工作模式**:
+
+**Commit 1(接口冻结)**:写所有签名 + dataclass + docstring,实现用 `raise NotImplementedError`。停下让用户 review。
+
+**Commit 2(实现 + 测试)**:在已 review 的接口上实现,加测试。
+
+**Commit 3(独立 PR)**:写 ADR 沉淀决策。
+
+**这个模式的价值**:接口冻结期间发现的问题(~3-5 处),如果等到实现完才发现,要回头改实现 + 测试 + 文档。冻结期改一行,实现期改 100 行。
+
+### Claude Code 在接口冻结里的 6 个选择
+
+1. **Event ID 格式 = `evt_<32-hex>`**(uuid4 + 前缀)— 接受
+2. **InvalidParentError 覆盖跨房间 + self-parent 两种**(单一异常 + reason 字段)— 接受
+3. **SCHEMA 用 `IF NOT EXISTS`**(全部) — **被 push back**
+4. **`get_thread(unknown_id)` 返回 `[]`** — **被 push back**
+5. **`get_room_events` 按 `(timestamp, id)` 排序** — 接受,索引同步加 id
+6. **越过纯 stub 实现纯函数**(validate_metadata、is_valid_author 等)— 接受,理由对
+
+### Push back 3:`IF NOT EXISTS` 的边界
+
+Claude Code 的论证:"init_schema 应该幂等"。
+
+用户 push back:**这只对 CREATE TABLE 成立,不对 TRIGGER 成立**。
+
+如果未来 trigger 逻辑改变(加新约束、修边角 case),`IF NOT EXISTS` 会**静默跳过更新**——旧 trigger 还在,新 trigger 没生效,隐蔽 bug 源头。
+
+修正:
+- 表用 `CREATE TABLE IF NOT EXISTS`(数据要保留)
+- Trigger 用 `DROP TRIGGER IF EXISTS + CREATE TRIGGER`(纯逻辑,确保最新)
+- 索引 `CREATE INDEX IF NOT EXISTS`(无所谓)
+
+**原则**:数据是不可重建的,trigger 是可重建的,两者幂等策略不该一样。
+
+### Push back 4:`get_thread(unknown_id)` 应该 raise 不返回 []
+
+Claude Code 的论证:"读取宽容、写入严格"。
+
+用户 push back:**这个原则借用自网络协议(Postel's Law),不适用于内部 API**。
+
+具体:
+- `get_thread([])` 让 "unknown_id" 和 "thread 是空的" 在调用方那里**无法区分**
+- 但这两种语义完全不同:前者是 bug,后者是合法状态
+- 返回 `[]` 让 bug 被吞掉,在很久之后才以"为什么没有事件"形式爆发
+- 这是**第 4 条 structured uncertainty 的违反**——用空数据表达未知 = prose hedging 的一种
+
+修正:
+- `get_thread(unknown_id)` raise `EventNotFoundError`
+- `get_room_events(unknown_room_id)` 仍返回 `[]`(刚创建的房间是合法状态)
+- **两个函数行为不同是对的**,因为语义不同
+
+### Meta 教训:听起来对但场景不对的论证最危险
+
+Claude Code 在 `IF NOT EXISTS` 和 "读取宽容写入严格" 上各犯了一个**听起来很有道理但场景不对**的错误。
+
+这是 LLM 协作里**最隐蔽的风险**——比起明显错误,有理有据但场景错配的建议更难发现。
+
+应对策略:
+- review 时不只问"对不对",还要问"在这个具体场景里对不对"
+- 借用的原则要确认它的原始适用范围
+- 主动邀请 dissent("你的 6 个选择里有没有保留意见但没说?")
+
+### 一个新增的护栏:`test_constitution_append_only_at_schema_level`
+
+P0 commit 2 加了一个**宪法测试**——直接测 `UPDATE events SET ...` 和 `DELETE FROM events ...` 都会抛 IntegrityError。
+
+这不是普通测试,是**护栏**——以后任何人想"绕过 trigger 修改 event"(为了修 bug、为了某个看似合理的理由),这个测试会失败,迫使他思考。
+
+这是宪法测试的第一个先例。后续会有:
+- `test_constitution_no_llm_calls_in_autonomy_module`(grep autonomy 模块不能 import LLM SDK)
+- `test_constitution_no_hardcoded_model_names`(grep src/ 不能出现 model 名字字符串字面量)
+
+### 新增的 fixture 设计
+
+`populated_event_store` fixture 提供 8 节点标准事件树:
+
+```
+user_input (root)
+  └── utterance (agent:operator) 
+        └── tool_call (agent:operator, call_id=c1)
+              └── tool_result (system, call_id=c1, success=true)
+                    └── hypothesis (agent:operator, confidence=0.7)
+                          ├── decision (agent:operator, based_on=[hypothesis_id])
+                          │     └── rejection (agent:skeptic, rejects=decision_id)
+                          └── retraction (agent:operator, retracts=decision_id)
+```
+
+**关键设计**:retraction 是 hypothesis 的 child(从同一父分叉),不是 decision 的 child。理由:retraction 是"我在那个决策点选了不同路径"的语义,树形上应该是 sibling 不是 child。让"分叉"这个核心机制在 fixture 里就被覆盖。
+
+### 性能基线测试
+
+`test_perf_baseline_get_thread_depth_100`:100 深度 thread 的 get_thread 必须 < 50ms。
+
+**目的不是性能优化,是回归护栏**——如果 SQL 实现退化成 N+1 查询,这个测试会立刻失败。
+
+---
+
+## 17. LLM 层三层配置架构
+
+### 起点:用户的核心需求
+
+用户提出两个关键需求:
+
+1. "我们不仅要支持 api openai anthropic 还要支持 Claude code codex Gemini cli"
+2. "现在 deepseek 是 v4 flash 和 pro 我会用 flash 多一些 但是这些不应该是 hardcode 每一个 agent 可以自己选择的 用户决定"
+
+第二条揭示了**前面方案的根本问题**——routing rules 里的"primary: deepseek"既绑定了 provider 又隐含了 model,任何升级或 setup 变化都要改代码。
+
+### 设计修正:三层解耦
+
+```
+Layer 1: Provider Connections(物理层)
+  "我连接到哪些 LLM endpoint"
+  
+Layer 2: Model Profiles(逻辑层)
+  "我有哪些命名的 model 可用"
+  
+Layer 3: Agent Configurations(应用层)
+  "每个 agent 用哪个 model profile"
+  
+Layer 4: 全局覆盖(P2)
+  "省钱模式 / 高质量模式"
+```
+
+### Layer 1 的关键收敛:只有两种 type
+
+DeepSeek、Ollama、oMLX、未来 OpenAI/OpenRouter——**全部走 `openai_compatible`**,只是 base_url 不同。
+
+理由:这些 backend 都遵守 OpenAI 兼容协议(`/v1/chat/completions`)。一个 provider 实现 + 不同配置,**架构上不需要单独 provider 类型**。
+
+最终:provider type 只有 `openai_compatible` 和 `claude_code_cli` 两种。
+
+### Layer 2 的设计:命名 model + capabilities
+
+```yaml
+- id: deepseek_v4_flash
+  connection: deepseek_api
+  model_name: deepseek-v4-flash
+  context_window: 128000
+  capabilities: [text, json_mode, tools]
+  speed_tier: fast
+  quality_tier: medium
+```
+
+**关键决策**:
+- `capabilities` 是必填字段(Router 用它做约束求解)
+- `speed_tier` / `quality_tier` 给 Layer 4(P2)留 hook
+- `cost_per_1m_*` 可选(订阅制 model 是 null)
+
+### Layer 3 的设计:agent 只引用 model_id
+
+```yaml
+# config/agents/skeptic.yaml
+llm_config:
+  default_model: claude_code_opus_47
+  fallback_chain: [claude_code_opus_47, claude_code_sonnet_46, deepseek_v4_pro]
+  required_capabilities: [tools]    # 启动时校验
+  temperature: 0.3
+```
+
+**好处**:
+- 切换 provider(DeepSeek → OpenAI)只改 Layer 2,**agent 完全不动**
+- 团队分享 agent 配置不需要分享 API key
+- agent 配置可移植
+
+### Router 的工作:约束求解
+
+```python
+def select_model(req: LLMRequest, agent: Agent) -> ModelProfile:
+    """
+    1. agent.llm_config.model_overrides[req.purpose] 优先
+    2. fallback to agent.llm_config.default_model
+    3. (P2) 应用 global overrides
+    4. 验证 capabilities(req.tools 不为空 → model 必须支持 tools)
+    5. 验证 context window
+    6. 失败走 fallback_chain
+    7. 全部失败 raise NoSuitableModelError
+    """
+```
+
+**完全代码决策,无 LLM 介入**——再次实证决策路径代码化原则。
+
+### LLMPurpose Enum
+
+每次 LLM 调用必须带 `purpose: LLMPurpose` 字段:
+
+```python
+class LLMPurpose(StrEnum):
+    GENERATE_AGENT_RESPONSE = "generate_agent_response"
+    GENERATE_SNAPSHOT_SEMANTIC_FIELDS = "generate_snapshot_semantic_fields"
+    INTERPRET_TOOL_RESULT = "interpret_tool_result"
+    PROPOSE_KEY_NODE_CANDIDATE = "propose_key_node_candidate"
+    # 添加新值时 → ADR 解释为什么不能代码做
+```
+
+**好处**:
+- 添加 purpose 是显性决定(改 enum + ADR)
+- PR review 时 `grep "LLMPurpose\."` 直接列出所有 LLM 用法
+- 是自治度评分的孪生设计——评分分类操作,LLMPurpose 分类 LLM 调用
+
+### Tool calling 策略 3:purpose 决定
+
+讨论过三种策略:
+
+**策略 1**:CLI 仅用于"无工具"purpose(边界清晰但 CLI 用户失去工具)
+**策略 2**:CLI 调用作为复合操作进事件流(违反"不做复合工具")
+**策略 3**:purpose 决定 CLI 可用性(选这个)
+
+实现方式:Provider 声明 `can_use_orchestrator_tools` 属性,Router 在 `req.tools` 不空时过滤掉不支持的 provider。
+
+```python
+class OpenAICompatibleProvider:
+    can_use_orchestrator_tools = True
+
+class ClaudeCodeCLIProvider:
+    can_use_orchestrator_tools = False    # CLI 自己跑工具循环
+```
+
+**实际含义**:
+- prober、skeptic、divergence_mapper、logger 这种"纯思考"agent 可以用 Claude Code
+- **operator 必须用 API**(它要调工具)
+- 这个分工实际上很合理
+
+---
+
+## 18. Model 选择策略
+
+### Claude Code CLI 支持的 model
+
+经过事实核查(2026 年 5 月):
+
+- `opus`(Opus 4.7)— 最强,1M context,xhigh effort 默认
+- `sonnet`(Sonnet 4.6)— 日常 workhorse  
+- `haiku`(Haiku 4.5)— 便宜快速
+- `opusplan` — 特殊 alias,plan/execution 混合
+- 还有 Opus 4.6、Opus 3、Sonnet 4.5 这些更老的
+
+**额外发现**:Claude Code 可以通过 `ANTHROPIC_BASE_URL` 接 Ollama / oMLX 这种第三方 backend。但 P1 阶段**不暴露**这个配置——避免复杂度。P2 再加 alt backend 支持。
+
+### Effort level 是 model profile 字段
+
+Claude Code 还有 `effort_level`(low/medium/high/xhigh/max)。这是 **model 配置而不是 connection 配置**——同一个 Opus 4.7 在 xhigh 和 high 下行为完全不同,实际是两个不同的"逻辑 model"。
+
+```yaml
+- id: claude_code_opus_47
+  effort_level: xhigh    # Max 订阅承受得起
+
+- id: claude_code_opus_47_high   # 备选,如果用户想省时间
+  effort_level: high
+```
+
+### 默认分配的推理
+
+用户 setup:Claude **Max** 订阅 + DeepSeek API + Ollama/oMLX。
+
+**最终分配**:
+
+| Agent | Default Model | 推理 |
+|-------|--------------|------|
+| prober | claude_code_sonnet_46 | 问问题中等深度,Sonnet 够用 |
+| skeptic | **claude_code_opus_47 (xhigh)** | 找漏洞、挑战假设需要最深推理 |
+| divergence_mapper | claude_code_sonnet_46 | 中等深度,识别多视角差异 |
+| logger | claude_code_haiku_45 | 浓缩日志,快+便宜 |
+| operator | **deepseek_v4_flash** | 必须 API(支持 tools) |
+
+**关键判断**:
+- skeptic 是项目最重要的 agent(对应第 2 条原则——dissent 必须显式设计),给最强推理资源
+- operator 不能用 Claude Code(`can_use_orchestrator_tools=False`)
+- 所有 agent 都有 fallback 到 API,Claude Code 故障时不全停
+
+### 一个被 push back 的提议
+
+用户最初说"default 都可以是 Claude Code"。
+
+用户的 AI 助手 push back:operator 默认用 Claude Code 会让"工具系统在 P1 形同虚设"——operator 不能调工具。
+
+修正后:思考型 agent 默认 Claude Code,operator 默认 DeepSeek。**自然的劳动分工**,不是限制。
+
+### Fail-fast 校验
+
+启动时校验:每个 agent 的 fallback_chain 至少有一个可用 model 满足 required_capabilities。
+
+```
+✗ Configuration error: operator agent requires a model with tools capability.
+
+Currently configured:
+  ✓ claude_code (no orchestrator tools)
+  ✗ deepseek_api (DEEPSEEK_API_KEY not set)
+  ✗ ollama_local (server not running)
+
+To fix:
+  1. Set DEEPSEEK_API_KEY, or
+  2. Start Ollama (`ollama serve`), or
+  3. Start oMLX server
+```
+
+**符合第 11 条原则**——没 ground truth 就要立刻知道,不要 silent degradation。
+
+### CLI Provider 的录像测试
+
+Claude Code CLI 的输出包含 ANSI、markdown、进度信息,parser 容易因 CLI 升级而坏。
+
+**录像测试基础设施**:
+
+```
+tests/llm/providers/claude_code_cli/recordings/
+  v2.1.131/
+    simple_response.txt           # 录的真实输出
+    simple_response.expected.json # parser 应该提取的结构
+    with_thinking.txt
+    with_thinking.expected.json
+```
+
+CLI 升级时录新版本,跑两个版本比对差异,差异需要 ADR 解释。
+
+### 测试纪律三层
+
+1. **Schema 测试**(必跑,无 LLM):测纯函数处理 LLM JSON 输出
+2. **Mock 集成测试**(必跑,无 LLM):预录响应跑流水线
+3. **真 LLM 探针测试**(选跑,`@pytest.mark.real_llm`):每周一次,验证 prompt 在真 LLM 上没退化
+
+第三层经常被忽视,但是**发现 prompt drift 的唯一方法**。CI 里手动触发,每周 review 必看。
+
+---
+
+## 19. P1 重新拆分的推理
+
+### 起点
+
+Claude Code 最初提出 P1 拆 5 个 PR:
+
+```
+P1.1 自治度评分系统  1 周
+P1.2 Skill loader + LLM 客户端  1 周
+P1.3 Agent runtime + prober + skeptic  1.5-2 周
+P1.4 Research room + 状态机  3-5 天
+P1.5 Snapshot + 决策日志 + E2E  1 周
+```
+
+### 第一个 push back:垂直切片优先
+
+用户 push back:这是 big bang integration——前 4 周看不到端到端价值,P1.5 才发现拼起来有 bug 时代价巨大。
+
+**这个论证 Claude Code 在 P0 时用过**——"等到 P1 才发现地基有 bug,代价巨大"。同样的逻辑现在用在 P1 自己。
+
+修正:加入 P1.0 垂直切片(3-4 天):
+
+```
+P1.0  端到端骨架  3-4 天
+      - 一个 agent (prober)
+      - 一个 skill
+      - 一个 room type (free_chat)
+      - 没有自治度
+      - 没有状态机
+      - 没有 snapshot
+      但端到端能跑
+```
+
+P1.0 的目标不是 demo 出货,是**第一周就让接口被实际使用**——agent runtime / skill loader / LLM 客户端的接口缺陷会立刻暴露。
+
+### 第二个 push back:LLM 层提前
+
+LLM provider 抽象是核心基础设施,不能埋在 P1.2"Skill loader + LLM 客户端"里和 Skill 混在一起。
+
+修正:LLM 层独立成 P1.1,Skill loader 推到 P1.3。
+
+```
+P1.0  端到端骨架  3-4 天
+P1.1  LLM provider 抽象  1.5-2 周
+P1.2  自治度评分系统  1 周
+P1.3  Skill loader  3-5 天
+P1.4  Skeptic + 多 agent 协调  1.5 周
+P1.5  Research room + 状态机  3-5 天
+P1.6  Snapshot + decision log + E2E  1 周
+```
+
+总时间增加约 1 周,但避免 LLM 层和 Skill 层混在一个 PR 的 mess。
+
+### Reframe:E2E 测试每个 PR 都做
+
+原计划 E2E 测试在 P1.6 一次做。修正:**每个 PR 都做 E2E**。
+
+```
+P1.0 E2E:用户输入 → prober → 事件流正确(无 UI,看事件流)
+P1.1 E2E:换真 LLM,验证响应不是垃圾
+P1.2 E2E:加自治度,确认工具调用走评分
+P1.3 E2E:Skill 触发正确
+P1.4 E2E:多 agent 协调
+P1.5 E2E:状态切换
+P1.6 E2E:完整研究场景
+```
+
+每个 PR 的 E2E 是**护栏**——下个 PR 写歪了旧 E2E 会失败。这是 TDD 精神放在 PR 边界上。
+
+### Push back 的元教训
+
+P1 这次重排是 P0 教训的应用——但**Claude Code 自己没主动应用**,需要用户提醒。
+
+这说明:即使原则被讨论清楚,在新场景下也需要**显式重新检查**。原则不会自动迁移。
+
+应对:在 PR 模板里加一行:"这个 PR 是否符合'地基完整,功能少'原则?如果你的 E2E 测试在 PR 内不能通过,说明范围错了"。
+
+---
+
+## 20. Claude Code 协作中的 dissent 模式
+
+### Honest interlocutor 在协作里的实践
+
+这个项目的核心理念"AI 让人想得更清楚"在 Claude Code 协作里有**直接应用**——用户和 Claude Code 之间也要 honest interlocutor。
+
+观察到的良性模式:
+
+**Claude Code 主动 push back**(P0 阶段):
+- "P0 验收标准看起来就是个普通 chatbot,没有架构红利"
+- "你的 5 子 PR 拆分逻辑严密,但前 4 个 PR 都不能演示价值"
+
+**用户对 Claude Code push back**(P1 阶段):
+- "你借用'读取宽容、写入严格'这个原则,但这是网络协议设计的,不适用内部 API"
+- "你说 default 都用 Claude Code,但 operator 用了就跑不起来"
+
+**主动邀请 dissent**:
+- 用户:"四个选择里,有没有哪一个你其实有保留意见但没说?"
+- 这种姿态比闷着等问题暴露更有效
+
+### Claude Code 没主动 push back 的几次
+
+也观察到 Claude Code 在某些场景下**没主动 push back**:
+
+1. P1 拆分时没意识到自己用过的"地基完整"原则也适用 P1
+2. 提议 `IF NOT EXISTS` 时没区分 TABLE 和 TRIGGER 的语义差异
+3. 默认接受了用户的"all 4 推荐"选项,没说"其实 X 我有保留"
+
+**Meta 教训**:
+- LLM 协作里,听起来对但场景不对的论证最危险
+- 用户主动邀请 dissent("你有没有保留意见")比被动等待更有效
+- 原则的迁移不会自动发生,需要在新场景显式重新应用
+
+### 工作流的 3 个关键习惯
+
+1. **接口冻结 → 实现 → ADR 三段式**
+   - 先 stub + 签名,review 接口,再实现
+   - 接口期改一行,实现期改 100 行
+   - 每个重大 PR 配 ADR
+
+2. **每个 PR 主动列"我做了哪些选择,你来 challenge"**
+   - 不是"我做完了你 review"
+   - 而是"我做完了,这 6 个选择我倾向 A 但有 B C D 可能,你看看"
+
+3. **文档 v1 → v2 同步**
+   - 每经过几次大设计讨论,文档要更新
+   - handoff(做什么) + chat-history(为什么) + ADR(关键决策)
+   - 否则 Claude Code 切换 session 时会失去一致性
+
+### 给 Claude Code 的工作建议(协作层)
+
+1. **每个 PR 主动暴露 3-5 个"值得 challenge"的选择**
+2. **借用外部原则前,先确认场景适用范围**(区分 Postel's Law 和内部 API、区分 TABLE 和 TRIGGER 的幂等需求等)
+3. **当用户给"全推荐"时,主动问"你想让我 push back 哪个吗?"**
+4. **每个新场景显式重新应用旧原则**(不要假设原则会自动迁移)
+5. **遇到不确定时,用 ADR 把选择和理由都记录下来**(未来的人能看到当时为什么这么决定)
+
+---
+
+## 用户原话补充(v2)
+
+v2 阶段的关键原话:
+
+> "ollama and omlx 都要 omlx 你要搜一下"(揭示 oMLX 是 macMLX 项目,OpenAI 兼容 server)
+
+> "现在 deepseek 是 v4 flash 和 pro 我会用 flash 多一些 但是这些不应该是 hardcode 每一个 agent 可以自己选择的 用户决定"(三层解耦的来源)
+
+> "Layer 4 可以在 P2 目前不着急 default 都可以是 Claude code"(被 push back,因为 operator 需要 tools)
+
+> "我是 max"(决定 Opus 4.7 默认 effort_level=xhigh)
+
+---
+
+**最后**:这个项目的设计还在演化。每次重大讨论后,文档应该被更新。如果你看到 chat-history 和 handoff 不一致,**handoff 是真相**,history 是演化过程。
+
