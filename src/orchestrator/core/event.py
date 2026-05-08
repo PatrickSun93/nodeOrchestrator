@@ -1,0 +1,350 @@
+"""Core event types: Event, EventType, metadata schemas, Relation, exceptions.
+
+This file defines the SHAPE of events in the system. It contains no SQL,
+no I/O, no decision logic beyond per-type metadata validation (which is a
+parser, not a routing decision). All routing, gating, and persistence
+lives in event_store.py.
+
+Per the architecture rules in handoff.md and chat-history.md:
+  - Decision paths in code (event_store.py).
+  - Type definitions and pure parsing (this file).
+  - LLM content generation (not in this file).
+"""
+
+from __future__ import annotations
+
+import re
+import time
+import uuid
+from enum import StrEnum
+from typing import Any, Literal, NewType
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+# ---------------------------------------------------------------------------
+# Identifier and timestamp newtypes
+# ---------------------------------------------------------------------------
+
+EventId = NewType("EventId", str)
+RoomId = NewType("RoomId", str)
+TimestampMs = NewType("TimestampMs", int)
+
+
+def now_ms() -> TimestampMs:
+    """Current wall-clock time in epoch milliseconds."""
+    return TimestampMs(int(time.time() * 1000))
+
+
+def generate_event_id() -> EventId:
+    """Generate a new event id.
+
+    Format: ``evt_<32-hex>`` (Stripe-style typed prefix + uuid4 hex).
+    The prefix lets a human reading logs distinguish events from rooms or
+    other entities at a glance — debugging is the first audience for ids.
+    Chronological ordering is the responsibility of the ``timestamp``
+    column, not the id, so uuid4's lack of time-sortability is irrelevant.
+
+    If we later want time-sortable ids (uuid7), the format can change
+    without affecting any external API: callers always treat ids as
+    opaque strings.
+    """
+    return EventId(f"evt_{uuid.uuid4().hex}")
+
+
+def generate_room_id() -> RoomId:
+    """Generate a new room id.
+
+    Format: ``room_<32-hex>``. Same Stripe-style typed-prefix logic as
+    ``generate_event_id`` — the prefix is for human readers, not parsers.
+    """
+    return RoomId(f"room_{uuid.uuid4().hex}")
+
+
+# ---------------------------------------------------------------------------
+# Event types — the system's vocabulary
+# ---------------------------------------------------------------------------
+
+
+class EventType(StrEnum):
+    """The 16 constitutional event types.
+
+    See docs/architecture/event-model.md for why this list is constitutional
+    and what to do (and not do) when extending it. In short: adding a type
+    requires an ADR; renaming or merging types is a breaking change; a
+    `generic_message` catch-all is forbidden.
+    """
+
+    USER_INPUT = "user_input"
+    UTTERANCE = "utterance"
+    HYPOTHESIS = "hypothesis"
+    DECISION = "decision"
+    REJECTION = "rejection"
+    RETRACTION = "retraction"
+    OBSERVATION = "observation"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    TOOL_FAILED = "tool_failed"
+    ESCALATION = "escalation"
+    SUMMARY_SNAPSHOT = "summary_snapshot"
+    STATE_TRANSITION = "state_transition"
+    MILESTONE = "milestone"
+    TERM_DEFINITION = "term_definition"
+    DECISION_PIVOT = "decision_pivot"
+
+
+class RelationType(StrEnum):
+    """Structural relation types extracted from events.
+
+    These are the four edges that can be derived purely from event metadata
+    (no LLM interpretation). Semantic relations (`supersedes`, `derives_from`,
+    `related_to`) require LLM-suggested + human-confirmed flow; out of P0.
+    """
+
+    REJECTS = "rejects"
+    RETRACTS = "retracts"
+    BASED_ON = "based_on"
+    REPLIES_TO = "replies_to"
+
+
+# ---------------------------------------------------------------------------
+# Per-type metadata schemas
+#
+# Strict schema for the ~6 types code reliably writes/reads in P0.
+# Other 10 types pass through as dict[str, Any] until a use case
+# justifies tightening (with an ADR).
+# ---------------------------------------------------------------------------
+
+
+class _BaseMeta(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class HypothesisMeta(_BaseMeta):
+    """Metadata for `hypothesis` events.
+
+    `confidence` is required and bounded. `based_on` may be empty for
+    fresh hypotheses with no prior anchoring event.
+    """
+
+    confidence: float = Field(ge=0.0, le=1.0)
+    based_on: list[EventId] = Field(default_factory=list)
+
+
+class DecisionMeta(_BaseMeta):
+    """Metadata for `decision` events.
+
+    `based_on` must list at least one event the decision rests on; a
+    decision without a citation is a gut call and should be appended as
+    an `utterance` instead. `trade_offs` is a free-form mapping of
+    dimension -> choice (e.g., `"cost": "accepted higher to reduce risk"`).
+    """
+
+    based_on: list[EventId] = Field(min_length=1)
+    trade_offs: dict[str, str] = Field(default_factory=dict)
+
+
+class RejectionMeta(_BaseMeta):
+    """Metadata for `rejection` events.
+
+    A rejection must cite the specific event it rejects (per the skeptic's
+    forbidden_behaviors in chat-history.md §3 — "vague rejection" is a
+    forbidden behavior).
+    """
+
+    rejects: EventId
+    reason: str = Field(min_length=1)
+
+
+class RetractionMeta(_BaseMeta):
+    """Metadata for `retraction` events.
+
+    The original event is NOT removed; the retraction is an additive
+    event that supersedes it. `retracts` cites the prior event.
+    """
+
+    retracts: EventId
+    reason: str = Field(min_length=1)
+
+
+class ToolCallMeta(_BaseMeta):
+    """Metadata for `tool_call` events.
+
+    `call_id` ties this call to its eventual `tool_result` or
+    `tool_failed` event for replay and audit.
+    """
+
+    tool_name: str = Field(min_length=1)
+    call_id: str = Field(min_length=1)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolResultMeta(_BaseMeta):
+    """Metadata for `tool_result` events.
+
+    `output_truncated_at` records the byte offset where the tool result
+    was cut for context window reasons (None if the result was returned
+    in full). `error_class` is set if the tool returned a recoverable
+    error inline rather than via a separate `tool_failed` event.
+    """
+
+    call_id: str = Field(min_length=1)
+    success: bool
+    output_truncated_at: int | None = None
+    error_class: str | None = None
+
+
+TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
+    EventType.HYPOTHESIS: HypothesisMeta,
+    EventType.DECISION: DecisionMeta,
+    EventType.REJECTION: RejectionMeta,
+    EventType.RETRACTION: RetractionMeta,
+    EventType.TOOL_CALL: ToolCallMeta,
+    EventType.TOOL_RESULT: ToolResultMeta,
+}
+
+
+# ---------------------------------------------------------------------------
+# Author format
+# ---------------------------------------------------------------------------
+
+_AUTHOR_PATTERN = re.compile(r"^(user|system|agent:[a-zA-Z0-9_-]+)$")
+
+
+def is_valid_author(author: str) -> bool:
+    """True if `author` matches `user` | `agent:<id>` | `system`.
+
+    `<id>` is one or more of `[a-zA-Z0-9_-]`.
+    """
+    return bool(_AUTHOR_PATTERN.fullmatch(author))
+
+
+# ---------------------------------------------------------------------------
+# Custom exceptions
+# ---------------------------------------------------------------------------
+
+
+class MetadataValidationError(ValueError):
+    """Raised when metadata fails the per-type schema for a TYPED_METADATA
+    event type."""
+
+
+class RoomNotFoundError(LookupError):
+    """Raised on append() when `room_id` does not reference an existing
+    room. Validation happens at write time."""
+
+
+class EventNotFoundError(LookupError):
+    """Raised when a read API receives an event_id that does not exist
+    AND the empty case has a different semantic meaning. Specifically:
+    `get_thread(unknown_id)` raises this rather than returning ``[]``,
+    because returning ``[]`` would conflate "unknown id" (a bug) with
+    "thread is empty" (impossible — every event is at least the root
+    of its own thread). Per Principle 4 — using empty data to express
+    unknown is prose hedging in disguise.
+
+    Functions whose empty case IS legitimate (e.g. `get_room_events` of
+    a freshly created room) return ``[]`` and do NOT raise this.
+    """
+
+
+ParentInvalidReason = Literal["not_found", "cross_room", "self_parent"]
+
+
+class InvalidParentError(ValueError):
+    """Raised on append() when `parent_id` is invalid in any of three ways.
+
+    Callers that want to react differently per failure mode should
+    discriminate on `.reason`, not parse `str(e)`:
+
+        try:
+            store.append(event)
+        except InvalidParentError as e:
+            match e.reason:
+                case "not_found":   ...
+                case "cross_room":  ...
+                case "self_parent": ...
+
+    `.reason` is a `Literal[...]`, so type checkers can flag missing
+    cases in a `match` over it.
+    """
+
+    reason: ParentInvalidReason
+
+    def __init__(self, reason: ParentInvalidReason, message: str = "") -> None:
+        self.reason = reason
+        super().__init__(message or f"parent_id invalid: {reason}")
+
+
+# ---------------------------------------------------------------------------
+# Metadata validation (parser, not routing logic)
+# ---------------------------------------------------------------------------
+
+
+def validate_metadata(event_type: EventType, metadata: dict[str, Any]) -> dict[str, Any]:
+    """Validate metadata against the per-type schema if one exists.
+
+    For TYPED_METADATA event types: parse via Pydantic and return the
+    normalized dict (with defaults filled in). For other types: pass the
+    dict through unchanged.
+
+    This is a parser, not a routing decision — it's safe to live in
+    event.py rather than event_store.py.
+
+    Raises:
+        MetadataValidationError: validation failed for a typed event type.
+    """
+    schema = TYPED_METADATA.get(event_type)
+    if schema is None:
+        return metadata
+    try:
+        return schema.model_validate(metadata).model_dump()
+    except ValidationError as e:
+        raise MetadataValidationError(f"metadata for {event_type.value} failed schema: {e}") from e
+
+
+# ---------------------------------------------------------------------------
+# Event and Relation
+# ---------------------------------------------------------------------------
+
+
+class Event(BaseModel):
+    """An immutable event in the append-only event log.
+
+    `metadata` is `dict[str, Any]` for storage flexibility; per-type
+    schema validation happens via `validate_metadata()` at append time.
+    Application-layer `frozen=True` plus the schema-level UPDATE/DELETE
+    triggers give overlapping append-only enforcement (see event-model.md
+    §"Append-only enforcement").
+    """
+
+    id: EventId
+    parent_id: EventId | None = None
+    room_id: RoomId
+    type: EventType
+    author: str
+    timestamp: TimestampMs
+    content: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    @field_validator("author")
+    @classmethod
+    def _check_author(cls, v: str) -> str:
+        if not is_valid_author(v):
+            raise ValueError(f"author must match 'user' | 'agent:<id>' | 'system', got {v!r}")
+        return v
+
+
+class Relation(BaseModel):
+    """A structural edge between events. Persisted in the `relations` table,
+    which is a CACHE — not append-only. Can be rebuilt from events at any
+    time via the same pure `extract_structural_relations` function.
+    """
+
+    event_id: EventId
+    relation_type: RelationType
+    target_event_id: EventId
+    extracted_at: TimestampMs
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
