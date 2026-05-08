@@ -343,33 +343,34 @@ skills/
 #### Layer 1: Provider Connections(物理层)
 
 ```yaml
-# config/llm_providers.yaml
-version: 1
+# config/llm_providers.yaml — top-level key is `providers:` (map form).
+# Provider id is the map key; type-specific config goes under `params:`.
+# Canonical reference: config/llm_providers.yaml.example.
 
-connections:
-  - id: deepseek_api
+providers:
+  deepseek:
     type: openai_compatible
-    base_url: https://api.deepseek.com/v1
-    api_key_env: DEEPSEEK_API_KEY
-    
-  - id: anthropic_api
-    type: openai_compatible    # Anthropic 也走 OpenAI 兼容
-    base_url: https://api.anthropic.com/v1
-    api_key_env: ANTHROPIC_API_KEY
-    
-  - id: ollama_local
+    params:
+      base_url: https://api.deepseek.com/v1
+      api_key_env: DEEPSEEK_API_KEY
+
+  ollama_local:
     type: openai_compatible
-    base_url: http://localhost:11434/v1
-    api_key: not-needed
-    
-  - id: omlx_local
+    params:
+      base_url: http://localhost:11434/v1
+      api_key_env: ""        # local — no auth header
+
+  mlx_local:
     type: openai_compatible
-    base_url: http://localhost:8000/v1
-    api_key: not-needed
-    
-  - id: claude_code
+    params:
+      base_url: http://localhost:8080/v1
+      api_key_env: ""
+
+  anthropic_via_claude_code:
     type: claude_code_cli
-    binary_path: claude
+    params:
+      cli_path: claude
+      timeout_s: 600
 ```
 
 **Provider type 只有两种**:`openai_compatible` 和 `claude_code_cli`。其他 backend(DeepSeek、Ollama、oMLX、未来 OpenAI/OpenRouter)都通过 `openai_compatible` + 不同 base_url 实现。
@@ -499,24 +500,26 @@ llm_config:
 每次 LLM 调用必须带 `purpose` 字段:
 
 ```python
-# src/orchestrator/llm/purposes.py
+# src/orchestrator/llm/purposes.py — canonical list lives in code.
+# Per-agent role discrimination uses LLMRequest.caller_agent_id, not
+# separate enum values — adding a new agent role does not require
+# extending the enum.
 from enum import StrEnum
 
 class LLMPurpose(StrEnum):
-    # 内容生成(允许)
-    GENERATE_AGENT_RESPONSE = "generate_agent_response"
-    GENERATE_SNAPSHOT_SEMANTIC_FIELDS = "generate_snapshot_semantic_fields"
-    GENERATE_HYPOTHESIS_CONTENT = "generate_hypothesis_content"
-    
-    # 解读 / 翻译(允许)
-    INTERPRET_TOOL_RESULT = "interpret_tool_result"
-    PARSE_USER_INTENT = "parse_user_intent"
-    
-    # 候选生成(允许)
-    PROPOSE_KEY_NODE_CANDIDATE = "propose_key_node_candidate"
-    PROPOSE_HYPOTHESIS_CANDIDATE = "propose_hypothesis_candidate"
-    
-    # 添加新值时,在 ADR 里讨论为什么不能用代码做
+    # Agent-driven content generation. Each agent role files responses
+    # under this purpose; caller_agent_id discriminates.
+    AGENT_RESPONSE = "agent_response"
+
+    # Structural LLM uses — each one is a load-bearing trade-off.
+    SNAPSHOT_SEMANTIC = "snapshot_semantic"
+    HYPOTHESIS_CANDIDATE = "hypothesis_candidate"
+    KEY_NODE_CANDIDATE = "key_node_candidate"
+    TOOL_OUTPUT_INTERPRET = "tool_output_interpret"
+    TERM_DEFINITION_PROPOSAL = "term_definition_proposal"
+
+    # Adding a new value requires an ADR explaining why no code path
+    # was sufficient. PR template Q1 enforces this at review time.
 ```
 
 **好处**:

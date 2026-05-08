@@ -20,6 +20,7 @@ from typing import Protocol, runtime_checkable
 from orchestrator.llm.types import (
     LLMRequest,
     LLMResponse,
+    ModelId,
     ModelProfile,
     ProviderId,
 )
@@ -64,16 +65,34 @@ class LLMProvider(Protocol):
         """
         ...
 
-    async def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
+    async def call(
+        self,
+        request: LLMRequest,
+        model: ModelProfile,
+        *,
+        model_id_requested: ModelId,
+    ) -> LLMResponse:
         """Execute one LLM request against ``model`` via this provider.
+
+        ``model`` is what the router resolved to (may be a fallback).
+        ``model_id_requested`` is the head of the agent's chain — i.e.,
+        ``agent_config.default_model``. Both arrive separately because
+        the provider cannot infer them: when a fallback fires, the
+        provider only sees the resolved model, but the audit log still
+        needs to record what was originally asked. Caller (agent
+        runtime) reads both off ``RouteResult`` and passes them in.
 
         Provider responsibilities:
 
         - Translate ``LLMRequest`` into the provider's wire format.
         - Call the provider API/CLI.
-        - Translate the response back to ``LLMResponse``, including
-          ``model_id_used``, ``provider_id_used``, ``usage``,
-          ``latency_ms``, and ``finish_reason``.
+        - Translate the response back to ``LLMResponse``, populating:
+
+          * ``model_id_requested`` from the keyword argument,
+          * ``model_id_used`` from ``model.id``,
+          * ``provider_id_used`` from ``self.provider_id``,
+          * ``usage``, ``latency_ms``, ``finish_reason``.
+
         - Categorize errors as ``Transient``/``Permanent``/``Unhealthy``
           via the exceptions in ``orchestrator.llm.exceptions``.
 

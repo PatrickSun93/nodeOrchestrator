@@ -28,6 +28,7 @@ from orchestrator.llm.purposes import LLMPurpose
 from orchestrator.llm.types import (
     LLMRequest,
     LLMResponse,
+    ModelId,
     ModelProfile,
     ProviderId,
     Usage,
@@ -78,7 +79,13 @@ class MockProvider:
     def health_check(self) -> bool:
         return self.healthy
 
-    async def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
+    async def call(
+        self,
+        request: LLMRequest,
+        model: ModelProfile,
+        *,
+        model_id_requested: ModelId,
+    ) -> LLMResponse:
         """Record the call, look up a canned response, and return.
 
         Lookup order:
@@ -129,7 +136,7 @@ class MockProvider:
             request_id=request.request_id,
             content=content,
             tool_calls=[],
-            model_id_requested=model.id,
+            model_id_requested=model_id_requested,
             model_id_used=model.id,
             provider_id_used=self.provider_id,
             usage=Usage(input_tokens=0, output_tokens=0),

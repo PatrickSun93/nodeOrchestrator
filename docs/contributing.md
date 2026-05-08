@@ -79,6 +79,46 @@ surface is intentionally left at the old shape (e.g. an ADR being
 superseded keeps its text), call that out explicitly in the row's
 status field, not silently.
 
+**README.md is intentionally excluded from the 5-surface scan.** README
+is the project's entry point for new users — intro, motivation,
+quick-start. It should not contain spec-level detail (data structures,
+schema fields, configuration syntax). Spec details that leak into
+README are README's own bug, not a 5-surface failure. If you find
+yourself wanting to add schema detail to README, the right move is a
+link to the relevant doc, not duplication.
+
+### Layer-crossing field plumbing
+
+The 5-surface scan above checks **static** drift — surfaces that
+describe the same schema getting out of sync. There is a second
+shape of drift the static scan does NOT catch: **fields added in
+one type but not plumbed through the signatures that connect their
+producer to their consumer.**
+
+Example from this project: ``RouteResult.model_id_requested`` was
+added to the router's return type, but ``Protocol.call``'s signature
+did not gain a ``model_id_requested`` parameter. Result: the field
+existed at the router boundary but couldn't reach the provider
+boundary, and the provider's ``LLMResponse`` filled
+``model_id_requested`` from ``model.id`` (silently swallowing
+fallback signal).
+
+When a schema change adds a field meant to flow across module
+boundaries:
+
+- Identify the **source** (where the field is first populated).
+- Identify the **sink** (where the field is finally read or persisted).
+- Trace every signature the field traverses between source and sink.
+- Each intermediate signature must accept and pass the field.
+- A unit test must verify the data flow with the source and sink
+  values **distinct** — it is the only way to catch the
+  ``source = sink`` shortcut that hides the missing plumbing.
+
+Type checking does NOT catch this on its own: if every intermediate
+function happens to derive a sensible-looking value from data it
+already has, the chain compiles cleanly while leaking the original
+signal. The data-flow test is the catch.
+
 ## Architecture decisions (ADRs)
 
 Decisions that change the shape of the system live in `docs/decisions/`

@@ -318,7 +318,15 @@ class AgentLLMConfig(BaseModel):
     ``default_model``; the router walks
     ``[default_model, *fallback_chain]`` internally. Per Principle 9
     term audit — duplicating the default in both fields would be
-    one concept under two names."""
+    one concept under two names.
+
+    An empty list means **no fallback**. The agent is single-point-
+    of-failure on ``default_model``: a transient outage on the only
+    provider strands the agent until the outage clears. This is
+    acceptable for development or single-provider setups (e.g., a
+    user with only Claude Code, no DeepSeek key). Production agents
+    expected to keep working through provider hiccups should have
+    at least one fallback."""
 
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, gt=0)

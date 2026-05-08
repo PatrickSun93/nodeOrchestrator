@@ -30,6 +30,7 @@ from orchestrator.llm.exceptions import (
 from orchestrator.llm.types import (
     LLMRequest,
     LLMResponse,
+    ModelId,
     ModelProfile,
     ProviderId,
     ToolCall,
@@ -95,7 +96,13 @@ class OpenAICompatibleProvider:
             return False
         return 200 <= response.status_code < 300
 
-    async def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
+    async def call(
+        self,
+        request: LLMRequest,
+        model: ModelProfile,
+        *,
+        model_id_requested: ModelId,
+    ) -> LLMResponse:
         """Translate ``LLMRequest`` into Chat Completions format,
         POST to ``{base_url}/chat/completions`` via
         ``httpx.AsyncClient``, parse response.
@@ -203,7 +210,14 @@ class OpenAICompatibleProvider:
         except ValueError as e:
             raise PermanentProviderError(f"non-JSON response from {url}: {e}") from e
 
-        return _parse_chat_completion(data, request, model, self.provider_id, latency_ms)
+        return _parse_chat_completion(
+            data,
+            request,
+            model,
+            self.provider_id,
+            latency_ms,
+            model_id_requested=model_id_requested,
+        )
 
 
 def _parse_chat_completion(
@@ -212,6 +226,8 @@ def _parse_chat_completion(
     model: ModelProfile,
     provider_id: ProviderId,
     latency_ms: int,
+    *,
+    model_id_requested: ModelId,
 ) -> LLMResponse:
     """Translate one OpenAI Chat Completions response to LLMResponse."""
     try:
@@ -265,7 +281,7 @@ def _parse_chat_completion(
             request_id=request.request_id,
             content=content,
             tool_calls=tool_calls,
-            model_id_requested=model.id,
+            model_id_requested=model_id_requested,
             model_id_used=model.id,
             provider_id_used=provider_id,
             usage=usage,

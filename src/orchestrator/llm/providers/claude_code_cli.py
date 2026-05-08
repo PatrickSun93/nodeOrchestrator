@@ -33,6 +33,7 @@ from orchestrator.llm.parsers.claude_code_output import parse_claude_code_output
 from orchestrator.llm.types import (
     LLMRequest,
     LLMResponse,
+    ModelId,
     ModelProfile,
     ProviderId,
 )
@@ -95,7 +96,13 @@ class ClaudeCodeCliProvider:
             return False
         return result.returncode == 0
 
-    async def call(self, request: LLMRequest, model: ModelProfile) -> LLMResponse:
+    async def call(
+        self,
+        request: LLMRequest,
+        model: ModelProfile,
+        *,
+        model_id_requested: ModelId,
+    ) -> LLMResponse:
         """Invoke the CLI with the request serialized as stdin.
 
         Uses ``asyncio.create_subprocess_exec`` so the orchestrator
@@ -193,7 +200,7 @@ class ClaudeCodeCliProvider:
         return parse_claude_code_output(
             stdout.decode("utf-8", errors="replace"),
             request_id=request.request_id,
-            model_id_requested=model.id,
+            model_id_requested=model_id_requested,
             model_id_used=model.id,
             provider_id=self.provider_id,
             latency_ms=latency_ms,

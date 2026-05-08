@@ -9,6 +9,7 @@ from orchestrator.llm.purposes import LLMPurpose
 from orchestrator.llm.types import (
     Capability,
     LLMRequest,
+    LLMResponse,
     Message,
     ModelId,
     ModelProfile,
@@ -42,6 +43,14 @@ def _request(
     )
 
 
+async def _call(p: MockProvider, request: LLMRequest, model: ModelProfile) -> LLMResponse:
+    """Test wrapper: defaults ``model_id_requested`` to ``model.id``
+    (the case where tests don't distinguish requested vs used).
+    Tests that DO want to verify fallback signal flow should construct
+    the call directly with a different ``model_id_requested``."""
+    return await MockProvider.call(p, request, model, model_id_requested=model.id)
+
+
 class TestProviderProtocolBasics:
     def test_provider_id(self) -> None:
         p = MockProvider(provider_id=MOCK_PROVIDER_ID)
@@ -73,7 +82,7 @@ class TestExactMatch:
             },
         )
         req = _request(caller_agent_id="agent:prober")
-        resp = await p.call(req, _model())
+        resp = await _call(p, req, _model())
         assert resp.content == "what about X?"
         assert resp.request_id == req.request_id
         assert resp.model_id_used == TEST_MODEL_ID
@@ -91,7 +100,7 @@ class TestRoundRobin:
         )
         contents: list[str] = []
         for _ in range(3):
-            resp = await p.call(_request(caller_agent_id="agent:prober"), _model())
+            resp = await _call(p, _request(caller_agent_id="agent:prober"), _model())
             contents.append(resp.content)
         assert contents == ["one", "two", "three"]
 
@@ -105,10 +114,10 @@ class TestRoundRobin:
             },
         )
         # Interleave prober/skeptic calls
-        r1 = await p.call(_request(caller_agent_id="agent:prober"), _model())
-        r2 = await p.call(_request(caller_agent_id="agent:skeptic"), _model())
-        r3 = await p.call(_request(caller_agent_id="agent:prober"), _model())
-        r4 = await p.call(_request(caller_agent_id="agent:skeptic"), _model())
+        r1 = await _call(p, _request(caller_agent_id="agent:prober"), _model())
+        r2 = await _call(p, _request(caller_agent_id="agent:skeptic"), _model())
+        r3 = await _call(p, _request(caller_agent_id="agent:prober"), _model())
+        r4 = await _call(p, _request(caller_agent_id="agent:skeptic"), _model())
         assert [r.content for r in (r1, r2, r3, r4)] == ["P1", "S1", "P2", "S2"]
 
 
@@ -126,7 +135,7 @@ class TestFallbackKey:
             purpose=LLMPurpose.SNAPSHOT_SEMANTIC,
             caller_agent_id="agent:logger",
         )
-        resp = await p.call(req, _model())
+        resp = await _call(p, req, _model())
         assert resp.content == "focus: X"
 
     async def test_exact_preferred_over_fallback(self) -> None:
@@ -139,7 +148,7 @@ class TestFallbackKey:
             },
         )
         req = _request(caller_agent_id="agent:prober")
-        resp = await p.call(req, _model())
+        resp = await _call(p, req, _model())
         assert resp.content == "specific"
 
 
@@ -147,25 +156,25 @@ class TestExhaustion:
     async def test_unknown_purpose_raises(self) -> None:
         p = MockProvider(provider_id=MOCK_PROVIDER_ID, responses={})
         with pytest.raises(MockResponseExhaustedError, match="no canned responses"):
-            await p.call(_request(), _model())
+            await _call(p, _request(), _model())
 
     async def test_exhausted_list_raises(self) -> None:
         p = MockProvider(
             provider_id=MOCK_PROVIDER_ID,
             responses={(LLMPurpose.AGENT_RESPONSE, None): ["only one"]},
         )
-        await p.call(_request(), _model())  # consumes "only one"
+        await _call(p, _request(), _model())  # consumes "only one"
         with pytest.raises(MockResponseExhaustedError, match="exhausted"):
-            await p.call(_request(), _model())
+            await _call(p, _request(), _model())
 
     async def test_exhaustion_message_includes_call_number(self) -> None:
         p = MockProvider(
             provider_id=MOCK_PROVIDER_ID,
             responses={(LLMPurpose.AGENT_RESPONSE, None): ["a"]},
         )
-        await p.call(_request(), _model())
+        await _call(p, _request(), _model())
         with pytest.raises(MockResponseExhaustedError, match="call #2"):
-            await p.call(_request(), _model())
+            await _call(p, _request(), _model())
 
 
 class TestCallsCapture:
@@ -176,8 +185,8 @@ class TestCallsCapture:
         )
         req1 = _request(caller_agent_id="agent:prober")
         req2 = _request(caller_agent_id="agent:skeptic")
-        await p.call(req1, _model())
-        await p.call(req2, _model())
+        await _call(p, req1, _model())
+        await _call(p, req2, _model())
         captured = p.calls
         assert len(captured) == 2
         assert captured[0].caller_agent_id == "agent:prober"
@@ -188,7 +197,7 @@ class TestCallsCapture:
         a test that calls more than registered."""
         p = MockProvider(provider_id=MOCK_PROVIDER_ID, responses={})
         with pytest.raises(MockResponseExhaustedError):
-            await p.call(_request(), _model())
+            await _call(p, _request(), _model())
         assert len(p.calls) == 1
 
 
@@ -215,15 +224,48 @@ class TestConstitution:
         # 3rd would also hit the per-agent key but exhausted -> raise.
         # It does NOT fall through to the (purpose, None) fallback —
         # exhaustion of a matched key is a test bug, not a fall-through.
-        r1 = await p.call(_request(caller_agent_id="agent:prober"), _model())
-        r2 = await p.call(_request(caller_agent_id="agent:prober"), _model())
+        r1 = await _call(p, _request(caller_agent_id="agent:prober"), _model())
+        r2 = await _call(p, _request(caller_agent_id="agent:prober"), _model())
         assert [r1.content, r2.content] == ["P1", "P2"]
         with pytest.raises(MockResponseExhaustedError, match="exhausted"):
-            await p.call(_request(caller_agent_id="agent:prober"), _model())
+            await _call(p, _request(caller_agent_id="agent:prober"), _model())
 
         # The fallback key cursor should NOT have advanced during the
         # prober calls — it's a separate matched key.
         # Using a different agent (whose exact key is unregistered)
         # routes to the fallback for the first time:
-        r4 = await p.call(_request(caller_agent_id="agent:other"), _model())
+        r4 = await _call(p, _request(caller_agent_id="agent:other"), _model())
         assert r4.content == "G1"  # fallback cursor at 0, not 2 or 3
+
+    async def test_constitution_model_id_requested_flows_distinct_from_used(
+        self,
+    ) -> None:
+        """When the caller passes ``model_id_requested`` distinct from
+        ``model.id`` (the fallback case), the response carries the
+        original requested id, not the used one. Locks the data flow
+        that was missing in commit 2's first impl: the bug was that
+        ``LLMResponse.model_id_requested`` was hardcoded to
+        ``model.id`` inside the provider, silently swallowing
+        fallback signal in the audit log.
+
+        This test is the layer-crossing field-plumbing check from
+        contributing.md Q3 — schema changes that flow across module
+        boundaries need both types AND data flow tested.
+        """
+        p = MockProvider(
+            provider_id=MOCK_PROVIDER_ID,
+            responses={(LLMPurpose.AGENT_RESPONSE, None): ["x"]},
+        )
+        actually_used_model = _model()  # has id == TEST_MODEL_ID
+        originally_requested = ModelId("preferred_but_unhealthy_model")
+
+        resp = await p.call(
+            _request(),
+            actually_used_model,
+            model_id_requested=originally_requested,
+        )
+
+        # The response carries BOTH ids: requested vs used. Distinct.
+        assert resp.model_id_requested == originally_requested
+        assert resp.model_id_used == TEST_MODEL_ID
+        assert resp.model_id_requested != resp.model_id_used

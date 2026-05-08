@@ -22,6 +22,7 @@ from orchestrator.llm.types import (
     Capability,
     EffortLevel,
     LLMRequest,
+    LLMResponse,
     Message,
     ModelId,
     ModelProfile,
@@ -64,6 +65,15 @@ def _provider() -> ClaudeCodeCliProvider:
         cli_path="claude",
         timeout_s=30.0,
     )
+
+
+async def _call(
+    provider: ClaudeCodeCliProvider,
+    request: LLMRequest,
+    model: ModelProfile,
+) -> LLMResponse:
+    """Test wrapper: defaults model_id_requested to model.id."""
+    return await ClaudeCodeCliProvider.call(provider, request, model, model_id_requested=model.id)
 
 
 def _ok_envelope(content: str = "pong") -> bytes:
@@ -129,7 +139,7 @@ class TestToolsRejection:
         provider = _provider()
         tool = ToolDefinition(name="x", description="y", input_schema={"type": "object"})
         with pytest.raises(ToolsNotSupportedError, match="ADR-003"):
-            await provider.call(_request(tools=[tool]), _model())
+            await _call(provider, _request(tools=[tool]), _model())
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +151,7 @@ class TestHappyPath:
     async def test_basic_call_invokes_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
         captured = _patch_exec(monkeypatch, lambda args: FakeProc(0, _ok_envelope("hello")))
         provider = _provider()
-        resp = await provider.call(_request(), _model())
+        resp = await _call(provider, _request(), _model())
 
         assert resp.content == "hello"
         assert resp.finish_reason == "stop"
@@ -157,7 +167,7 @@ class TestHappyPath:
     async def test_effort_passed_from_model_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         captured = _patch_exec(monkeypatch, lambda args: FakeProc(0, _ok_envelope()))
         provider = _provider()
-        await provider.call(_request(), _model(EffortLevel.XHIGH))
+        await _call(provider, _request(), _model(EffortLevel.XHIGH))
 
         cli_args = captured["calls"][0]["args"]
         assert "--effort" in cli_args
@@ -170,7 +180,7 @@ class TestHappyPath:
         captured = _patch_exec(monkeypatch, lambda args: FakeProc(0, _ok_envelope()))
         provider = _provider()
         # model default is XHIGH; request says LOW
-        await provider.call(_request(effort=EffortLevel.LOW), _model(EffortLevel.XHIGH))
+        await _call(provider, _request(effort=EffortLevel.LOW), _model(EffortLevel.XHIGH))
         cli_args = captured["calls"][0]["args"]
         i = cli_args.index("--effort")
         assert cli_args[i + 1] == "low"
@@ -178,7 +188,7 @@ class TestHappyPath:
     async def test_no_effort_when_neither_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         captured = _patch_exec(monkeypatch, lambda args: FakeProc(0, _ok_envelope()))
         provider = _provider()
-        await provider.call(_request(), _model(default_effort=None))
+        await _call(provider, _request(), _model(default_effort=None))
         cli_args = captured["calls"][0]["args"]
         assert "--effort" not in cli_args
 
@@ -196,7 +206,7 @@ class TestErrorClassification:
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
         provider = _provider()
         with pytest.raises(ProviderUnhealthyError, match="not found"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_nonzero_exit_with_rate_limit_is_transient(
         self, monkeypatch: pytest.MonkeyPatch
@@ -207,7 +217,7 @@ class TestErrorClassification:
         )
         provider = _provider()
         with pytest.raises(TransientProviderError, match="exited 1"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_nonzero_exit_with_503_is_transient(
         self, monkeypatch: pytest.MonkeyPatch
@@ -218,7 +228,7 @@ class TestErrorClassification:
         )
         provider = _provider()
         with pytest.raises(TransientProviderError):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_nonzero_exit_without_transient_marker_is_permanent(
         self, monkeypatch: pytest.MonkeyPatch
@@ -229,7 +239,7 @@ class TestErrorClassification:
         )
         provider = _provider()
         with pytest.raises(PermanentProviderError, match="exited 1"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_timeout_raises_transient(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Provider with very short timeout
@@ -240,7 +250,7 @@ class TestErrorClassification:
         )
         _patch_exec(monkeypatch, lambda args: FakeProc(0, hang=True))
         with pytest.raises(TransientProviderError, match="timed out"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
 
 # ---------------------------------------------------------------------------

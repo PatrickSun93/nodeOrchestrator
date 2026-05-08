@@ -18,6 +18,7 @@ from orchestrator.llm.purposes import LLMPurpose
 from orchestrator.llm.types import (
     Capability,
     LLMRequest,
+    LLMResponse,
     Message,
     ModelId,
     ModelProfile,
@@ -64,6 +65,17 @@ def _make_provider(handler: Any, api_key_env: str = "") -> OpenAICompatibleProvi
     )
 
 
+async def _call(
+    provider: OpenAICompatibleProvider,
+    request: LLMRequest,
+    model: ModelProfile,
+) -> LLMResponse:
+    """Test wrapper: defaults model_id_requested to model.id."""
+    return await OpenAICompatibleProvider.call(
+        provider, request, model, model_id_requested=model.id
+    )
+
+
 def _ok_response(content: str = "hello", **extras: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "choices": [
@@ -93,7 +105,7 @@ class TestHappyPath:
             return httpx.Response(200, json=_ok_response("greetings"))
 
         provider = _make_provider(handler)
-        resp = await provider.call(_request(), _model())
+        resp = await _call(provider, _request(), _model())
 
         assert resp.content == "greetings"
         assert resp.finish_reason == "stop"
@@ -112,7 +124,7 @@ class TestHappyPath:
             return httpx.Response(200, json=_ok_response())
 
         provider = _make_provider(handler)
-        await provider.call(_request(temperature=0.7), _model())
+        await _call(provider, _request(temperature=0.7), _model())
         assert captured["body"]["temperature"] == 0.7
 
     async def test_system_message_prepended(self) -> None:
@@ -123,7 +135,7 @@ class TestHappyPath:
             return httpx.Response(200, json=_ok_response())
 
         provider = _make_provider(handler)
-        await provider.call(_request(system="be helpful"), _model())
+        await _call(provider, _request(system="be helpful"), _model())
         msgs = captured["body"]["messages"]
         assert msgs[0] == {"role": "system", "content": "be helpful"}
         assert msgs[1]["role"] == "user"
@@ -139,7 +151,7 @@ class TestToolCalls:
 
         tool = ToolDefinition(name="search", description="x", input_schema={"type": "object"})
         provider = _make_provider(handler)
-        await provider.call(_request(tools=[tool]), _model())
+        await _call(provider, _request(tools=[tool]), _model())
         sent_tools = captured["body"]["tools"]
         assert len(sent_tools) == 1
         assert sent_tools[0]["type"] == "function"
@@ -174,7 +186,7 @@ class TestToolCalls:
             )
 
         provider = _make_provider(handler)
-        resp = await provider.call(_request(), _model())
+        resp = await _call(provider, _request(), _model())
         assert resp.content == "calling tool"
         assert resp.finish_reason == "tool_use"
         assert len(resp.tool_calls) == 1
@@ -192,7 +204,7 @@ class TestAuth:
             return httpx.Response(200, json=_ok_response())
 
         provider = _make_provider(handler, api_key_env="MY_KEY")
-        await provider.call(_request(), _model())
+        await _call(provider, _request(), _model())
         assert captured["auth"] == "Bearer sk-abc"
 
     async def test_missing_api_key_raises_permanent(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -202,7 +214,7 @@ class TestAuth:
             api_key_env="MISSING_KEY",
         )
         with pytest.raises(PermanentProviderError, match="empty or unset"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_no_api_key_env_no_auth_header(self) -> None:
         captured: dict[str, Any] = {}
@@ -212,7 +224,7 @@ class TestAuth:
             return httpx.Response(200, json=_ok_response())
 
         provider = _make_provider(handler)  # api_key_env=""
-        await provider.call(_request(), _model())
+        await _call(provider, _request(), _model())
         assert captured["auth"] is None
 
 
@@ -220,38 +232,38 @@ class TestErrorClassification:
     async def test_401_raises_permanent(self) -> None:
         provider = _make_provider(lambda r: httpx.Response(401, text="bad key"))
         with pytest.raises(PermanentProviderError, match="auth failed"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_403_raises_permanent(self) -> None:
         provider = _make_provider(lambda r: httpx.Response(403, text="forbidden"))
         with pytest.raises(PermanentProviderError):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_429_raises_transient(self) -> None:
         provider = _make_provider(lambda r: httpx.Response(429, text="slow down"))
         with pytest.raises(TransientProviderError, match="rate limited"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_500_raises_transient(self) -> None:
         provider = _make_provider(lambda r: httpx.Response(500, text="oops"))
         with pytest.raises(TransientProviderError, match="server error"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_400_raises_permanent(self) -> None:
         provider = _make_provider(lambda r: httpx.Response(400, text="malformed"))
         with pytest.raises(PermanentProviderError, match="client error"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_non_json_body_raises_permanent(self) -> None:
         provider = _make_provider(lambda r: httpx.Response(200, content=b"not json"))
         with pytest.raises(PermanentProviderError, match="non-JSON"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
     async def test_unexpected_shape_raises_permanent(self) -> None:
         """Response is JSON but missing 'choices'."""
         provider = _make_provider(lambda r: httpx.Response(200, json={"unexpected": "shape"}))
         with pytest.raises(PermanentProviderError, match="unexpected response shape"):
-            await provider.call(_request(), _model())
+            await _call(provider, _request(), _model())
 
 
 class TestCostComputation:
@@ -271,11 +283,11 @@ class TestCostComputation:
             )
         )
         # $0.27 / 1M input, $1.10 / 1M output (deepseek-v4-pro pricing)
-        resp = await provider.call(_request(), _model(cost_in=0.27, cost_out=1.10))
+        resp = await _call(provider, _request(), _model(cost_in=0.27, cost_out=1.10))
         # 1M * 0.27 + 0.5M * 1.10 = 0.27 + 0.55 = 0.82
         assert resp.usage.cost_usd == pytest.approx(0.82, rel=1e-3)
 
     async def test_cost_none_when_pricing_missing(self) -> None:
         provider = _make_provider(lambda r: httpx.Response(200, json=_ok_response()))
-        resp = await provider.call(_request(), _model())  # no pricing on model
+        resp = await _call(provider, _request(), _model())  # no pricing on model
         assert resp.usage.cost_usd is None
