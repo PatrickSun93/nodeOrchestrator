@@ -1486,15 +1486,26 @@ llm_config:
 ### Router 的工作:约束求解
 
 ```python
-def select_model(req: LLMRequest, agent: Agent) -> ModelProfile:
+async def select_model_and_provider(
+    agent_config: AgentLLMConfig,
+    request: LLMRequest,
+    models: ModelRegistry,
+    providers: ProviderRegistry,
+) -> RouteResult:
     """
-    1. agent.llm_config.model_overrides[req.purpose] 优先
-    2. fallback to agent.llm_config.default_model
-    3. (P2) 应用 global overrides
-    4. 验证 capabilities(req.tools 不为空 → model 必须支持 tools)
-    5. 验证 context window
-    6. 失败走 fallback_chain
-    7. 全部失败 raise NoSuitableModelError
+    Walk the agent's effective fallback chain
+    [agent_config.default_model, *agent_config.fallback_chain] and:
+
+    1. Skip models not in registry (config drift).
+    2. Skip if missing required_capabilities.
+    3. Skip if request.tools but provider rejects them.
+    4. Skip if provider.health_check() returns False.
+    5. Return RouteResult(model, provider, model_id_requested,
+       decision_trace) on first match.
+    6. If chain exhausted: raise NoSuitableModelError(decision_trace=...).
+
+    No model_overrides — that idea was dropped in P1.1 commit 2 in favor
+    of the simpler default_model + fallback_chain shape (see ADR-002).
     """
 ```
 
@@ -1506,11 +1517,18 @@ def select_model(req: LLMRequest, agent: Agent) -> ModelProfile:
 
 ```python
 class LLMPurpose(StrEnum):
-    GENERATE_AGENT_RESPONSE = "generate_agent_response"
-    GENERATE_SNAPSHOT_SEMANTIC_FIELDS = "generate_snapshot_semantic_fields"
-    INTERPRET_TOOL_RESULT = "interpret_tool_result"
-    PROPOSE_KEY_NODE_CANDIDATE = "propose_key_node_candidate"
-    # 添加新值时 → ADR 解释为什么不能代码做
+    # Agent-driven content generation. Per-agent role discrimination
+    # uses LLMRequest.caller_agent_id, not separate enum values —
+    # adding a new agent role does not require extending the enum.
+    AGENT_RESPONSE = "agent_response"
+
+    # Structural LLM uses — each one is a load-bearing trade-off.
+    SNAPSHOT_SEMANTIC = "snapshot_semantic"
+    HYPOTHESIS_CANDIDATE = "hypothesis_candidate"
+    KEY_NODE_CANDIDATE = "key_node_candidate"
+    TOOL_OUTPUT_INTERPRET = "tool_output_interpret"
+    TERM_DEFINITION_PROPOSAL = "term_definition_proposal"
+    # 添加新值需要 ADR 解释为什么不能代码做。PR template Q1 强制。
 ```
 
 **好处**:

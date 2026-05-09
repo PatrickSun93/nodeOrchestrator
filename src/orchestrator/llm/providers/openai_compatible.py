@@ -68,11 +68,16 @@ class OpenAICompatibleProvider:
     transport: Any = None
 
     def __post_init__(self) -> None:
-        # Construction-time validation: catch mistyped yaml that would
-        # otherwise sneak past until the first call/health_check raised.
-        # The ``transport`` field is typed Any (test-only injection point)
-        # but production yaml has no business setting it; only
-        # httpx.BaseTransport instances are valid.
+        # Construction-time validation, narrow scope: this guards the
+        # ``Any``-typed ``transport`` backdoor specifically. The other
+        # dataclass fields rely on Python's type-erasure-at-runtime
+        # convention; mistyped strings or numbers in those fields will
+        # surface at first use, not at construction. That trade-off is
+        # accepted because (a) yaml loading goes through Pydantic via
+        # other paths in the loader, (b) full-field __post_init__ would
+        # duplicate Pydantic-style validation here without justification.
+        # The ``transport`` field is the exception because its ``Any``
+        # type silently accepts anything — including a yaml literal.
         if self.transport is not None and not isinstance(self.transport, httpx.BaseTransport):
             raise TypeError(
                 f"OpenAICompatibleProvider.transport must be httpx.BaseTransport "
@@ -126,6 +131,14 @@ class OpenAICompatibleProvider:
           router, not here).
         - ``temperature``, ``max_tokens``, ``extra_params`` →
           top-level params.
+
+        ``extra_params`` is an escape hatch for backend-specific knobs
+        (e.g., a vendor's ``response_format`` flag). Reserved fields —
+        ``model``, ``messages``, ``tools`` — should NOT be overridden
+        via ``extra_params``; doing so produces **unspecified
+        behavior** (current implementation may overwrite, future
+        implementations may reject or ignore). Most callers should
+        leave this empty.
         - Response ``choices[0].message.content`` → ``content``.
         - Response ``choices[0].message.tool_calls`` → ``tool_calls``.
         - Response ``usage.prompt_tokens / completion_tokens`` →

@@ -192,6 +192,36 @@ class TestHappyPath:
         cli_args = captured["calls"][0]["args"]
         assert "--effort" not in cli_args
 
+    async def test_effort_silently_dropped_for_models_without_capability(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Per ``EffortLevel`` docstring, effort is "Honored only by
+        models with EFFORT in their capabilities; silently ignored
+        elsewhere." The validator on ``ModelProfile`` prevents
+        ``default_effort`` from being set without the capability, but a
+        caller can still pass ``LLMRequest.effort_level`` for any model.
+        That request must not become a ``--effort`` CLI arg on a
+        non-capable model; the CLI would reject as unknown arg and the
+        call would fail loudly, contradicting the docstring's
+        "silently ignored" promise.
+        """
+        captured = _patch_exec(monkeypatch, lambda args: FakeProc(0, _ok_envelope()))
+        # Model with NO effort capability (e.g., Haiku 4.5 in real config).
+        no_effort_model = ModelProfile(
+            id=ModelId("model_without_effort"),
+            provider=ProviderId("cli"),
+            provider_model_id="claude-haiku-4-5",
+            capabilities=[],  # critical: no Capability.EFFORT
+            context_window=200_000,
+        )
+        provider = _provider()
+        # Caller provides effort_level despite the model not supporting it.
+        await _call(provider, _request(effort=EffortLevel.HIGH), no_effort_model)
+
+        cli_args = captured["calls"][0]["args"]
+        # The contract: effort silently dropped, no --effort flag.
+        assert "--effort" not in cli_args
+
 
 # ---------------------------------------------------------------------------
 # Error classification

@@ -514,6 +514,8 @@ class LLMPurpose(StrEnum):
 ```python
 class LLMProvider(Protocol):
     @property
+    def provider_id(self) -> ProviderId: ...
+
     def can_use_orchestrator_tools(self) -> bool: ...
 
 # 实现:
@@ -534,7 +536,12 @@ class LLMProvider(Protocol):
 #### Router 的工作
 
 ```python
-def select_model(req: LLMRequest, agent: Agent) -> ModelProfile:
+async def select_model_and_provider(
+    agent_config: AgentLLMConfig,
+    request: LLMRequest,
+    models: ModelRegistry,
+    providers: ProviderRegistry,
+) -> RouteResult:
     """
     完全代码决策,无 LLM 介入。
     

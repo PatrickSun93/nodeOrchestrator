@@ -31,6 +31,7 @@ from orchestrator.llm.exceptions import (
 )
 from orchestrator.llm.parsers.claude_code_output import parse_claude_code_output
 from orchestrator.llm.types import (
+    Capability,
     LLMRequest,
     LLMResponse,
     ModelId,
@@ -146,12 +147,18 @@ class ClaudeCodeCliProvider:
             model.provider_model_id,
         ]
         effort = request.effort_level or model.default_effort
-        if effort is not None:
-            # `--effort <level>` confirmed against installed claude CLI
-            # via `claude --help` (2026-05-08). Accepted values:
-            # low | medium | high | xhigh | max — EffortLevel mirrors
-            # this set exactly. Any drift between the enum and the CLI
-            # would surface here as an "invalid argument" CLI error.
+        # Per ``EffortLevel`` docstring: "Honored only by models with
+        # EFFORT in their capabilities; silently ignored elsewhere."
+        # ModelProfile's _check_effort_capability validator prevents
+        # default_effort being set without the capability, but a caller
+        # can still pass LLMRequest.effort_level for any model. Drop
+        # silently rather than passing --effort to a model that doesn't
+        # accept it (the CLI would reject as unknown argument and the
+        # call would fail loudly — contradicting the docstring).
+        # `--effort <level>` flag verified against installed claude CLI
+        # via `claude --help` (2026-05-08); accepted values mirror
+        # EffortLevel exactly: low | medium | high | xhigh | max.
+        if effort is not None and Capability.EFFORT in model.capabilities:
             args.extend(["--effort", effort.value])
 
         prompt_parts: list[str] = []
