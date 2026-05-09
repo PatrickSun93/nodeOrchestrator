@@ -43,8 +43,8 @@ state.
 instance and asserts all expected outcomes are present.
 
 **P1.1 example**: `tests/llm/test_mock_provider.py`,
-`test_constitution_round_robin_uses_matched_key` — verifies the round-robin
-cursor advances atomically per matched key, not globally or non-atomically.
+`test_constitution_concurrent_calls_advance_cursor_atomically` — 20
+concurrent calls against one instance, all distinct responses present.
 
 **Quantifiable measure**: N concurrent calls via `asyncio.gather`, all
 N distinct response contents present (no duplicates, no lost values).
@@ -62,9 +62,10 @@ handle, or establishes a network connection outside a context manager.
 underlying resource is released.
 
 **P1.1 example**: `tests/llm/test_claude_code_cli_provider.py`,
-`test_timeout_raises_transient` — timeout triggers subprocess kill, and
-the original `TimeoutError` surfaces as `TransientProviderError`, not masked
-by a `ProcessLookupError` from the kill.
+`test_kill_failure_does_not_mask_original_error` and
+`test_outer_cancellation_kills_subprocess` — OSError on kill
+does not mask the original timeout; CancelledError propagates
+unwrapped and subprocess is killed.
 
 **Quantifiable measure**: (a) Original exception class present in the
 raised error's chain or message. (b) `CancelledError` propagates unwrapped;
@@ -106,8 +107,46 @@ both. A single-position test (e.g., position 0 only) can pass against an
 `[0] ==` check that a position-1 value would escape.
 
 **P1.1 example**: `tests/llm/test_config_loader.py`,
-`test_default_in_fallback_chain_raises` — verifies the validator fires
-when the default model appears in the fallback chain (position 0).
+`test_default_at_non_zero_index_in_chain_raises` and
+`test_default_at_last_index_in_chain_raises` — default model at
+position 1 and position last, both caught.
 
 **Quantifiable measure**: Tests cover the forbidden value at index 0,
 index non-zero, and index last (or -1). All expect the same error class.
+
+---
+
+## 6. Schema invariants
+
+**When it applies**: every Pydantic model in `src/` that is user-facing
+or crosses module boundaries.
+
+**Acceptance criterion**: each model needs at minimum:
+
+1. One test that mutation raises (`frozen=True`)
+2. One test that unknown field raises (`extra="forbid"`)
+3. One test per constrained `Field`, at the just-out-of-range value
+4. One test per `Literal` field, with a non-allowed value
+
+**P1.1 example**: none yet — `types.py` models lack direct schema tests;
+this is a known gap. P1.2 round 1 will land `tests/llm/test_types.py`
+as the first canonical example.
+
+**Quantifiable measure**: for model *M* with *N* constrained fields and
+*L* Literal fields, expect ≥ 2 + N + L tests in `test_<module>_schema.py`.
+
+---
+
+## PR Self-Check
+
+Before committing, verify each applicable category from the standard:
+
+- [ ] §1 Cross-module integration — source ≠ sink test
+- [ ] §2 Concurrency safety — N concurrent calls, all distinct
+- [ ] §3 Cleanup / cancellation — kill failure + cancellation test
+- [ ] §4 Exception payloads — field + file in message/violations
+- [ ] §5 Boundary validators — multi-position test
+- [ ] §6 Schema invariants — frozen + extra + Field + Literal tests
+
+Mark each applicable category checked or N/A with one-line reason in
+the commit message under "Coverage standard compliance:".

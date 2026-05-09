@@ -187,6 +187,12 @@ class ClaudeCodeCliProvider:
                 proc.communicate(input=stdin_data),
                 timeout=self.timeout_s,
             )
+        # Note: if outer cancellation happens AGAIN while we're awaiting
+        # proc.wait() in cleanup, the second CancelledError will propagate
+        # out, bypassing the `if isinstance(e, asyncio.CancelledError)`
+        # branch below. Net behavior: still CancelledError out, just via
+        # a different path. Acceptable since the contract is "cancellation
+        # propagates", not "cancellation propagates through this exact line".
         except (TimeoutError, asyncio.CancelledError) as e:
             try:
                 proc.kill()

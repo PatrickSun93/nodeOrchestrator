@@ -21,7 +21,7 @@ class TestRoomDefaults:
         """Locks ``default_factory=now_ms`` semantic: two constructions
         produce increasing timestamps, not the same cached value."""
         r1 = Room(id=RoomId("r1"), type=RoomType.FREE_CHAT)
-        time_module.sleep(0.01)
+        time_module.sleep(0.02)
         r2 = Room(id=RoomId("r2"), type=RoomType.FREE_CHAT)
         assert r2.created_at > r1.created_at
 

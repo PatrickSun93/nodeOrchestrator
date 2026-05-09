@@ -6,8 +6,6 @@ model_id_requested (original) is distinct from model_id_used (fallback).
 
 from __future__ import annotations
 
-import pytest
-
 from orchestrator.llm.protocol import LLMProvider
 from orchestrator.llm.providers.mock import MockProvider
 from orchestrator.llm.purposes import LLMPurpose
@@ -45,7 +43,6 @@ def _make_model(model_id: ModelId, provider_id: ProviderId) -> ModelProfile:
     )
 
 
-@pytest.mark.asyncio
 async def test_e2e_fallback_model_id_requested_distinct_from_used() -> None:
     """Router picks deepseek after both claude models skip on unhealthy
     anthropic provider. Response carries requested != used."""

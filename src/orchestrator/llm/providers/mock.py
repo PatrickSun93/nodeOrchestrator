@@ -57,6 +57,12 @@ class MockProvider:
     The class is a dataclass for trivial test setup; the protocol
     surface (``provider_id``, ``can_use_orchestrator_tools``,
     ``health_check``, ``call``) matches ``LLMProvider``.
+
+    Concurrency: Safe for concurrent dispatch within one event loop.
+    An ``asyncio.Lock`` protects the cursor and call log from race
+    conditions under ``asyncio.gather``. Each ``MockProvider`` instance
+    owns its own lock; sharing the same instance across multiple event
+    loops is not supported.
     """
 
     provider_id: ProviderId

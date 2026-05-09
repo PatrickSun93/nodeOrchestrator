@@ -67,6 +67,8 @@ be updated. Five surfaces to scan:
    `llm-layer.md`, …).
 5. **Project narrative** — `handoff.md` and `chat-history.md` at the
    repo root.
+   - When modifying `docs/architecture/test-coverage-standard.md`:
+     grep-verify every P1.x example file and test name still exists.
 
 If a schema change appears in code but not in the example YAML, or in
 an ADR but not in `handoff.md`, that is **doc-spec drift**: the schema's
@@ -118,6 +120,19 @@ Type checking does NOT catch this on its own: if every intermediate
 function happens to derive a sensible-looking value from data it
 already has, the chain compiles cleanly while leaking the original
 signal. The data-flow test is the catch.
+
+### Q4. Test coverage standard compliance
+
+Did you check the change against
+`docs/architecture/test-coverage-standard.md` (all 6 categories)?
+
+For each applicable category, confirm compliance. For each
+non-applicable category, mark N/A with one-line reason in the
+commit message under "Coverage standard compliance:".
+
+Required when: any change adding new code paths, new exceptions,
+new shared mutable state, new validators, new Pydantic models,
+or new cross-module fields.
 
 ## Architecture decisions (ADRs)
 
