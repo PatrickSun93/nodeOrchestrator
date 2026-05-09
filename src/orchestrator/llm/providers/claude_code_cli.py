@@ -187,12 +187,14 @@ class ClaudeCodeCliProvider:
                 proc.communicate(input=stdin_data),
                 timeout=self.timeout_s,
             )
-        except TimeoutError as e:
+        except (TimeoutError, asyncio.CancelledError) as e:
             try:
                 proc.kill()
                 await proc.wait()
-            except ProcessLookupError:
+            except (ProcessLookupError, OSError):
                 pass
+            if isinstance(e, asyncio.CancelledError):
+                raise
             raise TransientProviderError(f"claude CLI timed out after {self.timeout_s}s") from e
 
         latency_ms = int((time.perf_counter() - start) * 1000)

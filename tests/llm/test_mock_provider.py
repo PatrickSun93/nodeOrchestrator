@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from orchestrator.llm.providers.mock import MockProvider, MockResponseExhaustedError
@@ -269,3 +271,25 @@ class TestConstitution:
         assert resp.model_id_requested == originally_requested
         assert resp.model_id_used == TEST_MODEL_ID
         assert resp.model_id_requested != resp.model_id_used
+
+    async def test_constitution_concurrent_calls_advance_cursor_atomically(
+        self,
+    ) -> None:
+        """20 concurrent calls against a single MockProvider instance must
+        each receive a distinct response. If the cursor advance is not
+        atomic, concurrent calls see overlapping cursor values and
+        duplicate or drop responses."""
+        n = 20
+        expected = [f"r{i:02d}" for i in range(n)]
+        p = MockProvider(
+            provider_id=MOCK_PROVIDER_ID,
+            responses={(LLMPurpose.AGENT_RESPONSE, None): list(expected)},
+        )
+        model = _model()
+
+        async def one_call(i: int) -> LLMResponse:
+            return await p.call(_request(), model, model_id_requested=model.id)
+
+        results = await asyncio.gather(*[one_call(i) for i in range(n)])
+        contents = sorted(r.content for r in results)
+        assert contents == expected

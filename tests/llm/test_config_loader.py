@@ -261,6 +261,54 @@ class TestLoadAgentLLMConfig:
         with pytest.raises(ConfigError):
             load_agent_llm_config(path, models)
 
+    def test_default_at_non_zero_index_in_chain_raises(self, tmp_path: Path) -> None:
+        """The validator must catch the default model even when it's not
+        at index 0 — a future refactor that replaces ``in`` with ``[0] ==``
+        would pass the position-0 test but fail here."""
+        models = self._models(["a", "b"])
+        path = _write(
+            tmp_path,
+            "bad.yaml",
+            """
+            llm_config:
+              default_model: a
+              fallback_chain: [b, a]
+            """,
+        )
+        with pytest.raises(ConfigError):
+            load_agent_llm_config(path, models)
+
+    def test_default_at_last_index_in_chain_raises(self, tmp_path: Path) -> None:
+        models = self._models(["a", "b", "c"])
+        path = _write(
+            tmp_path,
+            "bad.yaml",
+            """
+            llm_config:
+              default_model: a
+              fallback_chain: [b, c, a]
+            """,
+        )
+        with pytest.raises(ConfigError):
+            load_agent_llm_config(path, models)
+
+    def test_config_error_violations_locate_offending_yaml_field(self, tmp_path: Path) -> None:
+        """ConfigError must carry enough context to locate the root cause
+        from logs alone: the offending field name AND the file identifier."""
+        path = _write(
+            tmp_path,
+            "bad.yaml",
+            """
+            llm_config:
+              fallback_chain: [a]
+            """,
+        )
+        with pytest.raises(ConfigError) as exc:
+            load_agent_llm_config(path, self._models(["a"]))
+        msg = str(exc.value)
+        assert "default_model" in msg
+        assert path.stem in msg
+
 
 # ---------------------------------------------------------------------------
 # validate_full_config

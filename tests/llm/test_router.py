@@ -285,6 +285,40 @@ class TestExhaustion:
         with pytest.raises(NoSuitableModelError, match=r"chain.*\['a', 'b', 'c'\]"):
             await select_model_and_provider(agent, _request(), models, providers)
 
+    async def test_no_suitable_model_error_decision_trace_complete(self) -> None:
+        """Three-model chain failing for three distinct reasons: each
+        trace entry must carry model_id + reason, all reasons distinct."""
+        good_provider = MockProvider(provider_id=ProviderId("p_good"))
+        bad_provider = MockProvider(provider_id=ProviderId("p_bad"), healthy=False)
+        models = ModelRegistry(
+            {
+                ModelId("m2"): _profile("m2", "p_bad", [Capability.TOOLS]),
+                ModelId("m3"): _profile("m3", "p_good"),  # no TOOLS
+            }
+        )
+        # m1 not in registry
+        providers = ProviderRegistry(
+            {
+                ProviderId("p_bad"): bad_provider,
+                ProviderId("p_good"): good_provider,
+            }
+        )
+        agent = _agent("m1", fallbacks=["m2", "m3"], required=[Capability.TOOLS])
+
+        with pytest.raises(NoSuitableModelError) as exc:
+            await select_model_and_provider(agent, _request(), models, providers)
+
+        trace = exc.value.decision_trace
+        assert len(trace) == 3
+        reasons: set[str] = set()
+        for entry in trace:
+            assert "model_id" in entry
+            assert "reason" in entry
+            assert isinstance(entry["reason"], str)
+            assert entry["reason"]  # non-empty
+            reasons.add(entry["reason"])
+        assert len(reasons) == 3  # all distinct
+
 
 class TestTraceShape:
     async def test_trace_is_tuple_of_route_candidates(self) -> None:

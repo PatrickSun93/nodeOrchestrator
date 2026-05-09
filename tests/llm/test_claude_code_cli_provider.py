@@ -101,6 +101,7 @@ class FakeProc:
         self._stderr = stderr
         self._hang = hang
         self._killed = False
+        self._kill_error: Exception | None = None
 
     async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
         if self._hang:
@@ -108,6 +109,8 @@ class FakeProc:
         return self._stdout, self._stderr
 
     def kill(self) -> None:
+        if self._kill_error is not None:
+            raise self._kill_error
         self._killed = True
 
     async def wait(self) -> int:
@@ -281,6 +284,45 @@ class TestErrorClassification:
         _patch_exec(monkeypatch, lambda args: FakeProc(0, hang=True))
         with pytest.raises(TransientProviderError, match="timed out"):
             await _call(provider, _request(), _model())
+
+    async def test_kill_failure_does_not_mask_original_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When proc.kill() raises OSError (Windows quirk), the original
+        timeout error still surfaces as TransientProviderError."""
+        provider = ClaudeCodeCliProvider(
+            provider_id=ProviderId("cli"),
+            cli_path="claude",
+            timeout_s=0.05,
+        )
+        proc = FakeProc(0, hang=True)
+        proc._kill_error = OSError("access denied")
+        _patch_exec(monkeypatch, lambda args: proc)
+        with pytest.raises(TransientProviderError, match="timed out"):
+            await _call(provider, _request(), _model())
+
+    async def test_outer_cancellation_kills_subprocess(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An outer task.cancel() kills the subprocess and propagates
+        CancelledError unwrapped (not wrapped as TransientProviderError)."""
+        provider = ClaudeCodeCliProvider(
+            provider_id=ProviderId("cli"),
+            cli_path="claude",
+            timeout_s=30.0,  # long enough that cancellation fires first
+        )
+        proc = FakeProc(0, hang=True)
+        _patch_exec(monkeypatch, lambda args: proc)
+
+        task = asyncio.create_task(_call(provider, _request(), _model()))
+        # Let the task start so the subprocess is spawned
+        await asyncio.sleep(0.01)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert proc._killed is True
 
 
 # ---------------------------------------------------------------------------

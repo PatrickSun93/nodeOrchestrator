@@ -20,6 +20,7 @@ Captured calls are kept on ``.calls`` for assertions
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -72,6 +73,7 @@ class MockProvider:
         default_factory=lambda: defaultdict(int), init=False, repr=False
     )
     _calls: list[LLMRequest] = field(default_factory=list, init=False, repr=False)
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def can_use_orchestrator_tools(self) -> bool:
         return self.can_use_tools
@@ -102,35 +104,36 @@ class MockProvider:
         going past it indicates a test that hasn't fully thought
         through the call sequence.
         """
-        self._calls.append(request)
+        async with self._lock:
+            self._calls.append(request)
 
-        exact = (request.purpose, request.caller_agent_id)
-        fallback = (request.purpose, None)
+            exact = (request.purpose, request.caller_agent_id)
+            fallback = (request.purpose, None)
 
-        matched_key: MockKey | None = None
-        if exact in self.responses:
-            matched_key = exact
-        elif fallback in self.responses:
-            matched_key = fallback
+            matched_key: MockKey | None = None
+            if exact in self.responses:
+                matched_key = exact
+            elif fallback in self.responses:
+                matched_key = fallback
 
-        if matched_key is None:
-            raise MockResponseExhaustedError(
-                f"no canned responses registered for "
-                f"purpose={request.purpose.value!r} "
-                f"caller_agent_id={request.caller_agent_id!r}"
-            )
+            if matched_key is None:
+                raise MockResponseExhaustedError(
+                    f"no canned responses registered for "
+                    f"purpose={request.purpose.value!r} "
+                    f"caller_agent_id={request.caller_agent_id!r}"
+                )
 
-        response_list = self.responses[matched_key]
-        cursor = self._cursors[matched_key]
-        if cursor >= len(response_list):
-            raise MockResponseExhaustedError(
-                f"canned responses exhausted for matched_key={matched_key}: "
-                f"{len(response_list)} response(s) registered, "
-                f"this would be call #{cursor + 1}"
-            )
+            response_list = self.responses[matched_key]
+            cursor = self._cursors[matched_key]
+            if cursor >= len(response_list):
+                raise MockResponseExhaustedError(
+                    f"canned responses exhausted for matched_key={matched_key}: "
+                    f"{len(response_list)} response(s) registered, "
+                    f"this would be call #{cursor + 1}"
+                )
 
-        content = response_list[cursor]
-        self._cursors[matched_key] = cursor + 1
+            content = response_list[cursor]
+            self._cursors[matched_key] = cursor + 1
 
         return LLMResponse(
             request_id=request.request_id,
