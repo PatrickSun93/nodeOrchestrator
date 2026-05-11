@@ -5,8 +5,9 @@ touches cross-module data flow, shared mutable state, subprocesses, custom
 exceptions, or collection-validating boundary checks. A test suite that
 omits a category is incomplete; the reviewer will flag the gap.
 
-Each category has a concrete P1.1 example. The test author should read
-the referenced test as a worked example before writing their own.
+Each category has a concrete example (P1.1 where available; new
+categories may point to an upcoming round). The test author should
+read the referenced test as a worked example before writing their own.
 
 ---
 
@@ -20,12 +21,12 @@ and sink values and asserts they are *different*. The `source == sink`
 case is the bug; the type system will not catch it because both are the
 same type.
 
-**P1.1 example**: `tests/llm/test_mock_provider.py`,
-`test_constitution_model_id_requested_flows_distinct_from_used` — the
-router sets `model_id_requested` on `RouteResult`; the provider reads it
-from `LLMRequest` and must forward it to `LLMResponse`. A test that used
-the same value for both would have passed with the round-3 data-flow bug
-present.
+**P1.1 example**: `tests/llm/test_e2e_fallback.py`,
+`test_e2e_fallback_model_id_requested_distinct_from_used` — the router
+(`orchestrator.llm.router`) sets `model_id_requested` on `RouteResult`;
+the provider (`orchestrator.llm.providers.mock`) reads it and forwards to
+`LLMResponse.model_id_requested`. The assertion checks `requested != used`
+across the router → provider subpackage boundary.
 
 **Quantifiable measure**: source value ≠ sink value in the assertion.
 One test per cross-module data path.
@@ -85,8 +86,12 @@ decision trace has the expected length and each entry has distinct,
 non-empty reason fields.
 
 **P1.1 example**: `tests/llm/test_config_loader.py`,
-`test_unknown_type_raises_with_violations` — asserts `ConfigError.violations`
-contains the bad value and the field name.
+`test_config_error_violations_locate_offending_yaml_field` and
+`tests/llm/test_router.py`,
+`test_no_suitable_model_error_decision_trace_complete` — (a) ConfigError
+carries field name + file identifier for log-based debugging; (b)
+NoSuitableModelError carries a decision trace with correct length and
+distinct per-candidate reasons.
 
 **Quantifiable measure**: Exception message or structured attribute
 contains (a) the field name or parameter that failed, and (b) the file or
@@ -129,8 +134,8 @@ or crosses module boundaries.
 4. One test per `Literal` field, with a non-allowed value
 
 **P1.1 example**: none yet — `types.py` models lack direct schema tests;
-this is a known gap. P1.2 round 1 will land `tests/llm/test_types.py`
-as the first canonical example.
+this is a known gap. The first canonical example is expected to land
+alongside P1.2-R1 (the round-1 plan will identify the exact test file).
 
 **Quantifiable measure**: for model *M* with *N* constrained fields and
 *L* Literal fields, expect ≥ 2 + N + L tests in `test_<module>_schema.py`.
