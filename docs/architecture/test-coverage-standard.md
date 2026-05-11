@@ -1,6 +1,6 @@
 # Test Coverage Standard
 
-The five categories below are the minimum required for any module that
+The six categories below are the minimum required for any module that
 touches cross-module data flow, shared mutable state, subprocesses, custom
 exceptions, or collection-validating boundary checks. A test suite that
 omits a category is incomplete; the reviewer will flag the gap.
@@ -30,6 +30,9 @@ across the router → provider subpackage boundary.
 
 **Quantifiable measure**: source value ≠ sink value in the assertion.
 One test per cross-module data path.
+
+See also: `docs/contributing.md` "Layer-crossing field plumbing" —
+the architectural rule this category enforces.
 
 ---
 
@@ -155,3 +158,21 @@ Before committing, verify each applicable category from the standard:
 
 Mark each applicable category checked or N/A with one-line reason in
 the commit message under "Coverage standard compliance:".
+
+### Commit message format
+
+In your commit message, include a "Coverage standard compliance:"
+section with one line per category. Use this exact format:
+
+    Coverage standard compliance:
+    §1 ✓ — test_x_e2e
+    §2 N/A — no shared mutable state
+    §3 N/A — no subprocess
+    §4 ✓ — test_y_payload
+    §5 N/A — no boundary validator
+    §6 ✓ — test_z_schema
+
+If all categories are N/A (e.g., doc-only PR), a single-line form
+is acceptable:
+
+    Coverage standard compliance: N/A (doc-only; no new code paths)

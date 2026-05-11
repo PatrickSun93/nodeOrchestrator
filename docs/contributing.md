@@ -130,9 +130,16 @@ For each applicable category, confirm compliance. For each
 non-applicable category, mark N/A with one-line reason in the
 commit message under "Coverage standard compliance:".
 
-Required when: any change adding new code paths, new exceptions,
-new shared mutable state, new validators, new Pydantic models,
-or new cross-module fields.
+Required when ANY of the following apply (matches
+`docs/architecture/test-coverage-standard.md` §1-§6 "When it applies"):
+
+- §1: A field is computed in one module and consumed in another
+- §2: New shared mutable state accessed from async code
+- §3: New subprocess, file handle, or network connection used
+  outside a context manager
+- §4: A new custom exception class is raised
+- §5: A validator constrains a list/sequence field
+- §6: A new Pydantic model is added to `src/`
 
 ## Architecture decisions (ADRs)
 
