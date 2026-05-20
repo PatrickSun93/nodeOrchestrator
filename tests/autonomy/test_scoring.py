@@ -207,7 +207,7 @@ def test_git_push_with_user_intent_lands_on_countdown_not_hard() -> None:
 
 
 def test_gate_happy_path_returns_autonomy_score() -> None:
-    """operator + propose_edit (reversibility=5) + no user intent → HARD_CONFIRM
+    """operator + propose_edit (reversibility=5) + no user intent → COUNTDOWN_CONFIRM
     (score=5 < eff_auto=6, score=5 >= eff_confirm=3 → COUNTDOWN_CONFIRM).
     """
     tools = _tools(("propose_edit", 5))
