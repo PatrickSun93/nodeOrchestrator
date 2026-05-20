@@ -145,7 +145,18 @@ Sub-decisions, all binding:
   (reversibility=1) called by `operator` (modifier=3) with
   `user_explicit_intent=True` lands on COUNTDOWN_CONFIRM, not
   HARD_CONFIRM — Hard Guards (P1.3) is the destructive-action
-  refusal layer, not the scorer's HARD_CONFIRM tier.
+  refusal layer, not the scorer's HARD_CONFIRM tier. The
+  asymmetric absence of a floor on `effective_threshold_auto`
+  is intentional: by symmetry, when `user_intent_modifier >=
+  threshold_auto`, `eff_auto` can go non-positive and
+  `AUTO_EXECUTE` absorbs the full score range. This is the
+  AUTO-side counterpart of the `HARD_CONFIRM`-unreachable case
+  above — Hard Guards remains the destructive defense regardless
+  of which side of the band collapses. Adding a Pydantic
+  validator constraining `user_intent_modifier < threshold_auto`
+  is deferred to P1.5 tuning unless dogfooding surfaces a real
+  misconfiguration (surfaced as P1.2-C3 R0-A-1, architect-resolved
+  as narrative-only here).
 
 Modifier-not-dimension is the central call: the *score* is an
 objective property of the tool and must not change with who asked.
