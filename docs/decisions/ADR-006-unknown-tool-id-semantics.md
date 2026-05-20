@@ -1,6 +1,6 @@
 # ADR-006: Unknown `tool_id` Semantics
 
-**Status:** Proposed — 2026-05-20
+**Status:** Accepted — 2026-05-20
 **Scope:** Governs how `orchestrator.autonomy.scoring.score()` and its
 caller `gate()` behave when an `Operation.tool_id` is not present in the
 loaded tools registry. Out of scope: the case where a tool *is* in the
