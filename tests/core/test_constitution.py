@@ -24,9 +24,10 @@ import typing
 from typing import TYPE_CHECKING
 
 import pytest
+from pydantic import ValidationError
 
 from orchestrator.autonomy.scoring import DecisionTrace
-from orchestrator.core.event import AutonomyDecisionMetadata
+from orchestrator.core.event import AutonomyDecisionMetadata, AutonomyRefusalMetadata
 
 if TYPE_CHECKING:
     from .conftest import PopulatedFixture
@@ -82,6 +83,54 @@ def test_constitution_autonomy_decision_event_carries_trace() -> None:
         f"AutonomyDecisionMetadata.rule: {meta_rule_hint}\n"
         "Fix: update the rule Literal in one of the two classes so both share the same values."
     )
+
+
+def test_constitution_autonomy_refusal_metadata_field_set() -> None:
+    """``AutonomyRefusalMetadata`` field set must stay exactly four fields.
+
+    The four fields are: ``operation_tool_id``, ``operation_initiating_agent``,
+    ``user_explicit_intent``, ``refusal_reason``. Adding or removing a field
+    changes the audit contract for every future ``autonomy_refusal`` event.
+
+    The ``refusal_reason`` Literal currently accepts only ``"unknown_tool"``.
+    P1.3 Hard Guards will extend it via ADR amendment; this test asserts
+    the amendment is made explicitly rather than by accident (any change
+    to the Literal will require updating the expected set below).
+
+    Fails loudly on missing OR extra fields so a reader can locate the
+    exact discrepancy without querying the event log.
+    """
+    expected = {
+        "operation_tool_id",
+        "operation_initiating_agent",
+        "user_explicit_intent",
+        "refusal_reason",
+    }
+    actual = set(AutonomyRefusalMetadata.model_fields)
+
+    missing = expected - actual
+    extra = actual - expected
+
+    assert not missing and not extra, (
+        "AutonomyRefusalMetadata field set has drifted.\n"
+        f"Missing fields: {sorted(missing)}\n"
+        f"Extra fields: {sorted(extra)}\n"
+        "Fix: update AutonomyRefusalMetadata in orchestrator/core/event.py "
+        "and update this test's expected set to match. "
+        "Any field change is an ADR-007 amendment."
+    )
+
+    # Negative-case: refusal_reason rejects values that are not in the
+    # Literal. A future Literal extension (P1.3 Hard Guards) will need
+    # to update this assertion explicitly, ensuring the change is
+    # deliberate and traceable.
+    with pytest.raises(ValidationError):
+        AutonomyRefusalMetadata(
+            operation_tool_id="t",
+            operation_initiating_agent="agent:x",
+            user_explicit_intent=False,
+            refusal_reason="not_a_valid_reason",  # type: ignore[arg-type]
+        )
 
 
 def test_constitution_append_only_at_schema_level(

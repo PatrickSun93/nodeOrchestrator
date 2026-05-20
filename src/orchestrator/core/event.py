@@ -66,7 +66,7 @@ def generate_room_id() -> RoomId:
 
 
 class EventType(StrEnum):
-    """The 17 constitutional event types.
+    """The 18 constitutional event types.
 
     See docs/architecture/event-model.md for why this list is constitutional
     and what to do (and not do) when extending it. In short: adding a type
@@ -91,6 +91,7 @@ class EventType(StrEnum):
     TERM_DEFINITION = "term_definition"
     DECISION_PIVOT = "decision_pivot"
     AUTONOMY_DECISION = "autonomy_decision"
+    AUTONOMY_REFUSAL = "autonomy_refusal"
 
 
 class RelationType(StrEnum):
@@ -233,6 +234,28 @@ class AutonomyDecisionMetadata(_BaseMeta):
     ]
 
 
+class AutonomyRefusalMetadata(_BaseMeta):
+    """Metadata for ``autonomy_refusal`` events.
+
+    Written by the autonomy emission layer when ``gate()`` raises before
+    returning an ``AutonomyScore``. The field set is deliberately lighter
+    than ``AutonomyDecisionMetadata`` — there was no decision to trace.
+    See ADR-007 Decision 2.
+
+    ``refusal_reason`` is a discriminator for future refusal classes
+    (P1.3 Hard Guards will extend the Literal via ADR amendment). P1.2
+    writes only ``"unknown_tool"``.
+
+    Field set is locked by the constitutional test
+    ``test_constitution_autonomy_refusal_metadata_field_set``.
+    """
+
+    operation_tool_id: str
+    operation_initiating_agent: str
+    user_explicit_intent: bool
+    refusal_reason: Literal["unknown_tool"]
+
+
 TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.HYPOTHESIS: HypothesisMeta,
     EventType.DECISION: DecisionMeta,
@@ -241,6 +264,7 @@ TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.TOOL_CALL: ToolCallMeta,
     EventType.TOOL_RESULT: ToolResultMeta,
     EventType.AUTONOMY_DECISION: AutonomyDecisionMetadata,
+    EventType.AUTONOMY_REFUSAL: AutonomyRefusalMetadata,
 }
 
 
