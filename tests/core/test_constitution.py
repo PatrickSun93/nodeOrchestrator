@@ -19,8 +19,10 @@ ADR documenting why.
 
 from __future__ import annotations
 
+import ast
 import sqlite3
 import typing
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -178,3 +180,45 @@ def test_constitution_append_only_at_schema_level(
 
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         store.conn.execute("DELETE FROM events")
+
+
+_CORE_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "orchestrator" / "core"
+
+
+def test_constitution_core_does_not_import_autonomy() -> None:
+    """``src/orchestrator/core/`` must never import from ``orchestrator.autonomy``.
+
+    Why: the autonomy module imports from core (first sanctioned edge, C4-5).
+    The reverse direction creates a circular dependency and violates the
+    deliberate-duplication layering rule documented in
+    ``orchestrator/core/event.py:209-211``. If core ever imports autonomy,
+    the layering boundary collapses silently.
+
+    Uses AST-level import walking so string-matching can't be fooled by
+    comments or docstrings.
+    """
+    violations: list[str] = []
+    for py_path in _CORE_SRC.rglob("*.py"):
+        if "__pycache__" in py_path.parts:
+            continue
+        try:
+            tree = ast.parse(py_path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        rel = py_path.relative_to(_CORE_SRC.parent.parent)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if module == "orchestrator.autonomy" or module.startswith("orchestrator.autonomy."):
+                    violations.append(f"  {rel}: from {module} import ...")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "orchestrator.autonomy" or alias.name.startswith(
+                        "orchestrator.autonomy."
+                    ):
+                        violations.append(f"  {rel}: import {alias.name}")
+
+    assert not violations, (
+        "orchestrator.core imports from orchestrator.autonomy — layering violation.\n"
+        "core → autonomy direction is forbidden (see event.py:209-211):\n" + "\n".join(violations)
+    )

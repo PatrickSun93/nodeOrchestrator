@@ -26,7 +26,7 @@ from orchestrator.llm.config_loader import load_tools_config
 _EXAMPLES_DIR = Path(__file__).resolve().parent.parent.parent / "config"
 _TOOLS_YAML = _EXAMPLES_DIR / "tools.yaml.example"
 
-_OPERATOR = ThresholdConfig(threshold_auto=6, threshold_confirm=3, user_intent_modifier=0)
+_OPERATOR = ThresholdConfig(threshold_auto=6, threshold_confirm=3, user_intent_modifier=3)
 
 
 def _op(tool_id: str) -> Operation:

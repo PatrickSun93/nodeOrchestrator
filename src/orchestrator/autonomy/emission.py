@@ -21,8 +21,6 @@ from orchestrator.autonomy.scoring import (
     gate,
 )
 from orchestrator.core.event import (
-    AutonomyDecisionMetadata,  # noqa: F401 — imported to trigger validate_metadata
-    AutonomyRefusalMetadata,  # noqa: F401 — imported to trigger validate_metadata
     Event,
     EventType,
     RoomId,
