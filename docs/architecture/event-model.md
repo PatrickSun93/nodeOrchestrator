@@ -27,7 +27,7 @@ Without a type, downstream code can't tell. So you either:
   hidden in prose).
 - Add a structured field — i.e., readmit `type`.
 
-The 16 types are the result of refusing to lump distinct semantic operations
+The 17 types are the result of refusing to lump distinct semantic operations
 into "message". They are the system's working vocabulary. Code routes on
 type without inferring intent. LLMs are not in the routing path.
 
@@ -69,7 +69,7 @@ Sooner or later, someone will propose:
 
 - A pressure valve is exactly what defeats the type system. Once a
   catch-all exists, the path of least resistance routes through it. The
-  16 meaningful types decay into trivia within a few quarters.
+  17 meaningful types decay into trivia within a few quarters.
 - If you find yourself wanting "generic", you have an unmet design need
   that deserves a *new specific type*, not a fallback. Add an ADR. Name
   the operation. Define the metadata it should carry.
