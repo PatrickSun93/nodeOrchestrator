@@ -20,6 +20,7 @@ ADR documenting why.
 from __future__ import annotations
 
 import sqlite3
+import typing
 from typing import TYPE_CHECKING
 
 import pytest
@@ -68,6 +69,18 @@ def test_constitution_autonomy_decision_event_carries_trace() -> None:
         f"Fields in AutonomyDecisionMetadata not in expected set: {sorted(extra)}\n"
         "Fix: update AutonomyDecisionMetadata in orchestrator/core/event.py to "
         "match the DecisionTrace shape in orchestrator/autonomy/scoring.py."
+    )
+
+    # R0-A item #4: the `rule` Literal annotation must stay in sync across
+    # both classes. A divergence would mean the event log accepts rule values
+    # the scorer never produces, or vice versa — silent spec drift.
+    trace_rule_hint = typing.get_type_hints(DecisionTrace)["rule"]
+    meta_rule_hint = typing.get_type_hints(AutonomyDecisionMetadata)["rule"]
+    assert trace_rule_hint == meta_rule_hint, (
+        "rule Literal annotation mismatch between DecisionTrace and AutonomyDecisionMetadata.\n"
+        f"DecisionTrace.rule: {trace_rule_hint}\n"
+        f"AutonomyDecisionMetadata.rule: {meta_rule_hint}\n"
+        "Fix: update the rule Literal in one of the two classes so both share the same values."
     )
 
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.autonomy.scoring import ThresholdConfig
+from orchestrator.autonomy.scoring import AutonomyTier, ThresholdConfig, decide_tier
 from orchestrator.llm.types import AgentAutonomyThresholds
 
 
@@ -56,3 +56,57 @@ def test_constitution_threshold_auto_strictly_greater_than_confirm(
     instance = cls(threshold_auto=6, threshold_confirm=5, user_intent_modifier=0)
     assert instance.threshold_auto == 6
     assert instance.threshold_confirm == 5
+
+
+def test_constitution_hard_confirm_unreachable_when_effective_confirm_clamped() -> None:
+    """When ``effective_threshold_confirm`` is clamped to 0 by ``max(0, …)``,
+    HARD_CONFIRM must be structurally unreachable for any score in [0, 10].
+
+    ADR-005 §5(c) establishes the floor: ``effective_threshold_confirm =
+    max(0, threshold_confirm - modifier)``. When the modifier equals or
+    exceeds ``threshold_confirm``, the floor kicks in and the confirm band
+    collapses to 0 — meaning ``score >= 0`` is always true, and the
+    COUNTDOWN_CONFIRM branch absorbs all scores that would otherwise have
+    fallen to HARD_CONFIRM.
+
+    This invariant is load-bearing: ADR-005 §5 Alternative B (binary router
+    — skip scoring when user is explicit) was **rejected** because it would
+    have removed Hard Guards' authority to refuse user-cooperative
+    destructive calls. The floor is the deliberate middle ground: user
+    intent can lower the confirm threshold to 0 (no HARD_CONFIRM prompt),
+    but the destructive-action refusal layer (P1.3 Hard Guards) is what
+    prevents those calls from executing unchecked, not this scorer's
+    HARD_CONFIRM tier.
+
+    If this test fails: do NOT remove the clamp or adjust the formula.
+    Investigate whether P1.3 Hard Guards now covers the cases you expected
+    to route through HARD_CONFIRM. If it does, write an ADR revising §5(c).
+
+    Tuples exercised: (threshold_confirm=2, modifier=5) and
+    (threshold_confirm=3, modifier=3) — both satisfy modifier >= threshold_confirm.
+    Each tuple is combined with all 11 score values [0..10] → 22 combinations.
+    """
+    combinations = [
+        # (threshold_auto, threshold_confirm, modifier)
+        (8, 2, 5),  # modifier > confirm → eff_confirm = max(0, -3) = 0
+        (7, 3, 3),  # modifier == confirm → eff_confirm = max(0, 0) = 0
+    ]
+    for auto, confirm, modifier in combinations:
+        thresholds = ThresholdConfig(
+            threshold_auto=auto,
+            threshold_confirm=confirm,
+            user_intent_modifier=modifier,
+        )
+        for s in range(0, 11):
+            result = decide_tier(s, thresholds, user_explicit_intent=True, tool_id="test_tool")
+            assert result.tier != AutonomyTier.HARD_CONFIRM, (
+                f"HARD_CONFIRM was produced with score={s}, auto={auto}, "
+                f"confirm={confirm}, modifier={modifier} — effective_confirm "
+                f"should be 0 (clamped), making HARD_CONFIRM unreachable. "
+                f"trace={result.trace}"
+            )
+            assert result.trace.threshold_confirm_effective == 0, (
+                f"expected effective_confirm=0 but got "
+                f"{result.trace.threshold_confirm_effective} for score={s}, "
+                f"auto={auto}, confirm={confirm}, modifier={modifier}"
+            )
