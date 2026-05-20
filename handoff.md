@@ -155,17 +155,15 @@ class Room:
 ### 4.3 自治度评分
 
 ```python
-@dataclass
+# Pydantic model, frozen=True, extra="forbid". P1.2 scorer reads
+# tool_id and user_explicit_intent only; params and estimated_cost_usd
+# are P1.3 Hard Guards-reserved (kept on the dataclass per ADR-005 D5).
 class Operation:
-    # estimated_cost_usd and similar non-reversibility fields are consumed
-    # by P1.3 Hard Guards, not P1.2 scoring. See ADR-005 Decision 5.
-    op_type: str
-    target: str
-    params: dict
+    tool_id: str
     initiating_agent: str
-    user_explicit_request: bool
-    estimated_cost_usd: float
-    metadata: dict
+    user_explicit_intent: bool
+    params: dict[str, Any]      # default {}; consumed by P1.3 Hard Guards
+    estimated_cost_usd: float   # default 0.0; consumed by P1.3 Hard Guards
 
 class AutonomyTier(StrEnum):
     AUTO_EXECUTE = "auto_execute"
