@@ -1001,12 +1001,12 @@ your-orchestrator/
 
 ## 15. ADR 索引
 
-- ADR-001: Event store 地基(P0,待写)
-- ADR-002: LLM 三层配置架构(P1.1,待写)
-- ADR-003: Claude Code 不能给 operator(P1.1,待写)
-- ADR-004: Tool calling 策略 3(P1.1,待写)
+- ADR-001: Event store 地基(P0,Accepted)
+- ADR-002: LLM 三层配置架构(P1.1,Accepted)
+- ADR-003: Claude Code 不能给 operator + tool calling 策略 3(P1.1,Accepted)— 原 ADR-004(Tool calling 策略)折入此 ADR
+- ADR-005: 自治度评分 — 单维 reversibility + 三档 AutonomyTier + 分层 Hard Guards(P1.2,Accepted 2026-05-19)
 
-每次重大设计决策做新 ADR。后续的人(包括未来的 Claude Code 自己)能从 ADR 看到决策为什么这样做。
+每次重大设计决策做新 ADR。**ADR 起草由 senior planner 负责,architect review/accept**(详见 `docs/process/senior-planner.md` § ADR drafting;ADR-005 是 workflow bootstrap 期的例外,architect 起草自己 review)。后续的人(包括未来的 Claude Code 自己)能从 ADR 看到决策为什么这样做。
 
 ---
 

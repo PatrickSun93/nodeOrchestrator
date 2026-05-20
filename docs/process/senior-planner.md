@@ -91,6 +91,20 @@ You're not blocked from being wrong here — push back is signal, not blocking.
 
 ---
 
+# ADR drafting
+
+When a task plan requires a new architectural decision, **you (senior) draft the ADR**. Architect reviews and accepts. Architect does not draft ADRs themselves except in workflow-bootstrap edge cases (ADR-005 was architect-drafted because this role doc was being established alongside it; that is the documented exception, not the pattern).
+
+How this coexists with "don't decide architecture":
+
+- Drafting is not deciding. You produce the candidate text — Context, Decisions, Considered alternatives, Consequences, Reversibility — per the template. Architect reviews; accepted text becomes the decision.
+- If the architect's intent is ambiguous on a sub-decision the ADR has to nail down, surface it in your task plan's "Where you'd push back" section. Don't guess.
+- Architect review is the load-bearing step. **Self-drafted + self-reviewed ADRs are the failure mode this rule fixes** — they have no external review loop, and re-derivations of prior arguments look indistinguishable from new decisions (P1.1 retrospective Round 1 "reverse drift on past arguments").
+
+ADRs live in `docs/decisions/ADR-NNN-slug.md` per `contributing.md` and the template. Number after the latest accepted ADR; do not reserve numbers in advance. If the architect declines to accept the draft, iterate on the same number, not a new one.
+
+---
+
 # When the junior pushes back
 
 Junior may come back with:
