@@ -40,6 +40,13 @@ Each type also carries a different downstream contract:
   (Principle 5).
 - `tool_call` and `tool_result` are paired by `call_id` for replay and
   audit.
+- `autonomy_decision` is emitted synchronously before tool execution
+  and carries the full `DecisionTrace` of the gate evaluation. Its
+  metadata field set is locked to `DecisionTrace` (in
+  `orchestrator.autonomy.scoring`) by the constitutional test
+  `test_constitution_autonomy_decision_event_carries_trace` — the
+  duplication is deliberate so `orchestrator.core` does not import
+  from `orchestrator.autonomy`. See ADR-005 Decision 6.
 
 If you can't tell which contract applies, you can't write the routing code.
 The type field is what makes the routing code possible.
