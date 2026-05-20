@@ -136,9 +136,10 @@ or crosses module boundaries.
 3. One test per constrained `Field`, at the just-out-of-range value
 4. One test per `Literal` field, with a non-allowed value
 
-**P1.1 example**: none yet — `types.py` models lack direct schema tests;
-this is a known gap. The first canonical example is expected to land
-alongside P1.2-R1 (the round-1 plan will identify the exact test file).
+**P1.2-R1 canonical example**: `tests/autonomy/test_scoring.py::TestSchemaInvariants`
+— covers `AutonomyScore` (frozen, extra-forbid, score out-of-range) and
+`DecisionTrace` (frozen, extra-forbid, invalid rule Literal). Landed in C3
+(P1.2-R1). `ToolMeta` and `ThresholdConfig` explicit §6 coverage queued for C4.
 
 **Quantifiable measure**: for model *M* with *N* constrained fields and
 *L* Literal fields, expect ≥ 2 + N + L tests in `test_<module>_schema.py`.

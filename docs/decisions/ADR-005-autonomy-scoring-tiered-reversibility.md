@@ -141,7 +141,11 @@ Sub-decisions, all binding:
   via `max(0, ...)`. A negative value would make `HARD_CONFIRM`
   unreachable for any score, which contradicts Hard Guards'
   existence rationale (some actions must reach the strictest tier
-  even with user cooperation).
+  even with user cooperation). Concrete example: a `git_push`
+  (reversibility=1) called by `operator` (modifier=3) with
+  `user_explicit_intent=True` lands on COUNTDOWN_CONFIRM, not
+  HARD_CONFIRM — Hard Guards (P1.3) is the destructive-action
+  refusal layer, not the scorer's HARD_CONFIRM tier.
 
 Modifier-not-dimension is the central call: the *score* is an
 objective property of the tool and must not change with who asked.
@@ -267,5 +271,9 @@ redesign anyway; the larger drift is worse than the wait.
 - ADR-001 (event store foundation) — establishes the EventType
   enum and the "adding a type requires an ADR" rule that this ADR
   satisfies.
+- ADR-006 (unknown tool_id semantics) — refines Decision 2 by
+  distinguishing registry-miss (raises `UnknownToolError`) from
+  missing-field (Pydantic default 0). Landed in C3 alongside
+  the §5(c) narrative revision above.
 - Implementation entry point: C2 freeze commit (P1.2 interface
   freeze), to follow this ADR upon acceptance.

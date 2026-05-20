@@ -124,6 +124,23 @@ class AutonomyScore(BaseModel):
     trace: DecisionTrace
 
 
+# ---- Exceptions -----------------------------------------------
+
+
+class UnknownToolError(Exception):
+    """Raised by ``score()`` when ``operation.tool_id`` is not in the
+    tools registry. See ADR-006 Decision 1.
+
+    ``tool_id`` is a structured attribute for log-based diagnosis and
+    downstream handling; do not parse ``str(e)`` — read ``e.tool_id``
+    directly. The message string format is not part of the contract.
+    """
+
+    def __init__(self, tool_id: str) -> None:
+        self.tool_id = tool_id
+        super().__init__(f"tool_id {tool_id!r} not found in tools registry")
+
+
 # ---- Public functions -----------------------------------------
 
 
@@ -132,10 +149,17 @@ def score(
     tools: dict[str, ToolMeta],
 ) -> int:
     """Compute the reversibility-only score for the operation.
-    Returns 0..10. If the tool is not in `tools`, returns 0
-    (conservative-low; ADR-005 Decision 2). Pure function: no
-    I/O, no LLM, no event emission."""
-    raise NotImplementedError
+    Returns 0..10. Pure function: no I/O, no LLM, no event emission.
+
+    Raises:
+        UnknownToolError: if ``operation.tool_id`` is not in ``tools``.
+            See ADR-006 Decision 1. The missing-field case (tool in
+            registry, ``reversibility`` absent) is handled by the Pydantic
+            ``Field(default=0, …)`` on ``ToolMeta`` per ADR-005 Decision 2.
+    """
+    if operation.tool_id not in tools:
+        raise UnknownToolError(operation.tool_id)
+    return tools[operation.tool_id].reversibility
 
 
 def decide_tier(
@@ -149,7 +173,38 @@ def decide_tier(
     full AutonomyScore (score, tier, trace). Pure function. The
     `tool_id` keyword arg is for the trace only; tier selection
     does not depend on it. See ADR-005 Decisions 4 and 5."""
-    raise NotImplementedError
+    if user_explicit_intent:
+        eff_auto = thresholds.threshold_auto - thresholds.user_intent_modifier
+        eff_confirm = max(0, thresholds.threshold_confirm - thresholds.user_intent_modifier)
+    else:
+        eff_auto = thresholds.threshold_auto
+        eff_confirm = thresholds.threshold_confirm
+
+    tier: AutonomyTier
+    rule: Literal["score_ge_auto", "score_between_confirm_and_auto", "score_lt_confirm"]
+    if score_value >= eff_auto:
+        tier = AutonomyTier.AUTO_EXECUTE
+        rule = "score_ge_auto"
+    elif score_value >= eff_confirm:
+        tier = AutonomyTier.COUNTDOWN_CONFIRM
+        rule = "score_between_confirm_and_auto"
+    else:
+        tier = AutonomyTier.HARD_CONFIRM
+        rule = "score_lt_confirm"
+
+    trace = DecisionTrace(
+        tool_id=tool_id,
+        reversibility_score=score_value,
+        threshold_auto_raw=thresholds.threshold_auto,
+        threshold_confirm_raw=thresholds.threshold_confirm,
+        user_intent_modifier=thresholds.user_intent_modifier,
+        user_explicit_intent=user_explicit_intent,
+        threshold_auto_effective=eff_auto,
+        threshold_confirm_effective=eff_confirm,
+        tier=tier,
+        rule=rule,
+    )
+    return AutonomyScore(score=score_value, tier=tier, trace=trace)
 
 
 def gate(
@@ -160,4 +215,9 @@ def gate(
     """End-to-end gate: score + decide. Pure function; event
     emission lives in the caller, not here, so the gate stays
     testable without an event store."""
-    raise NotImplementedError
+    return decide_tier(
+        score(operation, tools),
+        thresholds,
+        operation.user_explicit_intent,
+        tool_id=operation.tool_id,
+    )
