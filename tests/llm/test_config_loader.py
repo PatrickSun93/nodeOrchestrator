@@ -7,10 +7,12 @@ from textwrap import dedent
 
 import pytest
 
+from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.llm.config_loader import (
     load_agent_llm_config,
     load_models,
     load_providers,
+    load_tools_config,
     validate_full_config,
 )
 from orchestrator.llm.exceptions import ConfigError
@@ -482,3 +484,101 @@ class TestExampleConfigs:
         provider = providers.get(default_profile.provider)
         assert provider is not None
         assert provider.can_use_orchestrator_tools()
+
+
+# ---------------------------------------------------------------------------
+# load_tools_config
+# ---------------------------------------------------------------------------
+
+
+class TestLoadToolsConfig:
+    """Tests for ``load_tools_config(path) -> dict[str, ToolMeta]``."""
+
+    def test_happy_path_returns_tool_meta_dict(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path,
+            "tools.yaml",
+            """
+            tools:
+              read_file:
+                reversibility: 10
+              git_push:
+                reversibility: 1
+              default_tool: {}
+            """,
+        )
+        result = load_tools_config(path)
+        assert set(result.keys()) == {"read_file", "git_push", "default_tool"}
+        assert isinstance(result["read_file"], ToolMeta)
+        assert result["read_file"].reversibility == 10
+        assert result["git_push"].reversibility == 1
+        assert result["default_tool"].reversibility == 0  # Pydantic default
+
+    def test_missing_file_raises_config_error(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigError, match="does not exist"):
+            load_tools_config(tmp_path / "nonexistent.yaml")
+
+    def test_malformed_yaml_raises_config_error(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "bad.yaml", "tools: [this: is: not: valid\n")
+        with pytest.raises(ConfigError, match="yaml parse error"):
+            load_tools_config(path)
+
+    def test_config_error_violations_locate_offending_field_and_stem(self, tmp_path: Path) -> None:
+        """ConfigError payload must carry the offending field name AND the
+        yaml file stem so log-based diagnosis requires no extra lookups.
+
+        Mirrors the P1.1 pattern in ``test_config_error_violations_locate_offending_yaml_field``
+        for ``load_agent_llm_config``. Per ``test-coverage-standard.md`` §4.
+        """
+        path = _write(
+            tmp_path,
+            "mytoolsfile.yaml",
+            """
+            tools:
+              bad_tool:
+                reversibility: -1
+            """,
+        )
+        with pytest.raises(ConfigError) as exc:
+            load_tools_config(path)
+        msg = str(exc.value)
+        assert "reversibility" in msg
+        assert path.stem in msg
+
+    def test_cleanup_path_file_not_held_after_parse_failure(self, tmp_path: Path) -> None:
+        """File handle must be released after a parse/validation error.
+
+        ``load_tools_config`` uses ``Path.read_text()`` which opens and closes
+        the file atomically — no persistent handle. This test verifies that
+        assumption holds: after a ConfigError, we can still rename the file
+        (which would fail on Windows if a handle were open).
+
+        Note: outer-cancellation (§3b) is N/A because ``load_tools_config``
+        is synchronous and holds no long-lived resource.
+        """
+        path = _write(
+            tmp_path,
+            "tools.yaml",
+            """
+            tools:
+              bad_tool:
+                reversibility: -99
+            """,
+        )
+        with pytest.raises(ConfigError):
+            load_tools_config(path)
+        # If file handle were held, rename would raise PermissionError on Windows.
+        renamed = path.with_name("tools_renamed.yaml")
+        path.rename(renamed)
+        assert renamed.exists()
+        assert not path.exists()
+
+    def test_load_example_tools_yaml(self) -> None:
+        """Load the project's real tools.yaml.example — catches doc-spec drift."""
+        result = load_tools_config(EXAMPLES_DIR / "tools.yaml.example")
+        assert len(result) > 0
+        for tool_id, meta in result.items():
+            assert isinstance(meta, ToolMeta), f"tool {tool_id!r}: expected ToolMeta"
+            assert 0 <= meta.reversibility <= 10, (
+                f"tool {tool_id!r}: reversibility {meta.reversibility} out of [0, 10]"
+            )
