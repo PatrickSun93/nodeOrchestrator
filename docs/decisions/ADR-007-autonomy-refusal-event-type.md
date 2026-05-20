@@ -1,6 +1,6 @@
 # ADR-007: `autonomy_refusal` Event Type
 
-**Status:** Proposed — 2026-05-20
+**Status:** Accepted — 2026-05-20
 **Scope:** Governs the new `EventType.AUTONOMY_REFUSAL` and its
 `AutonomyRefusalMetadata` schema — the audit-event written by the
 autonomy emission layer when `gate()` raises rather than returns.
