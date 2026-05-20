@@ -12,6 +12,8 @@ forbidden per the C2-freeze deliberate-duplication design documented in
 
 from __future__ import annotations
 
+import contextlib
+
 from orchestrator.autonomy.scoring import (
     AutonomyScore,
     Operation,
@@ -60,22 +62,25 @@ def emit_gate_decision(
     try:
         result = gate(operation, tools, thresholds)
     except UnknownToolError:
-        event_store.append(
-            Event(
-                id=generate_event_id(),
-                room_id=room_id,
-                type=EventType.AUTONOMY_REFUSAL,
-                author=author,
-                timestamp=now_ms(),
-                content=f"autonomy_refusal: {operation.tool_id!r} not in tools registry",
-                metadata={
-                    "operation_tool_id": operation.tool_id,
-                    "operation_initiating_agent": operation.initiating_agent,
-                    "user_explicit_intent": operation.user_explicit_intent,
-                    "refusal_reason": "unknown_tool",
-                },
+        # ADR-007 §3 conservative default — append failure must not mask
+        # UnknownToolError; audit-record loss accepted over error masking.
+        with contextlib.suppress(Exception):
+            event_store.append(
+                Event(
+                    id=generate_event_id(),
+                    room_id=room_id,
+                    type=EventType.AUTONOMY_REFUSAL,
+                    author=author,
+                    timestamp=now_ms(),
+                    content=f"autonomy_refusal: {operation.tool_id!r} not in tools registry",
+                    metadata={
+                        "operation_tool_id": operation.tool_id,
+                        "operation_initiating_agent": operation.initiating_agent,
+                        "user_explicit_intent": operation.user_explicit_intent,
+                        "refusal_reason": "unknown_tool",
+                    },
+                )
             )
-        )
         raise
 
     event_store.append(

@@ -147,3 +147,30 @@ def test_emit_refusal_event_appended_before_raise(room_id: RoomId) -> None:
     assert recorder.appended == ["autonomy_refusal"], (
         f"Expected exactly one autonomy_refusal append before the raise; got: {recorder.appended}"
     )
+
+
+def test_emit_refusal_with_failing_event_store_propagates_unknown_tool_error(
+    room_id: RoomId,
+) -> None:
+    """event_store.append() failure must not mask UnknownToolError.
+
+    ADR-007 §3 conservative default: audit-record loss is accepted over
+    masking the original exception. The caller must receive UnknownToolError
+    (with the correct tool_id) even when the store raises on append.
+    """
+
+    class _FailingStore:
+        def append(self, event: object) -> None:
+            raise RuntimeError("store unavailable")
+
+    with pytest.raises(UnknownToolError) as exc_info:
+        emit_gate_decision(
+            _op("ghost_tool"),
+            {},
+            _OPERATOR,
+            _FailingStore(),  # type: ignore[arg-type]
+            room_id=room_id,
+            author="agent:operator",
+        )
+
+    assert exc_info.value.tool_id == "ghost_tool"
