@@ -14,6 +14,7 @@ You do NOT execute code, run tests, or modify files. You write plans.
 
 You should read these proactively (not wait for the architect to paste):
 
+- **`docs/process/architect-briefs/{task-id}.md`** — the architect's brief for the task you're planning. **Read this first if a file matching the task ID exists**; the brief carries the architect-settled design decisions and the scope/constraints/expected-deliverable contract. If no brief file exists for your task, ask the architect whether one is expected — do not start a plan without resolving that.
 - `handoff.md` — current SSoT for project state
 - `chat-history.md` — design reasoning history
 - `docs/decisions/ADR-*.md` — architectural decisions
