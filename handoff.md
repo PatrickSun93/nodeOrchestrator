@@ -649,38 +649,54 @@ async def select_model_and_provider(
 
 ## 7. 实施优先级(更新版)
 
-### P0 — 事件流地基 ✅ 已完成接口冻结
+### P0 — 事件流地基 ✅ Closed
 
-完成的部分(commit 1):
-- Event dataclass + 16 种 type 枚举
-- Relation dataclass + 4 种 type
-- 6 种 typed metadata schema
-- 异常类(EventError、InvalidParentError 等)
-- ID 生成器、author 校验、metadata 校验(纯函数已实现)
-- EventStore 11 个公开方法签名(NotImplementedError)
-- extract_structural_relations 签名
-- SCHEMA 常量 + append-only TRIGGERS
+**Landed commits**: `69f66d1`(scaffold + interface freeze)→ `997bb00`(ADR-001 accepted)。架构记录 `docs/architecture/event-model.md`,决策记录 `docs/decisions/ADR-001-event-store-foundation.md`。Retrospective 未单独写(P0 早期、retro 习惯从 P1.1 开始)。
 
-待完成(commit 2):
-- EventStore 11 方法实现
-- relations 提取实现
-- conftest.py 双 fixture(in_memory + populated)
-- test_event.py、test_event_store.py、test_relations.py
-- test_constitution.py(test_constitution_append_only_at_schema_level)
-- 边角覆盖:parent_not_found、cross_room_parent、self_parent、多 retraction
-- 性能基线:test_perf_baseline_get_thread_depth_100
+历史 freeze→impl→ADR-1 三阶段细节保留在 git log;handoff §15 标 Accepted。
 
-接口 review 中**已确定的修正**:
-- `IF NOT EXISTS` 只用于 CREATE TABLE,TRIGGER 用 `DROP IF EXISTS + CREATE`
-- `get_thread(unknown_id)` 改为 raise `EventNotFoundError`(不返回 [])
-- `InvalidParentError` 加 `reason: Literal["cross_room", "self_parent", "not_found"]` 字段
-- 索引改为 `(room_id, timestamp, id)` 三列(让 ORDER BY 完全走索引)
-- Fixture 加 retraction 节点(8 节点),retraction 是 **decision** 的 child(详见 ADR-001 §8;接口冻结期我倾向 hypothesis 的 child 演示 fork 语义,实现期被反向 push back —— `get_thread(retraction)` 必须包含被 retract 的 decision 才让上下文完整)
+### P1.0 — 端到端垂直切片 ⚠️ Skipped / 折叠
 
-待完成(commit 3,独立 PR):
-- ADR-001-event-store-foundation.md
+原计划 3-4 天:一个 prober + free_chat + mock LLM 端到端骨架。实际推进中未独立交付 —— mock LLM provider 在 P1.1 内随 `MockProvider` 一起 land,prober agent 配置占位在 `config/agents/prober.yaml.example` 内 land(P1.1 配置层)。"端到端骨架"作为独立 milestone 没发生,但其代表的"垂直切片信心"通过 P1.1 测试和 P1.2 接口冻结的层间集成已经覆盖。
 
-### P1 — 完整研究类房间(重新拆分)
+如果未来回看这是 mistake(big bang integration 风险又出现),P1.0 可以重新打开作为 P1.6 之前的 e2e checkpoint。目前不重启。
+
+### P1.1 — LLM provider 抽象 ✅ Closed
+
+**Landed commits**: `d7f2e8c`(interface freeze)→ `5dd5cab`(impl)→ `7e934cc` / `55db061`(review fix rounds)→ `843c05a` / `42545ed`(close-out + retrospective)。
+
+**Deliverables**:
+- `src/orchestrator/llm/`(providers / router / config_loader / types / purposes / protocol / exceptions)
+- ADR-002(三层配置)、ADR-003(Claude Code 不接 orchestrator tools)
+- 录像测试基础设施 `tests/llm/providers/claude_code_cli/recordings/`
+- Retrospective: `docs/retrospectives/P1.1.md` — 命名三种 drift 形态(reverse drift / doc-spec drift / freeze-vs-impl drift)+ forcing functions
+
+**Retro 关键 takeaway**(影响 P1.2+ workflow):
+- 4 层 review pipeline 雏形(type system → constitutional tests → doc-spec discipline → process discipline)
+- Cross-family two-reviewer 经验数据(verify overlap ~100%、find overlap <10%)
+- 7 个 constitutional tests landed,首个真正"付钱"的是 `test_constitution_no_hardcoded_model_names`(P1.1 期间 3 次实抓)
+
+### P1.2 — 自治度评分系统 🚧 In flight
+
+**Commit timeline**:
+
+| Stage | Commit | Date | Status |
+|---|---|---|---|
+| P1.2-R0 carryover(6 个 P1.1 retro 补测 + test-coverage standard 文档化) | `12b6259` → `cca89b0` → `b2bbf21` → `3b3b7a9` | 2026-05-08 → 05-11 | ✅ Landed |
+| P1.2-C1(ADR-005 + senior-planner workflow 首次成文) | `80a41b3` | 2026-05-20 AM | ✅ Landed |
+| P1.2-C2(接口冻结) | `da65165` | 2026-05-20 AM | ✅ Landed |
+| R0-A 2 个 🟡 doc-drift 修复 | `7379576` → `ecae9ef`(PR #1 merge) | 2026-05-20 | ✅ Landed |
+| C3 prep(`ThresholdConfig` schema-level invariant) | `d20ad0b` | 2026-05-20 | ✅ Landed |
+| P1.2-C3 senior plan + ADR-006 Proposed | `54c673c` | 2026-05-20 PM | ✅ Drafted |
+| P1.2-C3 architect ack: ADR-006 Accepted + plan revisions | `299b3be` → `c4458d3`(PR #2 merge) | 2026-05-20 PM | ✅ Landed |
+| P1.2-C3(impl: `score` / `decide_tier` / `gate` + tests + ADR-005 §5(c) revision) | — | — | ⏳ Pending junior dispatch |
+| P1.2-C4(loader impl + event 发射集成 + e2e) | — | — | ⏳ Pending |
+
+**Canonical decision record**: ADR-005(自治度评分 — 6→1 维度收敛 + 3 档 AutonomyTier + tools.yaml/agent.yaml schema 拆分 + user_intent-as-modifier + autonomy_decision EventType)。补充:ADR-006(Unknown tool_id 语义,Accepted 2026-05-20 — 首个 senior-drafts-ADR 非-bootstrap 实例)。
+
+设计推理回顾详见 `chat-history.md` v3 § "P1.2 推进期"。
+
+#### P1.2 设计要点(2026-05-19 land,6-day distance test passed)
 
 **P1 拆成 6 个连续 PR,不是一次合大的**:
 
@@ -695,7 +711,7 @@ P1.6  Snapshot + decision log + 完整 E2E  1 周
 ```
 #### P1.2 详细设计(2026-05-19 land,6-day distance test passed)
 
-Canonical decision record: ADR-005.
+Canonical decision record: ADR-005. 补充 ADR-006(Unknown tool_id 语义,P1.2-C3 期间 surface)。
 
 P1.2 设计经过两周收敛,从原 handoff "6 维评分" 大幅简化到 "1 维 + Hard Guards 分层" 架构。
 
@@ -914,14 +930,34 @@ your-orchestrator/
 │   └── fixtures/
 └── docs/
     ├── architecture/
-    │   ├── event-model.md       # P0
-    │   ├── llm-layer.md         # P1.1
-    │   └── autonomy.md          # P1.2
+    │   ├── event-model.md                # P0
+    │   ├── llm-layer.md                   # P1.1
+    │   ├── test-coverage-standard.md      # P1.2-R0 — 6 categories
+    │   └── autonomy.md                    # P1.2 — TBD
     ├── decisions/
     │   ├── ADR-001-event-store-foundation.md     # P0
     │   ├── ADR-002-llm-three-layer-config.md     # P1.1
-    │   └── ADR-003-claude-code-no-orchestrator-tools.md  # P1.1
-    └── contributing.md          # PR 模板("有没有 LLM 调用?为什么不用代码做?")
+    │   ├── ADR-003-claude-code-no-orchestrator-tools.md  # P1.1
+    │   ├── ADR-005-autonomy-scoring-tiered-reversibility.md  # P1.2
+    │   ├── ADR-006-unknown-tool-id-semantics.md  # P1.2-C3
+    │   ├── ADR-template.md / ADR-EXAMPLE-pydantic.md / writing-adrs.md
+    ├── retrospectives/
+    │   ├── P1.1.md                        # closed
+    │   └── P1.2-candidates.md             # accumulating during P1.2
+    ├── process/                           # workflow artifacts
+    │   ├── senior-planner.md              # senior role doc (§ "ADR drafting", § "Where your outputs go")
+    │   ├── architect-briefs/              # architect → senior briefs
+    │   │   ├── README.md
+    │   │   └── P1.2-C3.md
+    │   ├── senior-plans/                  # senior's task plans
+    │   │   ├── README.md
+    │   │   ├── P1.2-R0.md
+    │   │   ├── P1.2-R0-FU2.md
+    │   │   └── P1.2-C3.md                 # (lands when senior PRs to main)
+    │   └── reviews/                       # per-task review artifacts
+    │       ├── README.md
+    │       └── {task-id}/                 # plan-vs-impl.md / R0-A.md / R0-B.md / R1-A.md … / meta.md
+    └── contributing.md                    # PR 模板("有没有 LLM 调用?为什么不用代码做?")
 ```
 
 ---
@@ -1005,8 +1041,84 @@ your-orchestrator/
 - ADR-002: LLM 三层配置架构(P1.1,Accepted)
 - ADR-003: Claude Code 不能给 operator + tool calling 策略 3(P1.1,Accepted)— 原 ADR-004(Tool calling 策略)折入此 ADR
 - ADR-005: 自治度评分 — 单维 reversibility + 三档 AutonomyTier + 分层 Hard Guards(P1.2,Accepted 2026-05-19)
+- ADR-006: Unknown tool_id 语义 — registry-miss raise `UnknownToolError` vs field-miss default 0(P1.2-C3,Accepted 2026-05-20)
 
 每次重大设计决策做新 ADR。**ADR 起草由 senior planner 负责,architect review/accept**(详见 `docs/process/senior-planner.md` § ADR drafting;ADR-005 是 workflow bootstrap 期的例外,architect 起草自己 review)。后续的人(包括未来的 Claude Code 自己)能从 ADR 看到决策为什么这样做。
+
+---
+
+## 16. 工作流:architect-partner + senior + junior + reviewer
+
+P1.2 推进期(2026-05-20)正式化了多角色协作流程。**Architect 不直接写代码,不直接写 plan,不直接写 review** —— 那些角色由独立 LLM session 承担。Architect 的工作是设计、决策、审批、最终签字。
+
+### 16.1 四个角色
+
+| 角色 | 实例 | 写什么 | 读什么 | 不写什么 |
+|---|---|---|---|---|
+| **Architect**(你) | 项目所有者 | high-level docs(`handoff.md` / `chat-history.md` / ADRs review accept) + design decisions + push-back accept/override | 所有 | task plans / code / external reviews(那些是下游) |
+| **Architect-partner** | 一个 Claude session(本对话) | architect-scope doc 修订 + briefs(`docs/process/architect-briefs/`) + 自己做 R0(doc/narrative lens)+ 捕获 retrospective candidates | brief、ADR、retro、本次 session 的所有上游内容 | 代码、senior plan、junior impl(role-boundary,违反即纠正) |
+| **Senior planner** | 独立 Claude session(2026-05-11 后) | task plan(`docs/process/senior-plans/{task-id}.md`)+ plan-vs-impl 自检(`docs/process/reviews/{task-id}/plan-vs-impl.md`)+ 起草新 ADR | architect brief、handoff、retro、ADRs、code | 代码、运行测试、决定架构(只起草、不决定)|
+| **Junior implementer** | DeepSeek V4 Pro session | impl code + tests + commit body tracking table | senior plan、ADRs、code | task plan、ADR 决策、架构变更 |
+| **Reviewer**(R0-A / R0-B / R1+ / meta) | 多个独立 session,**至少一个 cross-family**(P1.1 retro §4)| review(`docs/process/reviews/{task-id}/R*-{A,B}.md`)+ tracking table 🔴🟡🟢 | 提交的 diff + 上下文 docs | 任何修复(只 surface、不 fix)|
+
+### 16.2 闭环流程
+
+```
+Architect 决定本周做 X
+        ↓
+Architect-partner 写 brief → docs/process/architect-briefs/{task-id}.md
+        ↓
+Senior 读 brief → 写 plan → docs/process/senior-plans/{task-id}.md (+ ADR draft if 需要)
+        ↓
+Architect review plan + accept ADR
+        ↓
+Junior 读 plan → impl → commit(分支 / PR)
+        ↓
+Senior 写 plan-vs-impl → docs/process/reviews/{task-id}/plan-vs-impl.md
+        ↓
+External R0-A(必)+ R0-B(cross-family, 强烈推荐)→ docs/process/reviews/{task-id}/R0-A.md, R0-B.md
+        ↓
+Architect 判 land vs rework
+        ↓
+[若 rework] 回到 junior;循环 R1 / R2…
+        ↓
+Module close → Retrospective at docs/retrospectives/P*.md
+```
+
+### 16.3 ADR 起草职责
+
+历史(P1.1):architect 起草 ADR-001/002/003。  
+过渡(P1.2-C1):architect 起草 ADR-005 + 自 review("ADR-005 draft + architect review")。Self-loop 不可持续 —— review 没有外部声音 = reverse drift 风险。  
+现行(P1.2-C3 起):**senior 起草新 ADR**,architect review 并 accept。ADR-006(Unknown tool_id 语义)是首个非-bootstrap senior-drafts 实例。
+
+详见 `docs/process/senior-planner.md` § "ADR drafting"。
+
+### 16.4 文件路径锁定(senior 输出去哪)
+
+`docs/process/senior-planner.md` § "Where your outputs go" 是 source of truth(一张表锁所有路径)。要点:
+
+- 一个 task 一个 task-id(`P1.2-C3`,case 保持)
+- Brief 和 plan 同 task-id 不同文件夹
+- Review 子文件夹按 task-id:`reviews/{task-id}/`
+- `-A.md` / `-B.md` mandatory(A=Claude 家族,B=cross-family,DeepSeek/Gemini/其他)
+- **`-B.md` 文件**不存在 = evidence "本轮没跑 cross-family reviewer";不要建空占位文件
+
+### 16.5 Forcing functions(到 2026-05-20 命名的)
+
+来自 P1.1 retro + P1.2 进行中:
+
+- **Tracking table in commit message**(`feedback_review_followup_tracking.md`):每次 review followup 的 commit message 第一段一张表,逐项 `Status: Done | Skipped (reason) | Disagreed (proposing X)`。防 reverse drift。
+- **5-surface scan**(`contributing.md` Q3 + `feedback_doc_spec_drift_5_surfaces.md`):schema 改动必扫五个面 — src / yaml / ADR / 架构 doc / 项目叙事(handoff + chat-history)。
+- **5-surface 子规则:pre-edit grep**(P1.2-RC-1 propose):surface "edited" 不等于 "consistent post-edit",grep 老值确实不在。
+- **Layer-crossing field-plumbing**(`contributing.md` Q3):新字段从 source 到 sink 必有 source ≠ sink 测试。
+- **Constitutional tests**:type system 之外的 invariant 锁(append-only TRIGGER、no LLM in autonomy、Protocol.call signature 一致、field set 跨类同步等)。
+- **6-category test-coverage standard**(`docs/architecture/test-coverage-standard.md`):cross-module / concurrency / cleanup / exception payload / boundary validators / schema invariants。每个 PR 自查 + commit message 标注。
+- **Distance test**:架构性决定不同日 land。Reversal 实例:test-coverage-standard 6→3→6(同日,RC-4 捕获)。
+- **Senior-drafts-ADR**(P1.2 起):自-起草+自-review 的 self-loop 禁止。
+
+### 16.6 关于 Energy / stop floor
+
+Architect 自报精力 5/10 是 stop floor —— 低于不硬推。Architect-partner 在每 1-2 个决定密集轮次后会提一下"floor 还稳吗",**但 architect 自报为准**,partner 不能从外部观察推断("做了很多 commits"≠"低能量")。RC-5 系列指向的"决定密度 / 自我突破 stop floor"模式仍在数据积累期。
 
 ---
 

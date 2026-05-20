@@ -1815,3 +1815,342 @@ v2 阶段的关键原话:
 
 **最后**:这个项目的设计还在演化。每次重大讨论后,文档应该被更新。如果你看到 chat-history 和 handoff 不一致,**handoff 是真相**,history 是演化过程。
 
+
+# v3 改动(相对 v2)
+
+v3 期记录:**2026-05-20**(单日,密度极高)。
+
+记录的主题:P1.2 推进期(C1-C3)、架构师助手 (architect-partner) 角色建立、senior-drafts-ADR 规则成型、workflow 文件路径锁定、ADR-005/ADR-006 决策推理过程、Energy / stop-floor 校准、关于 reversal pattern 的一次实例观察。
+
+v3 不重写 v1/v2 内容。v3 是新的、独立的主题段落。项目结束后,architect 会把 v1+v2+v3 汇总成一个完整的设计推理 doc。
+
+---
+
+## 14. 架构师助手 (architect-partner) 角色的建立
+
+### 起点
+
+2026-05-20 session 开始,architect 在 system-prompt 里设了 "你是我的 ARCHITECT PARTNER" 角色,显式列出该做什么和不该做什么。当时项目有四个独立 LLM session 在跑:
+- Senior planner(Claude Opus,写 task plan 和 plan-vs-impl 验证)
+- Junior implementer(DeepSeek V4 Pro,写代码)
+- Reviewers(R0/R1/R2 + meta,多 session)
+- Architect-partner(这次 session,角色刚定)
+
+Architect 自己是设计者 + 决策者。Architect-partner 是为了**让 architect 有一个 honest interlocutor**,不是协助加速 —— 加速由 senior/junior 做。
+
+### 关键讨论
+
+Architect-partner 的反 pattern 列表:
+- Default-agree because architect is architect
+- Skip distance test because "seems clearly right"
+- Take over senior planner / junior implementer role
+- Read history TO architect instead of using it
+- Helpful-by-volume(长 agreeable replies > 短 challenges)
+
+这是 architect 主动 inscribing 的角色边界,因为之前 session(P1.1)经验暴露过 partner over-step 的模式:doc 改完直接 commit、回答得太"helpful"、不 push back。
+
+### Calibration round
+
+Architect 给 architect-partner 5 个 calibration 题:
+1. 项目"自产品 / 精力放大器"框架 vs 普通产品框架的差异
+2. P1.2 自治度 6→1 维收敛的去向
+3. Senior/junior 边界 + ADR-005 期间一次 override
+4. Distance test forcing function
+5. 3 个 architect 会 push back 的具体反 pattern(项目特化,不通用)
+
+5 题答完后,architect 在 Q3 / Q4 抓出两条 retrospective candidate(分别 → RC-3 ADR 起草职责 / RC-4 reversal-pattern data point)。Calibration 不只是 "测 partner 知道多少",还附带 surface 出了**两条 partner 自己反映出的 prompt gap** —— "senior 起草 ADR 在 role doc 里没写清"、"distance test 触发判据没书面化"。
+
+### 最终决策
+
+- Architect-partner 是 honest interlocutor + review 角色,不写代码、不写 plan
+- 越界识别:partner 自己也是 fallible(2026-05-20 中,partner 在 R0 抓出 doc-drift 后,直接改了 commit、提了 PR —— architect 当场纠正"你只改 high-level doc,具体修复给 senior/junior")。Partner 接受 boundary、记下 RC-5 越界事件
+- 后续 partner 在 PR/commit 前自检"是否 architect-scope",不属于则 surface 不动手
+
+---
+
+## 15. ADR-005 决策路径回顾(6→1 维收敛的 2 周推理)
+
+### 起点
+
+原 handoff v2 §4.3 设计的"6 维自治度评分系统":reversibility / blast_radius / data_sensitivity / cost_impact / decision_finality / user_intent。各 0-10 加权求和。配 4 档 enum:FORBIDDEN / APPROVAL_REQUIRED / NOTIFY_AND_EXECUTE / AUTO_EXECUTE。
+
+### 关键讨论(两周收敛 2026-05-05 → 05-19)
+
+**问题 1:几个维度无法 honestly quantify。**
+
+- `cost_impact`:成本估计依赖 project knowledge(同一个 LLM 调用,在 demo 项目 = trivial,在生产 = critical)。把"无法量化"加权进求和 = manufactured precision,违反 Principle 11。
+- `blast_radius`:per-call parameter dependent(`git_push` 没 args vs `git_push --force` vs `git_push --force origin main`)。P1.2 的"per-tool per-type"设计**无法表达** per-parameter risk。
+- `external_visibility`:基本是 binary(action 离开本地机器 yes/no),做成 continuous 是把 boolean 假装成 score。
+- `destructive`:同 binary。
+- `model_confidence`:这是 output quality 问题,不是 action risk 问题。它属于 agent 自己评估(prober/skeptic 角色),不属于 autonomy scorer。
+
+**问题 2:`FORBIDDEN` 是否真的是一档?**
+
+发现 FORBIDDEN 和其他三档语义不同 —— FORBIDDEN 是 categorical refusal regardless of agent / user / context,**不是从 score 推出来的**,是从规则库匹配出来的。把它当作"score 太低"的特例,等于把一层 sibling logic(refusal layer)塞进 scorer 里。
+
+**问题 3:user_intent 怎么放?**
+
+如果当作 dimension(score 一项),它会和 reversibility 互相干扰 —— git_push 的 reversibility=1 是物理性质,不应该因为用户说"do it"变成 5。Score 应该是 tool 的客观属性,不应该因 caller intent 变化。
+
+但 user_intent 又确实应该影响**判定**:用户明确要求时,gate 应该更宽容。
+
+最终方案:**user_intent 是 threshold modifier,不是 dimension**。Score 不变,threshold(per-agent risk appetite)减去 modifier。
+
+### 关键 push-back
+
+Architect-partner 在 calibration Q2 答这部分时把这套推理重新走了一遍,验证 architect 能从 ADR-005 doc 推断 partner 的理解 —— 这是 calibration 通过的标志,不是 architect 教 partner。
+
+### 最终决策
+
+ADR-005 六个 sub-decisions(全部 2026-05-19 6-day distance test 后 Accepted):
+
+1. **One dimension**:仅 reversibility(0-10)
+2. **Schema location**:reversibility → `tools.yaml`(物理性质,project-level),threshold → `agent.yaml`(主观风险偏好,per-agent)
+3. **Threshold placeholder**:5 个 agent 各自 placeholder 值,**全部标 PLACEHOLDER (not tuned, P1.5+)** —— 不能现在 tune,因为没有 ground truth(实际使用数据)
+4. **3-tier AutonomyTier**:AUTO_EXECUTE / COUNTDOWN_CONFIRM / HARD_CONFIRM(原 FORBIDDEN 推到 P1.3 Hard Guards sibling layer)
+5. **user_intent = threshold modifier**(symmetric subtract,clamp `max(0, ...)`,Hard Guards 读 raw score 不读 effective)
+6. **New EventType `autonomy_decision`**,metadata 锁 DecisionTrace shape via constitutional test
+
+### 反 pattern
+
+讨论过但被否决:
+- 保留 6 维加权求和(rejected:false precision)
+- user_intent 当 binary router(rejected:绕过 Hard Guards)
+- 输出 continuous score 不离散化(rejected:UI 必须二选三决策,不能下放)
+- per-parameter reversibility 在 P1.2(deferred to P1.3,会要求 Operation shape 改动)
+
+---
+
+## 16. P1.2-C2 freeze 后 R0-A 暴露的两件事
+
+### 起点
+
+2026-05-20 上午,senior 完成 P1.2-C2 接口冻结(commit `da65165`)。Senior 自跑 plan-vs-impl verify,9/10 quality,approved。Architect 让 architect-partner 跑 R0-A(单 reviewer,跨家族 R0-B 没触发)。
+
+### 关键发现
+
+Partner 抓到两条 🟡 doc-drift:
+- `handoff.md` §4.3 `class Operation` 字段名和实际 `scoring.py:19-34` 的 Pydantic 模型字段名对不上(`op_type` vs `tool_id`、`user_explicit_request` vs `user_explicit_intent` 等)
+- `docs/architecture/event-model.md` 表头从 "16 types" 改成 "17 types" 了,但同一文件 line 30 和 line 72 的两处 narrative 还写着 "16 types"
+
+两条都是 surfaces senior 自己 verify 过的(senior 报告 "Surface 4 (event-model.md) actually edited" 是 ✓ 的)。Senior 验证 **"surface edited"** 但没验证 **"pre-edit values are gone"**。
+
+### 关键讨论
+
+Partner 直接改了两个文件、提了 PR #1。Architect merge 完之后**当场纠正**:"你应该只修改 high-level doc 然后 review;具体的修改要给 senior 或者 junior"。
+
+Partner 的 PR 内容**对**(drift 真实存在),但**做法越界**(应该 surface 给 senior 写 task plan、junior 改)。这个事件被捕获为 RC-5。
+
+后续 partner 行为修正:任何 PR/commit 前自检"是否 architect-scope"。Doc-drift 的边界判定:
+- ✅ Architect-scope = high-level docs:handoff、chat-history、ADR 索引、process/ 下 role docs、process 约定
+- ❌ Code-scope = src/、tests/(任何代码改动)
+- ❌ Spec-scope = 具体技术 doc 修订(test-coverage-standard.md 改 §6 行为等)
+
+### 最终决策
+
+- Partner 越界 fixing 这件事 captured to RC-5
+- "Senior plan-vs-impl 需要 pre-edit grep 子规则" → captured to RC-1,proposed 子规则:**Q3 5-surface scan 增加 grep-verify-pre-edit-values-gone 子检查**
+
+### 反 pattern
+
+Partner 内化:hook 触发 ("有未提交,请提交") 时不机械执行,先自检"这些 change 是不是 architect-scope"。否则 hook 把越界改动 commit 掉,边界后置纠正成本高。
+
+---
+
+## 17. Senior-drafts-ADR 规则的成因
+
+### 起点
+
+P1.1 期间 architect 自己写了 ADR-001/002/003。P1.2 期间 architect 自己起草 + 自己 review ADR-005(commit body 写 "ADR-005 draft + architect review (3 self-flagged items confirmed)")。
+
+Architect-partner 的 role-prompt 写 "senior 起草 ADR";但实际 senior-planner.md role doc 写的是 "Don't decide architecture" —— 没说谁起草 ADR。两份文档自相矛盾。
+
+### 关键讨论(calibration Q3)
+
+Partner 答 Q3 时显式 surface 这条矛盾。Architect 当场决定:**"senior 写 adr"**,以后 ADR 起草归 senior,architect 仅 review/accept。
+
+为什么:**self-drafted + self-reviewed 是 P1.1-R1 命名的 "reverse drift on past arguments" 最强形态**。架构师自己 review 自己,没有外部声音 → 可以无察觉地 re-derive 老的被否决的 argument。Senior 是独立 session,他读到 ADR 就是第一次,自然提供 review-as-fresh-eye 的功能。
+
+ADR-005 作为 bootstrap exception 记下来:senior-planner workflow 当时还在建设,role 没正式化前 architect 必须自起草。这件事 explicit 记录在 ADR-005 + senior-planner.md "ADR drafting" 节,避免未来读者认为"architect 起草 ADR"是正常 pattern。
+
+### 最终决策
+
+- 立即生效:从 P1.2-C3 起,新 ADR 由 senior 起草
+- 首个非-bootstrap 应用:ADR-006(Unknown tool_id 语义,起源详见 §18)
+- 更新 `docs/process/senior-planner.md` § "ADR drafting" 编码这条规则 + 例外
+- 捕获为 RC-3,已 codified
+
+### 反 pattern
+
+Partner 不主动 propose"我可以代 architect 起草 ADR"。哪怕看上去 partner 已经"理解了所有设计推理"。原因:partner 也是 self-loop 风险(architect 训练 partner 的过程会让 partner 渐渐 match architect 的 lens)。Senior 是 cross-session 的独立 review surface,partner 不能替代。
+
+---
+
+## 18. ADR-006(Unknown tool_id 语义)起源
+
+### 起点
+
+P1.2-C3 design 阶段,partner 给 architect 提了 3 个设计层问题(Q1/Q2/Q3),其中 Q3 是:
+
+> Q3. `tool_id` 完全不在 registry 时 `score()` 返回 0(默认 conservative-low),还是 raise `UnknownToolError`?
+
+C2 freeze 的 docstring 说"If the tool is not in `tools`, returns 0 (conservative-low; ADR-005 Decision 2)"。但这句话 conflates 两个 case:
+1. Tool 在 registry 但 reversibility field 缺(ADR-005 Decision 2 + Pydantic default 0 处理)
+2. Tool 完全不在 registry(语义上完全不同 —— 是 "operation undefined relative to registry",不是 "known irreversible")
+
+### 关键讨论
+
+两条 constitutional principle 适用:
+- **Principle 4(structured uncertainty)**:empty/default 不能假装 well-defined value。返回 0 告诉下游 "this is a known irreversible operation",但实际信号是 "this is undefined"。两个不同的 epistemic state,一个 observable —— 正是 Principle 4 命名的 drift。
+- **Principle 9(terminology audit)**:"unknown tool" 和 "irreversible tool" 是两个语义。合并成单一数值输出,下游(P1.3 Hard Guards、event audit、agent runtime)再也分不开。
+
+### Architect 决策
+
+Q3=b:**registry-miss raises `UnknownToolError`**;field-missing 还是 Pydantic default 0(ADR-005 Decision 2 处理)。两个 case 分两条路。
+
+### 关键后续
+
+这条决策上升为 ADR-006,因为:
+- 涉及一个新 exception class(architectural addition)
+- 改变了 `score()` 的 contract("returns int" → "returns int OR raises")
+- 影响下游(C4 event 发射代码必须设计"如果 gate raises 怎么 record")
+- ADR-005 Decision 2 的 narrative 需要被这条 refine
+
+ADR-006 由 senior 起草(senior-drafts 规则首次非-bootstrap 应用)。Partner 在 review senior 写的 ADR-006 时 surface 了一条 watch item:**ADR-006 D3 留了 audit-trail 缺口给 C4**(gate 抛 exception 时,如果 C4 caller 啥都不发,event log 里"操作 X 被拒"不可见)。这是 C4 brief 必须处理的问题,不是 C3 范围。
+
+### 反 pattern
+
+讨论过但被否决:
+- Default 0 for both cases(rejected:Principle 4)
+- Raise for both cases(rejected:违反 ADR-005 Decision 2 已有的 schema-level enforcement,且语义错 —— field-missing IS 已知 tool,不是 undefined)
+- Per-call `allow_unknown_tools: bool` flag(rejected:flag 再创造 case-collapse、更糟的是被未来"为了 compat" 默认 True 锁死)
+
+---
+
+## 19. Distance test reversal 实例(test-coverage standard 6→3→6)
+
+### 起点
+
+2026-05-19,architect 设计 test-coverage standard。一开始 6 个 category(cross-module / concurrency / cleanup / exception payload / boundary validators / schema invariants)。
+
+同日,architect 决定简化,把 6 砍到 3。
+
+同日,architect 反转回 6。
+
+### 关键讨论
+
+为什么砍?疲劳态 + 急着 land + "6 category 太重,3 个简化版够用了"的简化冲动。
+
+为什么反转?重新看 3 个简化版后,发现砍掉的 3 个(exception payload / boundary validators / schema invariants)在 P1.1 实际碰到过对应的失败模式 —— 砍了等于把已经付过的学费再交一次。
+
+这是 reversal pattern 的实例 —— **疲劳态下放下一层 load-bearing 设计,fresh-eye 后反转回原状**。
+
+### Architect-partner calibration Q4 答这部分
+
+Partner 在 calibration 答 Q4 时把"distance test 触发条件"列了:架构 inscribing(ADR、新 EventType、schema flip、threshold tuning、role doc change、dropping forcing function)。
+
+Architect 评:"我变动了2次 6→3→6" —— 一次 round-trip 不是 multiple reversals。Partner 措辞被修正(原 RC-4 草案写 "multiple",改成 "1 reversal observed on 2026-05-19")。
+
+### 最终决策
+
+- Captured as RC-4
+- Distance test 触发判据 codification **defer** —— 一个 reversal 实例不足以写规则,等第二个实例(如果发生)再 codify
+- ADR-005 Reversibility 表是"决策成本"参照,可作 distance test 触发判据的 cost reference,但显式 link 还没写
+
+### 反 pattern
+
+Partner 不主动 propose "我帮你写 distance test 判据 doc"。原因:**一个 data point 不足以归纳规则**(P1.1 retro §5 anti-recommendation 已经命名过:"Don't treat every drift form discovery as warranting a new ADR")。等数据足。
+
+---
+
+## 20. Workflow 文件路径锁定(architect-briefs / senior-plans / reviews)
+
+### 起点
+
+P1.2-C3 brief 由 partner paste 进对话、architect 复制转给 senior。这套 courier 模式问题:
+- Brief 没持久化(chat 滚走就丢)
+- Git 没追踪 architect 意图
+- Senior 不能反复回读
+- 未来 reviewer 不知道每个 task 的 architect 原始意图是什么
+
+### 关键讨论
+
+Architect 提议:"既然你有 repo access,开一个 doc folder 写 by task,senior 去读不就行了"。
+
+Partner propose:`docs/process/architect-briefs/{task-id}.md`。
+
+后续 architect 进一步 push:"senior 根据 brief 回复写到哪个文件也 lock 一下,review 写到哪里 等等这些都规范一下"。
+
+Partner 起 full structure:
+```
+docs/process/
+├── senior-planner.md
+├── architect-briefs/{task-id}.md      # architect → senior
+├── senior-plans/{task-id}.md          # senior → junior
+└── reviews/{task-id}/
+    ├── plan-vs-impl.md                # senior self-verify
+    ├── R0-A.md, R0-B.md, R1-A.md…    # external reviewers, -A Claude / -B cross-family
+    └── meta.md                         # close-out meta-review
+```
+
+### 关键设计点
+
+**"`-B.md` 文件缺席是 evidence"**:如果某轮没跑 cross-family reviewer,不要建空占位文件。**Absent file IS the data**:未来回看 P1.2 是否 single-reviewer R0 够用,就看 reviews/P1.2-C2/R0-B.md 是不是缺。
+
+**Task-id case 保持**:`P1.2-C3.md` 不写成 `p1.2-c3.md`,grep 一致性。
+
+**README 在每个新子文件夹**:30-50 字说明 what / naming / who writes/reads,doc 离 file 越近越不漂移。
+
+### 最终决策
+
+- 全部 lock。docs/process/senior-planner.md § "Where your outputs go" 一张表是 source of truth
+- repo root 上的旧 senior plans(`p1.2.md`, `p1.2-r0-fu2.md`)`git mv` 到 senior-plans/(history 保留)
+- Junior 不另设产物位置(commit body + tracking table 已够)
+- Reviewer / Junior role docs **暂不创建**(架构师可以 future scope expansion 触发)
+
+### 反 pattern
+
+讨论过:
+- 在 `notes/` 下散写(rejected:没结构,新 reviewer onboard 找不着)
+- 现存 `p1.2.md` 不动只对新 plan 应用约定(rejected:长期不一致)
+- 给每个 `-B.md` 建空占位(rejected:消除"absence as evidence"的诊断价值)
+
+---
+
+## 21. Energy / stop-floor 校准 miss
+
+### 起点
+
+Partner 多次在轮次结束时"举着 stop floor 提醒"。Architect 一开始没问 stop floor 是什么 —— partner 一直在用这个术语没 anchor 定义。
+
+### 关键讨论
+
+Architect 笑:"stop floor 是什么?lol。我现在 energy 在 8 呢"。
+
+Partner 答:从 role-prompt 推断 stop floor = architect 自定的精力下限(5/10),低于不硬推。"slipped from 5 to 4 again"是 reversal-into-fatigue 的实例。
+
+但 partner 一直按"今天 decisions 多 = 接近 floor"在外推,反向了。Architect 8/10 没接近任何 floor。
+
+### 最终决策
+
+- Partner 不再用"做了很多 commit"作为低能量信号
+- Architect 自报 energy level 为准
+- Floor 5,partner 在 architect 自报 7/10 以下再 raise
+- 这个 calibration miss 记录在这里,不另开 RC(单一观察,partner 行为已调整)
+
+### 反 pattern
+
+Partner 从"外部观察"推断架构师内部状态。Architect-partner 的 capture facilitator 职责 = surface,不是 surveil。Energy 这件事属于 architect 自己最清楚,partner 不该假装能从对话密度判断。
+
+---
+
+## 22. 关于 architect-partner self-loop 风险
+
+整个 v3 期 architect-partner 内化的一条:**partner 越像 architect,project 越脆弱。**
+
+Partner 的所有训练材料都是 architect 提供的(handoff、ADRs、chat-history、role-prompt)。Partner 会自然 match architect 的 lens。如果 partner 替代了任何"独立外部声音"角色 —— 起草 ADR、写 plan、做 review —— project 就回到 self-loop 状态,只不过 self 换成了 architect+partner 这对。Senior / Junior / external Reviewer 之所以独立 session、不同 model 家族,正是 break the loop 的设计。
+
+Partner 的合理工作面 = honest interlocutor(不替 architect 决策,但让 architect 看到决策 trade-offs)+ capture facilitator(retro candidates 一边走一边记)+ doc maintenance(architect-scope only)。其余角色越权 = self-loop 复活。
+
+这条不写成 forcing function,因为没法用代码或 hook 自动检测 —— 是 partner 自己的判断责任。Architect 当场纠正过一次(RC-5),partner 内化。
+
