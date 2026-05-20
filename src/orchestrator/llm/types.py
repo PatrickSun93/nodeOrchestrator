@@ -305,13 +305,45 @@ class ModelProfile(BaseModel):
         return self
 
 
+class AgentAutonomyThresholds(BaseModel):
+    """The ``autonomy_thresholds`` block of an agent's YAML.
+
+    Encodes the agent's risk appetite for the P1.2 autonomy gate.
+    Values are PLACEHOLDER (not load-tested); P1.5+ usage-based tuning
+    will refine them. See ADR-005 Decision 3.
+
+    The cross-field invariant ``threshold_auto > threshold_confirm`` is
+    enforced here at Pydantic validation time (schema-level enforcement
+    per ``feedback_schema_enforcement``). Equal values are rejected
+    because they collapse COUNTDOWN_CONFIRM to a zero-width band.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    threshold_auto: int = Field(ge=0, le=10)
+    threshold_confirm: int = Field(ge=0, le=10)
+    user_intent_modifier: int = Field(ge=0, le=10)
+
+    @model_validator(mode="after")
+    def _check_auto_gt_confirm(self) -> AgentAutonomyThresholds:
+        if self.threshold_auto <= self.threshold_confirm:
+            raise ValueError(
+                f"threshold_auto ({self.threshold_auto}) must be strictly greater than "
+                f"threshold_confirm ({self.threshold_confirm}). "
+                f"Equal values collapse COUNTDOWN_CONFIRM to a zero-width band "
+                f"(ADR-005 Decision 4). Increase threshold_auto or decrease "
+                f"threshold_confirm."
+            )
+        return self
+
+
 class AgentLLMConfig(BaseModel):
-    """The ``llm_config`` block of an agent's YAML.
+    """The ``llm_config`` block of an agent's YAML, plus ``autonomy_thresholds``.
 
     A full agent YAML (P1.3) will have more fields (persona,
     dissent_dimensions, forbidden_behaviors, speaking_triggers,
-    output_schema, cooldown_seconds). This dataclass covers only the
-    LLM-routing portion so P1.1 can be reviewed in isolation.
+    output_schema, cooldown_seconds). This dataclass covers the
+    LLM-routing portion (P1.1) and the autonomy threshold block (P1.2).
     """
 
     default_model: ModelId
@@ -340,6 +372,11 @@ class AgentLLMConfig(BaseModel):
     """Models lacking any of these are skipped in the effective fallback
     chain. The router raises ``NoSuitableModelError`` if every candidate
     is rejected."""
+
+    autonomy_thresholds: AgentAutonomyThresholds
+    """The agent's risk appetite for the autonomy gate. All three
+    fields are required; placeholder values live in example yamls.
+    See ADR-005 Decision 3."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

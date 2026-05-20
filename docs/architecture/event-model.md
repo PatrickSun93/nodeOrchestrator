@@ -101,7 +101,7 @@ roughly what the event records and roughly what shape the metadata has.
 If you can't think of a specific name, the type might not exist yet.
 Defer adding it until the use case is concrete.
 
-## The 16 types
+## The 17 types
 
 | Type | Meaning | Strict metadata schema? |
 |---|---|---|
@@ -121,6 +121,7 @@ Defer adding it until the use case is concrete.
 | `milestone` | Marked-as-significant moment | open |
 | `term_definition` | A term being explicitly defined for this room | open |
 | `decision_pivot` | Reframe — "we were asking the wrong question" | open |
+| `autonomy_decision` | Gate decision before a tool call: tier, score, full trace | yes |
 
 "Strict" types validate via Pydantic at append time. "Open" types accept
 `dict[str, Any]` for now and will be tightened (with an ADR) when their

@@ -1,0 +1,50 @@
+# All reversibility values are PLACEHOLDER (initial reasonable
+# estimates, not load-tested). P1.5+ usage-based tuning will
+# refine these. See ADR-005 Decision 2.
+# Per-tool, per-type metadata read by the autonomy gate.
+# See ADR-005 Decision 2: reversibility lives at project
+# level (tools.yaml) because it's a physical property of
+# the tool, not an agent risk preference.
+#
+# 0 = irreversible (e.g., git push to main, delete).
+# 10 = fully reversible (e.g., web_search, read_file).
+# Tools missing a value default to 0 (conservative-low).
+tools:
+  web_search:
+    reversibility: 10
+  web_fetch:
+    reversibility: 10
+  read_file:
+    reversibility: 10
+  list_files:
+    reversibility: 10
+  search_text:
+    reversibility: 10
+  search_code:
+    reversibility: 10
+  get_current_time:
+    reversibility: 10
+  log_event:
+    reversibility: 8
+  propose_edit:
+    reversibility: 5    # diff is reviewable but apply is not
+  apply_edit:
+    reversibility: 2    # in-place file mutation
+  run_tests:
+    reversibility: 9    # side effects rare in well-formed tests
+  run_lint:
+    reversibility: 10
+  git_blame:
+    reversibility: 10
+  git_log:
+    reversibility: 10
+  git_diff:
+    reversibility: 10
+  find_references:
+    reversibility: 10
+  find_definition:
+    reversibility: 10
+  send_email:
+    reversibility: 3    # delivery has external visibility (P1.3)
+  git_push:
+    reversibility: 1    # public history rewrite cost is high

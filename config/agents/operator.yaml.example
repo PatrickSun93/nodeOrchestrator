@@ -16,3 +16,10 @@ llm_config:
   temperature: 0.3
   required_capabilities:
     - tools
+
+# PLACEHOLDER thresholds (not tuned; P1.5+ usage-based tuning).
+# See ADR-005 Decision 3.
+autonomy_thresholds:
+  threshold_auto: 6
+  threshold_confirm: 3
+  user_intent_modifier: 3

@@ -66,7 +66,7 @@ def generate_room_id() -> RoomId:
 
 
 class EventType(StrEnum):
-    """The 16 constitutional event types.
+    """The 17 constitutional event types.
 
     See docs/architecture/event-model.md for why this list is constitutional
     and what to do (and not do) when extending it. In short: adding a type
@@ -90,6 +90,7 @@ class EventType(StrEnum):
     MILESTONE = "milestone"
     TERM_DEFINITION = "term_definition"
     DECISION_PIVOT = "decision_pivot"
+    AUTONOMY_DECISION = "autonomy_decision"
 
 
 class RelationType(StrEnum):
@@ -193,6 +194,45 @@ class ToolResultMeta(_BaseMeta):
     error_class: str | None = None
 
 
+class AutonomyDecisionMetadata(_BaseMeta):
+    """Metadata for `autonomy_decision` events.
+
+    Carries the full decision trace for every autonomy gate evaluation.
+    Emitted synchronously before tool execution proceeds; this ordering
+    is what makes the event the audit record of the decision. See
+    ADR-005 Decision 6.
+
+    Field set is locked by the constitutional test
+    `test_constitution_autonomy_decision_event_carries_trace`. The
+    shape mirrors `DecisionTrace` from `orchestrator.autonomy.scoring`
+    with `tool_id` renamed to `operation_tool_id` and two event-only
+    additions (`operation_initiating_agent`, `score`). The duplication
+    is deliberate — `orchestrator.core` must not import from
+    `orchestrator.autonomy` to preserve layering.
+    """
+
+    operation_tool_id: str
+    operation_initiating_agent: str
+    user_explicit_intent: bool
+    score: int  # 0..10
+    tier: Literal[
+        "auto_execute",
+        "countdown_confirm",
+        "hard_confirm",
+    ]
+    reversibility_score: int
+    threshold_auto_raw: int
+    threshold_confirm_raw: int
+    user_intent_modifier: int
+    threshold_auto_effective: int
+    threshold_confirm_effective: int
+    rule: Literal[
+        "score_ge_auto",
+        "score_between_confirm_and_auto",
+        "score_lt_confirm",
+    ]
+
+
 TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.HYPOTHESIS: HypothesisMeta,
     EventType.DECISION: DecisionMeta,
@@ -200,6 +240,7 @@ TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.RETRACTION: RetractionMeta,
     EventType.TOOL_CALL: ToolCallMeta,
     EventType.TOOL_RESULT: ToolResultMeta,
+    EventType.AUTONOMY_DECISION: AutonomyDecisionMetadata,
 }
 
 

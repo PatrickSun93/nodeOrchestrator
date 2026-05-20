@@ -35,6 +35,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.llm.exceptions import ConfigError
 from orchestrator.llm.protocol import LLMProvider
 from orchestrator.llm.providers.claude_code_cli import ClaudeCodeCliProvider
@@ -42,6 +43,7 @@ from orchestrator.llm.providers.mock import MockProvider
 from orchestrator.llm.providers.openai_compatible import OpenAICompatibleProvider
 from orchestrator.llm.router import ModelRegistry, ProviderRegistry
 from orchestrator.llm.types import (
+    AgentAutonomyThresholds,
     AgentLLMConfig,
     Capability,
     ModelId,
@@ -194,25 +196,34 @@ def load_models(path: Path, providers: ProviderRegistry) -> ModelRegistry:
 
 
 def load_agent_llm_config(path: Path, models: ModelRegistry) -> AgentLLMConfig:
-    """Parse one agent's yaml, extract its ``llm_config`` block,
-    return an ``AgentLLMConfig``.
+    """Parse one agent's yaml; extract ``llm_config`` and
+    ``autonomy_thresholds`` blocks; return an ``AgentLLMConfig``.
 
     Validates ``default_model`` and every id in ``fallback_chain``
     exists in the given ``ModelRegistry``.
 
     Raises:
-        ConfigError: missing ``llm_config`` key, dangling model ref.
+        ConfigError: missing required key, validation failure, or
+            dangling model ref.
     """
     raw = _read_yaml(path)
     llm_config_data = raw.get("llm_config")
     if not isinstance(llm_config_data, dict):
         raise ConfigError(f"{path}: missing or non-dict 'llm_config' key")
 
+    autonomy_thresholds_data = raw.get("autonomy_thresholds")
+    if not isinstance(autonomy_thresholds_data, dict):
+        raise ConfigError(f"{path}: missing or non-dict 'autonomy_thresholds' key")
+
     try:
-        config = AgentLLMConfig(**llm_config_data)
+        thresholds = AgentAutonomyThresholds.model_validate(autonomy_thresholds_data)
+        config = AgentLLMConfig(
+            **llm_config_data,
+            autonomy_thresholds=thresholds,
+        )
     except ValidationError as e:
         raise ConfigError(
-            f"{path}: llm_config validation failed — {e}",
+            f"{path}: agent config validation failed — {e}",
             violations=[str(e)],
         ) from e
 
@@ -227,6 +238,23 @@ def load_agent_llm_config(path: Path, models: ModelRegistry) -> AgentLLMConfig:
             violations=violations,
         )
     return config
+
+
+def load_tools_config(path: Path) -> dict[str, ToolMeta]:
+    """Load tools.yaml. Tools missing ``reversibility`` get
+    the schema default (0; conservative-low per ADR-005
+    Decision 2). Unknown fields raise ``ConfigError`` per the
+    project's schema-enforcement preference.
+
+    Loader placed in ``orchestrator.llm.config_loader`` (not
+    ``orchestrator.autonomy``) so it can reuse ``ConfigError`` and
+    ``_read_yaml`` without importing from ``orchestrator.llm`` in the
+    autonomy module — which the constitutional test forbids.
+
+    Raises:
+        ConfigError: missing file, malformed yaml, or schema violation.
+    """
+    raise NotImplementedError
 
 
 def validate_full_config(

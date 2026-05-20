@@ -19,6 +19,7 @@ from orchestrator.llm.providers.mock import MockProvider
 from orchestrator.llm.providers.openai_compatible import OpenAICompatibleProvider
 from orchestrator.llm.router import ModelRegistry, ProviderRegistry
 from orchestrator.llm.types import (
+    AgentAutonomyThresholds,
     AgentLLMConfig,
     Capability,
     ModelId,
@@ -218,6 +219,10 @@ class TestLoadAgentLLMConfig:
               default_model: a
               fallback_chain: [b]
               temperature: 0.5
+            autonomy_thresholds:
+              threshold_auto: 8
+              threshold_confirm: 5
+              user_intent_modifier: 2
             """,
         )
         config = load_agent_llm_config(path, models)
@@ -234,6 +239,10 @@ class TestLoadAgentLLMConfig:
             llm_config:
               default_model: a
               fallback_chain: [ghost]
+            autonomy_thresholds:
+              threshold_auto: 8
+              threshold_confirm: 5
+              user_intent_modifier: 2
             """,
         )
         with pytest.raises(ConfigError) as exc:
@@ -256,6 +265,10 @@ class TestLoadAgentLLMConfig:
             llm_config:
               default_model: a
               fallback_chain: [a, b]
+            autonomy_thresholds:
+              threshold_auto: 8
+              threshold_confirm: 5
+              user_intent_modifier: 2
             """,
         )
         with pytest.raises(ConfigError):
@@ -273,6 +286,10 @@ class TestLoadAgentLLMConfig:
             llm_config:
               default_model: a
               fallback_chain: [b, a]
+            autonomy_thresholds:
+              threshold_auto: 8
+              threshold_confirm: 5
+              user_intent_modifier: 2
             """,
         )
         with pytest.raises(ConfigError):
@@ -287,6 +304,10 @@ class TestLoadAgentLLMConfig:
             llm_config:
               default_model: a
               fallback_chain: [b, c, a]
+            autonomy_thresholds:
+              threshold_auto: 8
+              threshold_confirm: 5
+              user_intent_modifier: 2
             """,
         )
         with pytest.raises(ConfigError):
@@ -301,6 +322,10 @@ class TestLoadAgentLLMConfig:
             """
             llm_config:
               fallback_chain: [a]
+            autonomy_thresholds:
+              threshold_auto: 8
+              threshold_confirm: 5
+              user_intent_modifier: 2
             """,
         )
         with pytest.raises(ConfigError) as exc:
@@ -341,6 +366,11 @@ class TestValidateFullConfig:
                 default_model=ModelId("with_tools"),
                 fallback_chain=[],
                 required_capabilities=[Capability.TOOLS],
+                autonomy_thresholds=AgentAutonomyThresholds(
+                    threshold_auto=8,
+                    threshold_confirm=5,
+                    user_intent_modifier=2,
+                ),
             ),
         }
         return providers, models, agents
@@ -376,6 +406,11 @@ class TestValidateFullConfig:
             "ghost_user": AgentLLMConfig(
                 default_model=ModelId("ghost_model"),  # dangling
                 fallback_chain=[],
+                autonomy_thresholds=AgentAutonomyThresholds(
+                    threshold_auto=8,
+                    threshold_confirm=5,
+                    user_intent_modifier=2,
+                ),
             ),
         }
         with pytest.raises(ConfigError) as exc:

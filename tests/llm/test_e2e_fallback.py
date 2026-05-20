@@ -15,6 +15,7 @@ from orchestrator.llm.router import (
     select_model_and_provider,
 )
 from orchestrator.llm.types import (
+    AgentAutonomyThresholds,
     AgentLLMConfig,
     Capability,
     LLMRequest,
@@ -74,6 +75,11 @@ async def test_e2e_fallback_model_id_requested_distinct_from_used() -> None:
     agent_config = AgentLLMConfig(
         default_model=OPUS_ID,
         fallback_chain=[SONNET_ID, DEEPSEEK_ID],
+        autonomy_thresholds=AgentAutonomyThresholds(
+            threshold_auto=8,
+            threshold_confirm=5,
+            user_intent_modifier=2,
+        ),
     )
 
     request = LLMRequest(

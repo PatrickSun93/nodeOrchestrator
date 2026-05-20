@@ -24,8 +24,51 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from orchestrator.autonomy.scoring import DecisionTrace
+from orchestrator.core.event import AutonomyDecisionMetadata
+
 if TYPE_CHECKING:
     from .conftest import PopulatedFixture
+
+
+def test_constitution_autonomy_decision_event_carries_trace() -> None:
+    """``AutonomyDecisionMetadata`` field set must stay in sync with
+    ``DecisionTrace``: every ``DecisionTrace`` field appears in the
+    metadata (with ``tool_id`` renamed to ``operation_tool_id``), plus
+    exactly two event-only additions (``operation_initiating_agent``
+    and ``score``).
+
+    Why: the event log is the audit record of every gate decision.
+    If ``DecisionTrace`` gains a field but the metadata schema does
+    not, that field is permanently absent from every future event
+    record — unreplayable. The sync relationship is enforced here
+    rather than by runtime code so that drift cannot accumulate
+    silently across commits.
+
+    Fails loudly on missing OR extra fields so a reader can locate
+    the exact discrepancy without re-running the scorer.
+    """
+    trace_fields = set(DecisionTrace.model_fields)
+
+    # Rename tool_id → operation_tool_id (event-layer naming convention).
+    expected = (trace_fields - {"tool_id"}) | {"operation_tool_id"}
+
+    # Two event-only additions; tier and user_explicit_intent are
+    # already present from DecisionTrace so union is idempotent for them.
+    expected |= {"operation_initiating_agent", "score", "tier", "user_explicit_intent"}
+
+    actual = set(AutonomyDecisionMetadata.model_fields)
+
+    missing = expected - actual
+    extra = actual - expected
+
+    assert not missing and not extra, (
+        "AutonomyDecisionMetadata is out of sync with DecisionTrace.\n"
+        f"Fields missing from AutonomyDecisionMetadata: {sorted(missing)}\n"
+        f"Fields in AutonomyDecisionMetadata not in expected set: {sorted(extra)}\n"
+        "Fix: update AutonomyDecisionMetadata in orchestrator/core/event.py to "
+        "match the DecisionTrace shape in orchestrator/autonomy/scoring.py."
+    )
 
 
 def test_constitution_append_only_at_schema_level(

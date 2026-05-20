@@ -11,3 +11,10 @@ llm_config:
     - deepseek_v4_flash
   temperature: 0.2
   required_capabilities: []
+
+# PLACEHOLDER thresholds (not tuned; P1.5+ usage-based tuning).
+# See ADR-005 Decision 3.
+autonomy_thresholds:
+  threshold_auto: 4
+  threshold_confirm: 2
+  user_intent_modifier: 1

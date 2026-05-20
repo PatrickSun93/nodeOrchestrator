@@ -157,6 +157,8 @@ class Room:
 ```python
 @dataclass
 class Operation:
+    # estimated_cost_usd and similar non-reversibility fields are consumed
+    # by P1.3 Hard Guards, not P1.2 scoring. See ADR-005 Decision 5.
     op_type: str
     target: str
     params: dict
@@ -165,19 +167,12 @@ class Operation:
     estimated_cost_usd: float
     metadata: dict
 
-class AutonomyLevel(Enum):
-    FORBIDDEN = 0
-    APPROVAL_REQUIRED = 1
-    NOTIFY_AND_EXECUTE = 2  
-    AUTO_EXECUTE = 3
+class AutonomyTier(StrEnum):
+    AUTO_EXECUTE = "auto_execute"
+    COUNTDOWN_CONFIRM = "countdown_confirm"
+    HARD_CONFIRM = "hard_confirm"
 
-# 6 个评分维度,各 0-10
-# - reversibility
-# - blast_radius
-# - data_sensitivity
-# - cost_impact
-# - decision_finality
-# - user_intent
+# Renamed and reshaped from earlier 4-tier AutonomyLevel; see ADR-005 Decision 4 for the semantic shift.
 ```
 
 完整实现见 chat-history.md "自治度评分"章节。
@@ -701,6 +696,8 @@ P1.5  Research room + 状态机  3-5 天   状态由事件触发,非 LLM 推断
 P1.6  Snapshot + decision log + 完整 E2E  1 周
 ```
 #### P1.2 详细设计(2026-05-19 land,6-day distance test passed)
+
+Canonical decision record: ADR-005.
 
 P1.2 设计经过两周收敛,从原 handoff "6 维评分" 大幅简化到 "1 维 + Hard Guards 分层" 架构。
 

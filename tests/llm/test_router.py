@@ -16,6 +16,7 @@ from orchestrator.llm.router import (
     select_model_and_provider,
 )
 from orchestrator.llm.types import (
+    AgentAutonomyThresholds,
     AgentLLMConfig,
     Capability,
     LLMRequest,
@@ -55,6 +56,13 @@ def _request(tools: list[ToolDefinition] | None = None) -> LLMRequest:
     )
 
 
+_DEFAULT_THRESHOLDS = AgentAutonomyThresholds(
+    threshold_auto=8,
+    threshold_confirm=5,
+    user_intent_modifier=2,
+)
+
+
 def _agent(
     default: str,
     fallbacks: list[str] | None = None,
@@ -64,6 +72,7 @@ def _agent(
         default_model=ModelId(default),
         fallback_chain=[ModelId(m) for m in (fallbacks or [])],
         required_capabilities=required or [],
+        autonomy_thresholds=_DEFAULT_THRESHOLDS,
     )
 
 
