@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ---- Public types ---------------------------------------------
 
@@ -52,17 +52,42 @@ class ToolMeta(BaseModel):
 
 
 class ThresholdConfig(BaseModel):
-    """Per-agent thresholds from agent.yaml. See ADR-005
-    Decision 3 for placeholder values; these are not
-    validated against each other at the Pydantic layer because
-    the relationship (`auto > confirm`) is enforced at config-
-    loader time."""
+    """Per-agent thresholds consumed by ``decide_tier``. See
+    ADR-005 Decision 3 for placeholder values.
+
+    The cross-field invariant ``threshold_auto > threshold_confirm``
+    is enforced here at Pydantic validation time. Equal values are
+    rejected because they collapse COUNTDOWN_CONFIRM to a zero-width
+    band (ADR-005 Decision 4); inverted values put ``decide_tier``'s
+    if/elif branching into undefined behavior.
+
+    This validator duplicates the one on
+    ``orchestrator.llm.types.AgentAutonomyThresholds``: the YAML load
+    path runs through ``AgentAutonomyThresholds`` (validator fires),
+    but ``decide_tier`` consumes ``ThresholdConfig`` directly and
+    tests/code may construct it without going through the loader.
+    Schema-level enforcement on both classes is the deliberate
+    defense; deduplicating the pair into a single class crosses
+    the autonomy ↔ llm module boundary and needs its own ADR.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     threshold_auto: int = Field(ge=0, le=10)
     threshold_confirm: int = Field(ge=0, le=10)
     user_intent_modifier: int = Field(ge=0, le=10)
+
+    @model_validator(mode="after")
+    def _check_auto_gt_confirm(self) -> ThresholdConfig:
+        if self.threshold_auto <= self.threshold_confirm:
+            raise ValueError(
+                f"threshold_auto ({self.threshold_auto}) must be strictly greater than "
+                f"threshold_confirm ({self.threshold_confirm}). "
+                f"Equal values collapse COUNTDOWN_CONFIRM to a zero-width band "
+                f"(ADR-005 Decision 4). Increase threshold_auto or decrease "
+                f"threshold_confirm."
+            )
+        return self
 
 
 class DecisionTrace(BaseModel):
