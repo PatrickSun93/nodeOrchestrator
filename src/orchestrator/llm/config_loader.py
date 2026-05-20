@@ -253,8 +253,41 @@ def load_tools_config(path: Path) -> dict[str, ToolMeta]:
 
     Raises:
         ConfigError: missing file, malformed yaml, or schema violation.
+            ``ConfigError.violations`` includes the offending field name
+            and the yaml file stem for log-based diagnosis (§4 payload
+            contract; mirrors ``load_agent_llm_config`` pattern).
     """
-    raise NotImplementedError
+    raw = _read_yaml(path)
+    tools_data = raw.get("tools")
+    if not isinstance(tools_data, dict):
+        raise ConfigError(f"{path.stem}: missing or non-dict 'tools' top-level key")
+
+    result: dict[str, ToolMeta] = {}
+    violations: list[str] = []
+
+    for tool_id, entry in tools_data.items():
+        if not isinstance(entry, dict):
+            violations.append(
+                f"{path.stem}: tool {tool_id!r}: entry must be a mapping, "
+                f"got {type(entry).__name__}"
+            )
+            continue
+        try:
+            result[tool_id] = ToolMeta(**entry)
+        except ValidationError as e:
+            for err in e.errors():
+                field = ".".join(str(loc) for loc in err["loc"]) if err["loc"] else "unknown"
+                violations.append(f"{path.stem}: tool {tool_id!r}: field {field!r} — {err['msg']}")
+        except TypeError as e:
+            violations.append(f"{path.stem}: tool {tool_id!r}: unexpected field — {e}")
+
+    if violations:
+        detail = "; ".join(violations)
+        raise ConfigError(
+            f"{path.stem}: tools config has {len(violations)} violation(s): {detail}",
+            violations=violations,
+        )
+    return result
 
 
 def validate_full_config(

@@ -137,9 +137,11 @@ or crosses module boundaries.
 4. One test per `Literal` field, with a non-allowed value
 
 **P1.2-R1 canonical example**: `tests/autonomy/test_scoring.py::TestSchemaInvariants`
-— covers `AutonomyScore` (frozen, extra-forbid, score out-of-range) and
-`DecisionTrace` (frozen, extra-forbid, invalid rule Literal). Landed in C3
-(P1.2-R1). `ToolMeta` and `ThresholdConfig` explicit §6 coverage queued for C4.
+— covers `AutonomyScore` (frozen, extra-forbid, score out-of-range),
+`DecisionTrace` (frozen, extra-forbid, invalid rule Literal, invalid tier StrEnum),
+`ToolMeta` (frozen, extra-forbid, reversibility out-of-range), and
+`ThresholdConfig` (frozen, extra-forbid, field-range, auto≤confirm cross-field).
+Full §6 coverage for all four Pydantic models completed in C4-6.
 
 **Quantifiable measure**: for model *M* with *N* constrained fields and
 *L* Literal fields, expect ≥ 2 + N + L tests in `test_<module>_schema.py`.

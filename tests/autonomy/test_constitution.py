@@ -9,10 +9,23 @@ See ``tests/core/test_constitution.py`` for the precedent docstring.
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.autonomy.scoring import AutonomyTier, ThresholdConfig, decide_tier
+from orchestrator.autonomy.emission import emit_gate_decision
+from orchestrator.autonomy.scoring import (
+    AutonomyTier,
+    Operation,
+    ThresholdConfig,
+    ToolMeta,
+    UnknownToolError,
+    decide_tier,
+)
+from orchestrator.core.event import EventType, TimestampMs, generate_room_id, now_ms
+from orchestrator.core.event_store import EventStore
+from orchestrator.core.room import Room, RoomType
 from orchestrator.llm.types import AgentAutonomyThresholds
 
 
@@ -110,3 +123,70 @@ def test_constitution_hard_confirm_unreachable_when_effective_confirm_clamped() 
                 f"{result.trace.threshold_confirm_effective} for score={s}, "
                 f"auto={auto}, confirm={confirm}, modifier={modifier}"
             )
+
+
+def test_constitution_unknown_tool_attempt_always_emits_refusal_event() -> None:
+    """Every ``UnknownToolError`` path through ``emit_gate_decision`` must
+    produce exactly one ``autonomy_refusal`` event, appended **before**
+    the exception propagates.
+
+    Why: absence-as-signal violates Principle 4 — a missing event row
+    looks identical to "the gate was never called". ADR-007 §3 requires
+    synchronous emission before raise. This test verifies the invariant
+    holds for any tools dict that produces a registry-miss.
+
+    Uses a real in-memory EventStore so that both the append mechanics
+    (metadata validation, room check) and the event count assertion are
+    exercised in the same pass.
+
+    If this test fails: do NOT remove the ``event_store.append()`` call
+    from ``emission.py``. Investigate whether the emit-before-raise
+    contract was broken; if the design must change, amend ADR-007.
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = EventStore(conn)
+    store.init_schema()
+
+    rid = generate_room_id()
+    store.append_room(Room(id=rid, type=RoomType.RESEARCH, created_at=TimestampMs(now_ms())))
+
+    thresholds = ThresholdConfig(threshold_auto=8, threshold_confirm=5, user_intent_modifier=2)
+
+    # Three distinct unknown-tool scenarios — all must produce exactly one
+    # autonomy_refusal event each.
+    unknown_ops = [
+        Operation(
+            tool_id="ghost_tool", initiating_agent="agent:operator", user_explicit_intent=False
+        ),
+        Operation(
+            tool_id="renamed_tool", initiating_agent="agent:prober", user_explicit_intent=True
+        ),
+        Operation(
+            tool_id="typo_tol", initiating_agent="agent:operator", user_explicit_intent=False
+        ),
+    ]
+    known_tools: dict[str, ToolMeta] = {}  # empty — all tool_ids are unknown
+
+    for op in unknown_ops:
+        with pytest.raises(UnknownToolError):
+            emit_gate_decision(
+                op, known_tools, thresholds, store, room_id=rid, author="agent:operator"
+            )
+
+    events = store.get_room_events(rid)
+    refusal_events = [e for e in events if e.type == EventType.AUTONOMY_REFUSAL]
+    decision_events = [e for e in events if e.type == EventType.AUTONOMY_DECISION]
+
+    assert len(refusal_events) == 3, (
+        f"Expected 3 autonomy_refusal events (one per unknown-tool attempt), "
+        f"got {len(refusal_events)}. Missing events = audit gap."
+    )
+    assert len(decision_events) == 0, (
+        "No autonomy_decision events expected when all attempts are unknown-tool refusals."
+    )
+    sorted_events = sorted(refusal_events, key=lambda e: e.metadata["operation_tool_id"])
+    sorted_ops = sorted(unknown_ops, key=lambda op: op.tool_id)
+    for ev, op in zip(sorted_events, sorted_ops, strict=True):
+        assert ev.metadata["operation_tool_id"] == op.tool_id
+        assert ev.metadata["refusal_reason"] == "unknown_tool"

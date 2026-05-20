@@ -19,14 +19,17 @@ ADR documenting why.
 
 from __future__ import annotations
 
+import ast
 import sqlite3
 import typing
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from pydantic import ValidationError
 
 from orchestrator.autonomy.scoring import DecisionTrace
-from orchestrator.core.event import AutonomyDecisionMetadata
+from orchestrator.core.event import AutonomyDecisionMetadata, AutonomyRefusalMetadata
 
 if TYPE_CHECKING:
     from .conftest import PopulatedFixture
@@ -84,6 +87,54 @@ def test_constitution_autonomy_decision_event_carries_trace() -> None:
     )
 
 
+def test_constitution_autonomy_refusal_metadata_field_set() -> None:
+    """``AutonomyRefusalMetadata`` field set must stay exactly four fields.
+
+    The four fields are: ``operation_tool_id``, ``operation_initiating_agent``,
+    ``user_explicit_intent``, ``refusal_reason``. Adding or removing a field
+    changes the audit contract for every future ``autonomy_refusal`` event.
+
+    The ``refusal_reason`` Literal currently accepts only ``"unknown_tool"``.
+    P1.3 Hard Guards will extend it via ADR amendment; this test asserts
+    the amendment is made explicitly rather than by accident (any change
+    to the Literal will require updating the expected set below).
+
+    Fails loudly on missing OR extra fields so a reader can locate the
+    exact discrepancy without querying the event log.
+    """
+    expected = {
+        "operation_tool_id",
+        "operation_initiating_agent",
+        "user_explicit_intent",
+        "refusal_reason",
+    }
+    actual = set(AutonomyRefusalMetadata.model_fields)
+
+    missing = expected - actual
+    extra = actual - expected
+
+    assert not missing and not extra, (
+        "AutonomyRefusalMetadata field set has drifted.\n"
+        f"Missing fields: {sorted(missing)}\n"
+        f"Extra fields: {sorted(extra)}\n"
+        "Fix: update AutonomyRefusalMetadata in orchestrator/core/event.py "
+        "and update this test's expected set to match. "
+        "Any field change is an ADR-007 amendment."
+    )
+
+    # Negative-case: refusal_reason rejects values that are not in the
+    # Literal. A future Literal extension (P1.3 Hard Guards) will need
+    # to update this assertion explicitly, ensuring the change is
+    # deliberate and traceable.
+    with pytest.raises(ValidationError):
+        AutonomyRefusalMetadata(
+            operation_tool_id="t",
+            operation_initiating_agent="agent:x",
+            user_explicit_intent=False,
+            refusal_reason="not_a_valid_reason",  # type: ignore[arg-type]
+        )
+
+
 def test_constitution_append_only_at_schema_level(
     populated_event_store: PopulatedFixture,
 ) -> None:
@@ -129,3 +180,45 @@ def test_constitution_append_only_at_schema_level(
 
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         store.conn.execute("DELETE FROM events")
+
+
+_CORE_SRC = Path(__file__).resolve().parent.parent.parent / "src" / "orchestrator" / "core"
+
+
+def test_constitution_core_does_not_import_autonomy() -> None:
+    """``src/orchestrator/core/`` must never import from ``orchestrator.autonomy``.
+
+    Why: the autonomy module imports from core (first sanctioned edge, C4-5).
+    The reverse direction creates a circular dependency and violates the
+    deliberate-duplication layering rule documented in
+    ``orchestrator/core/event.py:209-211``. If core ever imports autonomy,
+    the layering boundary collapses silently.
+
+    Uses AST-level import walking so string-matching can't be fooled by
+    comments or docstrings.
+    """
+    violations: list[str] = []
+    for py_path in _CORE_SRC.rglob("*.py"):
+        if "__pycache__" in py_path.parts:
+            continue
+        try:
+            tree = ast.parse(py_path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        rel = py_path.relative_to(_CORE_SRC.parent.parent)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if module == "orchestrator.autonomy" or module.startswith("orchestrator.autonomy."):
+                    violations.append(f"  {rel}: from {module} import ...")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "orchestrator.autonomy" or alias.name.startswith(
+                        "orchestrator.autonomy."
+                    ):
+                        violations.append(f"  {rel}: import {alias.name}")
+
+    assert not violations, (
+        "orchestrator.core imports from orchestrator.autonomy — layering violation.\n"
+        "core → autonomy direction is forbidden (see event.py:209-211):\n" + "\n".join(violations)
+    )
