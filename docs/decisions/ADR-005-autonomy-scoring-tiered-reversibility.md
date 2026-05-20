@@ -286,5 +286,8 @@ redesign anyway; the larger drift is worse than the wait.
   distinguishing registry-miss (raises `UnknownToolError`) from
   missing-field (Pydantic default 0). Landed in C3 alongside
   the §5(c) narrative revision above.
+- ADR-007 (autonomy_refusal event type) — adds the `AUTONOMY_REFUSAL`
+  event type and `AutonomyRefusalMetadata`; extends Decision 6 audit
+  obligation to the registry-miss path. Landed in C4.
 - Implementation entry point: C2 freeze commit (P1.2 interface
   freeze), to follow this ADR upon acceptance.

@@ -940,6 +940,7 @@ your-orchestrator/
     │   ├── ADR-003-claude-code-no-orchestrator-tools.md  # P1.1
     │   ├── ADR-005-autonomy-scoring-tiered-reversibility.md  # P1.2
     │   ├── ADR-006-unknown-tool-id-semantics.md  # P1.2-C3
+    │   ├── ADR-007-autonomy-refusal-event-type.md  # P1.2-C4
     │   ├── ADR-template.md / ADR-EXAMPLE-pydantic.md / writing-adrs.md
     ├── retrospectives/
     │   ├── P1.1.md                        # closed
@@ -1042,6 +1043,7 @@ your-orchestrator/
 - ADR-003: Claude Code 不能给 operator + tool calling 策略 3(P1.1,Accepted)— 原 ADR-004(Tool calling 策略)折入此 ADR
 - ADR-005: 自治度评分 — 单维 reversibility + 三档 AutonomyTier + 分层 Hard Guards(P1.2,Accepted 2026-05-19)
 - ADR-006: Unknown tool_id 语义 — registry-miss 抛 `UnknownToolError`;field-miss 走 Pydantic default 0(P1.2-C3,Accepted 2026-05-20)
+- ADR-007: autonomy_refusal 事件类型 — `AUTONOMY_REFUSAL` EventType + `AutonomyRefusalMetadata`(4 字段);emit-before-raise 合约(P1.2-C4,Accepted 2026-05-20)
 
 每次重大设计决策做新 ADR。**ADR 起草由 senior planner 负责,architect review/accept**(详见 `docs/process/senior-planner.md` § ADR drafting;ADR-005 是 workflow bootstrap 期的例外,architect 起草自己 review)。后续的人(包括未来的 Claude Code 自己)能从 ADR 看到决策为什么这样做。
 

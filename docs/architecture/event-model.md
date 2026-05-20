@@ -27,7 +27,7 @@ Without a type, downstream code can't tell. So you either:
   hidden in prose).
 - Add a structured field — i.e., readmit `type`.
 
-The 17 types are the result of refusing to lump distinct semantic operations
+The 18 types are the result of refusing to lump distinct semantic operations
 into "message". They are the system's working vocabulary. Code routes on
 type without inferring intent. LLMs are not in the routing path.
 
@@ -47,6 +47,10 @@ Each type also carries a different downstream contract:
   `test_constitution_autonomy_decision_event_carries_trace` — the
   duplication is deliberate so `orchestrator.core` does not import
   from `orchestrator.autonomy`. See ADR-005 Decision 6.
+- `autonomy_refusal` is emitted synchronously before `UnknownToolError`
+  propagates when a tool_id is absent from the tools registry. It
+  carries `AutonomyRefusalMetadata` (4 fields) and is the audit record
+  of every registry-miss. See ADR-007 §3.
 
 If you can't tell which contract applies, you can't write the routing code.
 The type field is what makes the routing code possible.
@@ -76,7 +80,7 @@ Sooner or later, someone will propose:
 
 - A pressure valve is exactly what defeats the type system. Once a
   catch-all exists, the path of least resistance routes through it. The
-  17 meaningful types decay into trivia within a few quarters.
+  18 meaningful types decay into trivia within a few quarters.
 - If you find yourself wanting "generic", you have an unmet design need
   that deserves a *new specific type*, not a fallback. Add an ADR. Name
   the operation. Define the metadata it should carry.
@@ -108,7 +112,7 @@ roughly what the event records and roughly what shape the metadata has.
 If you can't think of a specific name, the type might not exist yet.
 Defer adding it until the use case is concrete.
 
-## The 17 types
+## The 18 types
 
 | Type | Meaning | Strict metadata schema? |
 |---|---|---|
@@ -129,6 +133,7 @@ Defer adding it until the use case is concrete.
 | `term_definition` | A term being explicitly defined for this room | open |
 | `decision_pivot` | Reframe — "we were asking the wrong question" | open |
 | `autonomy_decision` | Gate decision before a tool call: tier, score, full trace | yes |
+| `autonomy_refusal` | Gate registry-miss before raise: unknown tool_id, reason | yes |
 
 "Strict" types validate via Pydantic at append time. "Open" types accept
 `dict[str, Any]` for now and will be tightened (with an ADR) when their

@@ -241,6 +241,9 @@ intent visible at the call site.
 - ADR-005 (autonomy scoring) — Decision 2 (reversibility in
   `tools.yaml`, schema-level default), which this ADR refines by
   distinguishing the missing-field case from the registry-miss case.
+- ADR-007 (autonomy_refusal event type) — extends the registry-miss
+  contract from Decision 3 (raise `UnknownToolError`) by mandating a
+  synchronous `autonomy_refusal` event before raise. Landed in C4.
 - `docs/architecture/test-coverage-standard.md` §4 (exception
   payload contracts) — `UnknownToolError`'s structured `tool_id`
   attribute is the canonical instance.
