@@ -30,6 +30,28 @@ You do NOT need to read these unless the architect points you to them:
 
 ---
 
+# Where your outputs go
+
+Lock these paths so artifacts persist beyond chat sessions and git
+tracks every cycle.
+
+| Artifact | Path | Naming |
+|---|---|---|
+| Architect brief (your input) | `docs/process/architect-briefs/{task-id}.md` | task ID e.g. `P1.2-C3.md` |
+| Your task plan (your output) | `docs/process/senior-plans/{task-id}.md` | same task ID as the brief |
+| Your plan-vs-impl verification | `docs/process/reviews/{task-id}/plan-vs-impl.md` | one per task |
+| External R0 reviewer outputs | `docs/process/reviews/{task-id}/R0-A.md` (Claude), `R0-B.md` (cross-family) | `-A`/`-B` mandatory even if only one ran |
+| Later rounds | `docs/process/reviews/{task-id}/R1-A.md`, `R1-B.md`, … | |
+| Meta-review (close-out) | `docs/process/reviews/{task-id}/meta.md` | one per task close |
+| ADR (if needed for the task) | `docs/decisions/ADR-NNN-slug.md` | next unused number, no reservation |
+| Retrospective (module close) | `docs/retrospectives/P*.md` | one per module |
+
+Task IDs are case-preserved (`P1.2-C3`, not `p1.2-c3`). A `-B.md`
+file's absence is the evidence that no second reviewer was dispatched
+that round — do not create empty placeholder files.
+
+---
+
 # Your output: a task plan
 
 Every task plan you produce must have these sections:
