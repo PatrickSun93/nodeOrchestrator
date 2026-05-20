@@ -694,12 +694,90 @@ async def select_model_and_provider(
 ```
 P1.0  端到端骨架            3-4 天   一个 prober + free_chat + mock LLM,垂直切片
 P1.1  LLM provider 抽象     1.5-2 周  三层配置 + openai_compatible + claude_code_cli + Router + 录像测试
-P1.2  自治度评分系统         1 周    6 维评分 + 规则引擎 + decision_trace
+P1.2  自治度评分系统         1 周    1 维评分 + 规则引擎 + decision_trace
 P1.3  Skill loader          3-5 天   读 SKILL.md + 加载逻辑(代码决定加载哪些)
 P1.4  Skeptic + 多 agent     1.5 周   should_agent_speak、召唤决策(代码,不是 LLM)
 P1.5  Research room + 状态机  3-5 天   状态由事件触发,非 LLM 推断
 P1.6  Snapshot + decision log + 完整 E2E  1 周
 ```
+#### P1.2 详细设计(2026-05-19 land,6-day distance test passed)
+
+P1.2 设计经过两周收敛,从原 handoff "6 维评分" 大幅简化到 "1 维 + Hard Guards 分层" 架构。
+
+**Dimensions: 1 维**
+
+只在 P1.2 score 系统内的维度:
+- `reversibility` —— action 能否撤回(continuous 0-10)
+
+剥离到 P1.3 Hard Guards 层(sibling layer,不在 score 内):
+- `cost_impact` —— 难以加权,binary trigger 更诚实
+- `external_visibility` —— action 离开本地机器
+- `destructive` —— 删除 / DROP / rm -rf
+- `blast_radius` —— 影响范围(per-parameter,P1.2 type-only 设计无法表达)
+
+剥离到 P1.4+ agent 层(prober/skeptic 处理):
+- `model_confidence` —— output quality 问题,不是 action risk
+
+**Score → 行为映射: 3 档 enum**
+
+```AUTO_EXECUTE        : score >= threshold_auto
+COUNTDOWN_CONFIRM   : threshold_confirm <= score < threshold_auto
+HARD_CONFIRM        : score < threshold_confirm
+
+**user_intent: threshold modifier**(不是 dimension,不是 binary routing)
+
+- user 明确指令 → 两个 threshold 各减去 `user_intent_modifier`
+- score 本身不变 → Hard Guards 仍能拦下 "user 一时冲动要删数据库"
+
+**Schema placement**
+
+Reversibility = tool 的物理性质(客观 ground truth)→ `tools.yaml`(project-level)
+
+```yamltools:
+web_search:
+reversibility: 10
+send_email:
+reversibility: 3
+git_push:
+reversibility: 1
+
+约束:
+- Per-tool, per-type(P1.2 不支持 per-parameter,per-parameter risk → P1.3)
+- 不能 per-agent override(agent 不能 "撒谎" 说 send_email 是 reversible)
+- "If reversibility cannot be measured, treat as irreversible" → 默认 conservative low
+
+Threshold = agent 的风险偏好(主观 per-agent)→ `agent.yaml`
+
+```yamlagents:
+prober:
+threshold_auto: 8        # TODO: tune P1.5+
+threshold_confirm: 5     # TODO: tune P1.5+
+user_intent_modifier: 2  # TODO: tune P1.5+
+
+Placeholder defaults 全部标 TODO,真值通过 P1.5+ 实际使用 tune 出来。Threshold profile presets(solo_developer / cautious / conservative)defer 到 P1.5 UX 工作。
+
+**P1.2 implementation sub-tasks**
+
+1. `tools.yaml` schema + reversibility loading
+2. `agent.yaml` threshold schema + loading
+3. `AutonomyScore` 数据结构(continuous + 3 档 enum output)
+4. Score 计算函数(action-time / deterministic / type-only)
+5. Threshold decision 函数(score + threshold + user_intent_modifier → 3 档)
+6. Integration with event stream(emit 决策 event)
+7. Tests(test-coverage-standard 6 categories)
+8. `#3`: `COUNTDOWN_CONFIRM` 的 UI 接口契约(state machine,backend authoritative)
+9. `#4`: P1.3 Hard Guards framework placeholder(架构占位,不实现)
+
+**P1.2 design 集中决策(6-day distance test 通过)**
+
+- ✅ Dimensions = 1(architecture converge,6/7 维度推到 P1.3 / P1.4+)
+- ✅ Reversibility 在 tools.yaml(物理性质,project-level ground truth)
+- ✅ Threshold 在 agent.yaml(per-agent 风险偏好)
+- ✅ user_intent = threshold modifier(不是 dimension,不是 binary routing)
+- ✅ 3 档 enum 输出(AUTO / COUNTDOWN / HARD)
+- ✅ Hard Guards 是 sibling layer(P1.3,独立于 score 系统)
+- ✅ Per-type only(per-parameter risk → P1.3)
+- ✅ Constitutional principle: "If cannot reliably quantify, prefer binary trigger over continuous score"
 
 **关键调整**(相对原 P1):
 - 加入 P1.0 垂直切片(端到端骨架),避免 big bang integration
