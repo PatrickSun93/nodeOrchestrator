@@ -7,11 +7,8 @@ Groups:
     (c) ``gate()`` — happy path and error propagation.
 
 ``class TestSchemaInvariants`` covers ``docs/architecture/test-coverage-standard.md``
-§6 for ``AutonomyScore`` and ``DecisionTrace`` (scorer direct-output classes).
-The other four Pydantic classes in ``scoring.py`` (``ToolMeta``, ``ThresholdConfig``,
-``Operation``, ``AutonomyTier``) are vacuously held by C2 freeze + ``d20ad0b``
-constitutional test; explicit §6 tests for ``ToolMeta`` and ``ThresholdConfig``
-are queued for C4 per senior plan §5 push-back #2.
+§6 for all Pydantic models produced by ``scoring.py``: ``AutonomyScore``,
+``DecisionTrace``, ``ToolMeta``, and ``ThresholdConfig`` (complete as of C4-6).
 """
 
 from __future__ import annotations
@@ -235,15 +232,16 @@ def test_gate_propagates_unknown_tool_error() -> None:
 
 
 class TestSchemaInvariants:
-    """test-coverage-standard.md §6 coverage for ``AutonomyScore`` and
-    ``DecisionTrace``. These are the two Pydantic models directly produced
-    by the scorer's public API; their invariants are most likely to drift
-    when the scoring logic changes.
+    """test-coverage-standard.md §6 coverage for all Pydantic models in
+    ``scoring.py``: ``AutonomyScore``, ``DecisionTrace``, ``ToolMeta``,
+    ``ThresholdConfig``. Coverage is now complete as of C4-6; no deferred
+    items remain (senior plan §5 push-back #2 resolved here).
 
-    Granularity rationale: C3 is P1.2-R1, the first canonical §6 example
-    (the standard's P1.1-example field says "land alongside P1.2-R1").
-    ``ToolMeta`` and ``ThresholdConfig`` §6 explicit tests are deferred to
-    C4 per senior plan push-back #2 (see docs/process/senior-plans/P1.2-C3.md).
+    Groups:
+    - AutonomyScore (3 tests): frozen, extra-forbid, score-range
+    - DecisionTrace (4 tests): frozen, extra-forbid, invalid-rule, invalid-tier (R0-A-4)
+    - ToolMeta (3 tests): frozen, extra-forbid, reversibility-range
+    - ThresholdConfig (4 tests): frozen, extra-forbid, field-range, auto-le-confirm
     """
 
     # --- Fixtures shared across tests ------------------------------------
@@ -317,3 +315,63 @@ class TestSchemaInvariants:
                 tier=AutonomyTier.COUNTDOWN_CONFIRM,
                 rule="bogus_rule",  # type: ignore[arg-type]
             )
+
+    def test_decision_trace_invalid_tier_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            DecisionTrace(
+                tool_id="t",
+                reversibility_score=5,
+                threshold_auto_raw=8,
+                threshold_confirm_raw=5,
+                user_intent_modifier=2,
+                user_explicit_intent=False,
+                threshold_auto_effective=8,
+                threshold_confirm_effective=5,
+                tier="not_a_tier",  # type: ignore[arg-type]
+                rule="score_ge_auto",
+            )
+
+    # --- ToolMeta -----------------------------------------------------------
+
+    def test_tool_meta_frozen(self) -> None:
+        tm = ToolMeta(reversibility=7)
+        with pytest.raises(ValidationError):
+            tm.reversibility = 3
+
+    def test_tool_meta_extra_forbid(self) -> None:
+        with pytest.raises(ValidationError):
+            ToolMeta(reversibility=5, unknown_field="bad")  # type: ignore[call-arg]
+
+    def test_tool_meta_reversibility_out_of_range_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            ToolMeta(reversibility=-1)
+        with pytest.raises(ValidationError):
+            ToolMeta(reversibility=11)
+
+    # --- ThresholdConfig ----------------------------------------------------
+
+    def test_threshold_config_frozen(self) -> None:
+        tc = ThresholdConfig(threshold_auto=8, threshold_confirm=5, user_intent_modifier=2)
+        with pytest.raises(ValidationError):
+            tc.threshold_auto = 9
+
+    def test_threshold_config_extra_forbid(self) -> None:
+        with pytest.raises(ValidationError):
+            ThresholdConfig(  # type: ignore[call-arg]
+                threshold_auto=8,
+                threshold_confirm=5,
+                user_intent_modifier=2,
+                extra_field="bad",
+            )
+
+    def test_threshold_config_field_range_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            ThresholdConfig(threshold_auto=-1, threshold_confirm=5, user_intent_modifier=2)
+        with pytest.raises(ValidationError):
+            ThresholdConfig(threshold_auto=8, threshold_confirm=11, user_intent_modifier=2)
+
+    def test_threshold_config_auto_le_confirm_raises(self) -> None:
+        with pytest.raises(ValidationError, match="strictly greater"):
+            ThresholdConfig(threshold_auto=5, threshold_confirm=5, user_intent_modifier=0)
+        with pytest.raises(ValidationError, match="strictly greater"):
+            ThresholdConfig(threshold_auto=4, threshold_confirm=6, user_intent_modifier=0)
