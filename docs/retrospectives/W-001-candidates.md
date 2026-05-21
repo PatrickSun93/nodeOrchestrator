@@ -67,6 +67,55 @@ W-001 close-out retrospective evaluates whether:
 
 ---
 
+## RC-8 — Distance-test letter vs spirit (substrate over timestamp)
+
+**Surfaced:** 2026-05-21, on architect's ADR-008 status-flip decision.
+
+**Observation:** Two consecutive instances where architect explicitly chose the **substrate** (sleep cycle / cognitive freshness) over the **letter** (strict timestamp threshold) of the project's distance-test rule:
+
+- **Instance 1 (P1.2-C4):** Junior impl commits for ADR-007 landed 2026-05-20 same-day as ADR-007 Accept. W-001 brief Decision 8 had explicitly said "impl commits land no earlier than 2026-05-21" — interpreted as next-calendar-day. Architect-partner flagged the deviation in `docs/process/reviews/P1.2-C4/R0-A.md`'s "Distance test" section as a meta-observation but did not block; P1.2 close-out retrospective §6 captured it as a class-of-concern not yet codified.
+- **Instance 2 (W-001 ADR-008 Accept):** ADR-008 status flip `Proposed → Accepted` requested ~13h after senior's last revision push (`788cd90` at 2026-05-21 04:50 UTC; request at 17:36 UTC). W-001 brief Decision 8 had explicitly said "24h+ minimum from senior's last revision push." Architect-partner surfaced the math; architect explicitly picked Option (b) sleep-cycle-spirit, citing that sleep separation between architectural inscription and action had been preserved despite strict-24h not being met.
+
+**The substrate question:** The distance-test rule has two interpretable substrates that don't always agree:
+
+- **(X) Strict elapsed time** (24h+ from a reference timestamp). Cheap to verify; auditable by clock; doesn't account for the actual cognitive context (a sleep-deprived architect at hour 25 is no better positioned than at hour 12).
+- **(Y) Sleep cycle and fresh-eye revisit.** Honors the principle the rule was created to capture (fresh perspective on a load-bearing decision); requires self-report or proxy detection (no commits in architect's nighttime window).
+
+When (X) and (Y) diverge — as in both instances above — which is the canonical rule?
+
+**Why this matters:** The brief committed to (X) wording but architect interpreted as (Y) at the moment of the act. Either:
+
+- (a) (Y) is the canonical rule and (X) was shorthand that doesn't map cleanly. Write the rule as (Y) and stop binding future architects (including future architect-self) to the (X) proxy.
+- (b) (X) is the canonical rule, and the two instances were rule violations. Acknowledge the violations explicitly or revise the rule in a documented amendment.
+- (c) The rule has both substrates and the project accepts case-by-case resolution. Then document the trade-off and the decision criteria, not the strict (X) wording alone.
+
+**Parallel to other letter-vs-spirit pairs in the project:**
+
+- **RC-1 (5-surface scan):** "surface edited" letter vs "pre-edit values gone" spirit — resolved by adding the substrate (pre-edit grep) as an explicit forcing function. Codification recommended at P1.2 close, paying off.
+- **Constitutional test criterion:** "test exists" letter vs "invariant holds" spirit — resolved by criterion "checks a property the type system cannot check" (P1.1 retro §3 closing observation).
+
+Both resolved by writing the substrate explicitly. Distance test might follow the same pattern: codify (Y) as the canonical rule, deprecate (X) as a useful-but-imperfect proxy.
+
+**Proposed forcing function (decision deferred — W-001 close evaluates):**
+
+Option α: **Replace "24h+ minimum" with "at least one sleep cycle + fresh-eye revisit."** Auditable by absence of commits in architect's nighttime window AND by an explicit "fresh-eye revisit" attestation in the commit body of the action commit (e.g., status-flip commit, merge commit, accept commit).
+
+Option β: **Keep strict 24h+ as default, add an explicit sleep-cycle override mechanism.** The override is documented in the action commit body with phrase like *"sleep-cycle override: slept and re-thought between push and action."* Future readers see the deliberate substrate choice.
+
+Option γ: **Make the substrate observable in artifacts.** Forbid same-calendar-day-in-architect-timezone status flip on Accepted-state ADRs, with explicit override-with-reason allowed. Calendar-day proxy is auditable; reason text records the deliberate deviation.
+
+Architect-partner lean: **α or β**. α is cleaner if the project trusts self-report (consistent with project's "honest interlocutor" framing). β preserves (X) as default for future readers who don't know the substrate history. γ adds a third proxy that may itself need its own substrate override.
+
+**Why two instances within ~12 hours is faster-than-deferrable:**
+
+RC-4 (test-coverage 6→3→6) was deferred at P1.2 close because **one** instance is not enough to codify. RC-8 has **two** instances in **one** cycle, with the second happening within ~12 hours of architect committing the very brief wording that the second instance overrode. This is fast enough that the rule needs evaluation **at W-001 close, not deferred indefinitely.**
+
+**Sub-question for ADR-008 harness:** Does W-001-impl's session-start logic help here? Partial — if the harness gates status transitions on a "fresh-eye attestation" check, the substrate is enforced at the moment of the act. But forcing architect to type "I slept" may degrade compliance over time (theatre tax). Better: detect the substrate via observable artifacts (commit-history-shows-architect-nighttime-gap) rather than self-report.
+
+**Status:** open. Two instances within ~12 hours of each other constitutes data, not a coincidence. W-001 close-out evaluates: (1) which of α/β/γ to codify; (2) whether ADR-008 harness should enforce it; (3) whether the brief's wording template ("24h+ minimum") needs revision to reflect (Y) substrate.
+
+---
+
 ## Notes for final W-001 retrospective
 
 When folding into `docs/retrospectives/W-001.md` at close:
@@ -74,3 +123,4 @@ When folding into `docs/retrospectives/W-001.md` at close:
 - RC-7 is the first observation captured during W-001 itself (not inherited from P1.2). If W-001-impl surfaces additional candidates during its cycle, they accumulate here.
 - The "absence-as-evidence" convention from P1.2-C4 R0-A (RC-2 evidence-trail framing) applies: if W-001-impl ships with the session-start git-verify check AND no third instance of RC-7 occurs through P1.3, the check is the empirical resolution. If the pattern recurs despite the check, the underlying habit needs a stronger intervention.
 - W-001 close-out also evaluates whether the candidates-per-cycle convention (originally P1.2's invention) survives one cycle of use. If `W-001-candidates.md` proved load-bearing, the pattern is robust; if it was mostly empty, the pattern is overhead and P1.3+ can collapse to per-milestone files only.
+- RC-8 has the strongest graduate-now case of any candidate so far — two instances within ~12 hours, second of which overrode wording from the same cycle's own brief. W-001 close should not defer RC-8 to "watch for third instance"; the data is already in. Pick α/β/γ and codify.
