@@ -101,7 +101,8 @@ Hard requirements the decision must support:
 |---|---|---|
 | `awaiting_brief` | `awaiting_senior_plan` | architect publishes brief at locked path |
 | `awaiting_architect_accept` | `awaiting_junior_impl` | architect bumps ADR status `Proposed → Accepted` (or equivalent ack) |
-| `awaiting_architect_decision` | `awaiting_junior_impl` (rework) or `awaiting_PR_merge` (proceed) | architect rules on 🟡 routing |
+| `awaiting_architect_decision` | `awaiting_junior_impl` (rework) | architect rules `rework` on 🟡 routing |
+| `awaiting_architect_decision` | `awaiting_PR_merge` (proceed) | architect rules `proceed` on 🟡 routing |
 | `awaiting_PR_merge` | `closed` | architect merges PR |
 
 **Auto-triggered** (state machine advances when prior session pushes
@@ -163,7 +164,7 @@ override_history: []    # see Decision 10
 The shape is a flat dict. No nesting beyond `override_history` (a
 list of structs). Future extensions are additive at the top level.
 
-### 6. State vocabulary (8 states + closed)
+### 6. State vocabulary (9 states including terminal `closed`)
 
 Closed set, lower_snake_case:
 
@@ -253,6 +254,10 @@ override_history:
     reason: "R0-A author unavailable; architect personally reviewed and cleared"
 ```
 
+Emergency overrides (state-machine bug, parser error, file
+corruption) follow the same `reason`-recorded pattern; the bug
+itself is filed separately and the reason cites it.
+
 Override types:
 
 - **Force-advance**: skip a state without the natural trigger.
@@ -305,8 +310,9 @@ existing `docs/process/reviews/README.md` convention. ADR-008's
 guarantee is *that* R0-A runs, not *who* runs it.
 
 If a future ADR mandates cross-family R0, the state machine adds a
-gate on R0-B existence — that change would be additive (new state
-or new precondition on existing state), not a redesign.
+gate on R0-B existence — additive, not redesign. Plan stub §5.1
+carries a schema hook (`requires_cross_family_review: bool`) that
+leaves room for this without forcing it now.
 
 ## Considered alternatives
 
@@ -411,7 +417,7 @@ human-initiated and observable.
 **Harder:**
 
 - New mental model — every contributor learns the state vocabulary
-  (8 + closed). Mitigated by short vocabulary and clear naming.
+  (9 including `closed`). Mitigated by short vocabulary and clear naming.
 - Initial setup cost: W-001-impl must scaffold `.workflow/`, write
   the transition library, integrate session-start checks. ~3-5
   commits of plumbing before any task uses it.
