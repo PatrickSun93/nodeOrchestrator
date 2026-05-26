@@ -177,13 +177,16 @@ class SkillDecisionTrace(BaseModel):
 class SkillMatchRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     skill_id: str
-    matched: bool
     rejection_reason: Literal[
         "agent_mismatch",
         "room_type_mismatch",
         "room_state_mismatch",
         "matched",
     ]
+    # "matched"-ness is derived: record.rejection_reason == "matched".
+    # No separate `matched: bool` field — single source of truth in the
+    # Literal avoids the two-field-can-disagree drift class. Per R0-A-on-
+    # plan-1(a).
 
 class SkillSelection(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -221,6 +224,24 @@ Forbidden directions, locked by new constitutional tests:
 `skills → autonomy` is **not** addressed by this ADR — P1.3 does
 not need it. If P1.4 finds a reason to thread tool/autonomy data
 into skill matching, that's an additive ADR amendment.
+
+### 8. Filename stem equals `id`
+
+A skill file at `config/skills/<category>/<id>.md` MUST declare
+`id: <id>` in its frontmatter. The loader validates the equality on
+load; mismatch raises `SkillError` with `path` and `field="id"`
+populated. The rule enforces a 1:1 mapping between file location
+and skill identifier — `grep -r "id: research-decomposition"
+config/skills/` finds exactly one file. This is contract-locking for
+every skill author and lives in the ADR (not just the loader
+implementation) so future loader implementations stay consistent.
+
+The validator lives at load time, not at Pydantic-construction time:
+the `Skill` model has no access to the filesystem path the file was
+loaded from, and surfacing the filename into the schema as a field
+would mix two concerns (the canonical id is one piece of data, not
+two). The loader is the only code that sees both pieces and can
+compare them.
 
 ## Considered alternatives
 
@@ -301,6 +322,14 @@ int.
   with a Pydantic error pointing at the file path and field name
   — clearer than a silent skip, but more friction than a
   free-string category would impose.
+- The closed-enum `category` (3 values) and `rejection_reason` (4
+  values) trade flexibility for vocabulary discipline. When a real
+  category mismatch surfaces (e.g., a skill that doesn't fit
+  general / engineering / business), the resolution path is
+  Literal extension via ADR-009 amendment — reversibility-Low,
+  following the `refusal_reason` precedent from ADR-007 Decision 2.
+  Don't pre-extend on speculation; let the first misfit name the
+  fourth category.
 
 **Neutral:**
 
@@ -326,6 +355,7 @@ int.
 | 5. Tie-breaking alphabetical by id | **Trivial** — one line in the matcher; the alternative (FS order, or undefined) is mostly cosmetic. |
 | 6. `SkillSelection` embeds `SkillDecisionTrace` | **Low** — splitting trace out to a separate getter is a return-type refactor; calls update, but only the matcher's callers (few). |
 | 7. Layering (`skills → core` OK; reverse + LLM forbidden) | **Expensive** — once `skills` is depended on by `core`, breaking that cycle requires reorganization of either the imports or the package boundary itself. Pick the direction once, deliberately. |
+| 8. Filename stem equals `id` | **Low** — one validator + one docstring; reversal is renaming a small set of skill files (~10 in MVP library) plus removing the validator. The 1:1 grep guarantee disappears on reversal, but no code depends on it beyond the validator. |
 
 ## References
 
@@ -349,4 +379,5 @@ int.
 - `docs/process/senior-plans/P1.3.md` — implementation plan
   consuming this ADR.
 - Implementation entry point: P1.3-3 schema module (interface-freeze
-  shape) lands the Pydantic models declared in Decisions 1–6.
+  shape) lands the Pydantic models declared in Decisions 1–6; the
+  load-time filename-stem validator (Decision 8) lands in P1.3-4.
