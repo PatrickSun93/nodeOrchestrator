@@ -46,6 +46,11 @@ def git_repo(tmp_path: Path) -> Path:
         check=True,
         capture_output=True,
     )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "commit.gpgsign", "false"],
+        check=True,
+        capture_output=True,
+    )
     return tmp_path
 
 
