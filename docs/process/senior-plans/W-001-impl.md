@@ -207,7 +207,7 @@ The plan absorbs four R0-A watch items and four self-discoveries from the stub �
     - `workflow init --task-id TASK [--state STATE]` — create `.workflow/TASK.yaml`. Refuses if file exists (unless `--force`).
     - `workflow advance --task-id TASK` — read the current state file, evaluate `next_state` against current git artifacts + gates, write the new state file if a transition fires.
     - `workflow override --task-id TASK --to-state STATE --reason TEXT --actor ARCHITECT_OR_PARTNER` — record an `OverrideEntry` per Decision 10.
-    - `workflow verify-workspace [--strict]` — run `git fetch origin` + `git status --short`; if any modified or untracked files in tracked paths exist, write a warning to stderr listing them and exit 0 (or exit 1 if `--strict`). The RC-7 forcing function.
+    - `workflow verify-workspace` — run `git fetch origin` + `git status --short`; if any modified or untracked files in tracked paths exist, write a warning to stderr listing them and exit 0. The RC-7 forcing function. No `--strict` flag in this impl per R0-A-on-plan-3 ("Run > polish; extensible > perfect" — add when there's a real use case).
   - `tests/workflow/test_cli.py` exercises each subcommand against a tmp `.workflow/` directory. The `verify-workspace` test creates a tmp git repo, adds an untracked file in a tracked path, asserts the CLI surfaces the warning. (See `test-coverage-standard.md` §3 + §4 for subprocess + exception payload obligations.)
   - All CLI failures exit with a non-zero code and write a `WorkflowError`-class message to stderr including the offending field/file (§4 payload obligation).
   - The CLI module docstring must explicitly state the RC-7 link: "`verify-workspace` exists because two W-001-cycle instances of stale-workspace-as-truth (RC-7) surfaced the failure mode."
@@ -224,6 +224,7 @@ The plan absorbs four R0-A watch items and four self-discoveries from the stub �
 - **Acceptance**:
   - `.claude/settings.json` `hooks` section gains one `SessionStart` entry running the CLI (use `uv run workflow status` + `uv run workflow verify-workspace` or an inlined shell command — choose what matches existing repo precedent).
   - The hook's exit code does NOT block session startup even on warnings — session-start is informational only. (A blocking forcing function would be wrong here: senior may legitimately work on multiple tasks in one session.)
+  - Hook CLI hard-errors (workflow CLI exits non-zero) are ALSO non-blocking; the hook surfaces stderr to the operator but does not block session startup. Session continues regardless of CLI exit code (R0-A-on-plan-4 — same spirit as warning-not-blocking, made explicit for the error case).
   - `docs/process/session-start-hook.md` cross-links ADR-008 Decision 9 (session-start trigger) and the CLI module.
   - The hook itself contains no logic beyond the CLI invocation — verified by reading the settings.json diff.
 
@@ -262,13 +263,14 @@ The plan absorbs four R0-A watch items and four self-discoveries from the stub �
   - File contents:
     ```yaml
     task_id: W-001-impl
-    state: awaiting_senior_plan_vs_impl
+    state: awaiting_junior_impl
     cycle: 1
-    last_transition_at: <ISO-8601 UTC at commit time>
+    last_transition_at: <ISO-8601 UTC at impl-7 commit time>
     override_history: []
     requires_cross_family_review: false
     ```
-  - `state` is `awaiting_senior_plan_vs_impl` because at this commit junior has pushed impl-1 through impl-6 (the impl work) and the next gated artifact is the senior plan-vs-impl review. (At impl-9 land, the state advances; that's impl-9's responsibility.)
+  - `state` is `awaiting_junior_impl` because at impl-7 commit time **junior is still pushing** — impl-8 and impl-9 are not yet pushed. The state file MUST reflect current truth, not future truth (ADR-008 Decisions 5 + 9 — state file IS the truth invariant). Impl-9 will advance to `awaiting_senior_plan_vs_impl` when junior is actually done (R0-A-on-plan-1 architect resolution (b)).
+  - The commit body for impl-7 explicitly notes the state choice with the rationale above. This is the moment the harness eats its own dog food — getting the state value wrong here makes the very first real state file a violation of the invariant ADR-008 was written to enforce.
   - The file validates against the `TaskState` Pydantic model from impl-1. The commit body includes one line: "Validated locally via `uv run python -c 'from orchestrator.workflow.schema import TaskState; import yaml; TaskState.model_validate(yaml.safe_load(open(\".workflow/W-001-impl.yaml\")))'`".
   - No `.workflow/P0.yaml`, `.workflow/P1.1.yaml`, `.workflow/P1.2.yaml` retroactive bootstrapping — Decision 12 explicitly says no.
 
@@ -295,15 +297,15 @@ The plan absorbs four R0-A watch items and four self-discoveries from the stub �
 
 ### W-001-impl-9 — Landing commit + 5-surface scan + state advance
 
-- **What**: The closing commit. Tracking table covering all nine impl-* tasks. Full 5-surface scan report. Advance `.workflow/W-001-impl.yaml` to `awaiting_R0_A` (junior is done pushing) — and/or `closed` if the architect merges this PR directly without separate R0-A. Whichever, the file MUST end in a state consistent with project reality at merge.
+- **What**: The closing commit. Tracking table covering all nine impl-* tasks. Full 5-surface scan report. **Deterministically advance `.workflow/W-001-impl.yaml`** from `awaiting_junior_impl` (impl-7's initial value) to `awaiting_senior_plan_vs_impl` — junior is now actually done; the next gated artifact is the senior plan-vs-impl review.
 - **Where**:
-  - Modify: `.workflow/W-001-impl.yaml` — advance `state` from `awaiting_senior_plan_vs_impl` (impl-7's initial value) to whatever the operational reality is at the moment of impl-9 commit. Document the choice in the commit body.
+  - Modify: `.workflow/W-001-impl.yaml` — set `state: awaiting_senior_plan_vs_impl` and update `last_transition_at` to impl-9's commit timestamp. This is a real state transition, not an override (no `override_history` append).
   - Possible touches: any final 5-surface scan companion edits surfaced during scan execution.
-- **Why**: `contributing.md` Q3 5-surface scan + `feedback_review_followup_tracking.md` tracking table + ADR-008 Decision 12 (the W-001-impl state file evolves through real states, not artificially preserved).
+- **Why**: `contributing.md` Q3 5-surface scan + `feedback_review_followup_tracking.md` tracking table + ADR-008 Decision 12 (the W-001-impl state file evolves through real states, not artificially preserved) + R0-A-on-plan-1 (deterministic advance per architect resolution (b)).
 - **Acceptance**:
   - Tracking table in commit body lists all 9 W-001-impl-* tasks with explicit `Done | Skipped (reason) | Disagreed (proposing X)` status.
   - 5-surface scan report enumerates every surface touched across the whole PR (src, yaml/state-file, ADR cross-links, architecture docs, narrative); RC-1 sub-rule applied to each surface (pre-edit grep clean).
-  - State-file advance: senior recommends `state: awaiting_senior_plan_vs_impl` remains (junior pushed; senior runs plan-vs-impl next per `senior-planner.md`). At PR merge time, architect or a separate state-advance commit moves to `closed`. **Junior does NOT pre-advance to `closed` in this commit** — premature inscription violates the auto-trigger gating from Decision 1 (PR merge is architect-gated).
+  - State-file advance is **deterministic, not conditional**: `state: awaiting_senior_plan_vs_impl` MUST be the new value; `last_transition_at` MUST be the impl-9 commit time. No `override_history` entry — this is a natural state transition, not an override. **Junior does NOT pre-advance to `awaiting_R0_A` or `closed` in this commit** — those transitions are senior-plan-vs-impl-fires and architect-merge gated per Decision 1.
   - `pytest` green; `ruff check` clean; `ruff format --check` clean; `mypy --strict src tests` clean.
   - Commit body explicitly notes whether `workflow verify-workspace` was run before push; if it surfaced any divergence, name it.
 
@@ -351,7 +353,7 @@ Four items not pinned by the brief / ADR / architect locks that senior is callin
 
 2. **`cycle >= 4` as warning, not error** (R0-A-4). I'm implementing this as a stderr warning in `record_override`, not a `WorkflowError` raise. Reason: cycle-count semantics are architect-judgement-driven per Decision 11; the harness's job is to surface, not to block. If you want it as a blocking error, impl-2 changes — but I judge architect-block is more appropriate than harness-block.
 
-3. **impl-7's initial state choice = `awaiting_senior_plan_vs_impl`** (not `awaiting_brief` or `awaiting_senior_plan` or `closed`). At impl-7 commit time, junior has pushed impl-1 through impl-6; the next artifact owed by anyone is senior's plan-vs-impl review (this very document is the plan; impl-7 is junior's push commit; plan-vs-impl is what comes next). I considered `awaiting_junior_impl` (still pushing) but that's untrue at the moment of impl-7 land — junior IS pushing right now, the next state-pinning artifact is the review. Architect can override at merge time per Decision 10. Flag if you want a different initial state.
+3. **impl-7's initial state choice — resolved (b) per R0-A-on-plan-1**. Senior's original call was `awaiting_senior_plan_vs_impl` ("next artifact owed is the review"). Architect ruled (b): state file MUST reflect *current* truth, not future truth — at impl-7 commit time, junior is still pushing (impl-8 and impl-9 unpushed), so the current state is `awaiting_junior_impl`. Impl-9 then advances deterministically to `awaiting_senior_plan_vs_impl` when junior is actually done. The ADR-008 invariant "state file IS the truth" (Decisions 5 + 9) is load-bearing here; getting the first real state file wrong would violate the very rule the harness exists to enforce. Acceptance criteria in impl-7 and impl-9 updated accordingly.
 
 4. **No retroactive `.workflow/` for W-001 (the parent task)**. ADR-008 Decision 12 says no retroactive bootstrapping for closed P1.x; by symmetry, the parent W-001 (which closed via PR #4 / `819d8f5`) does not get a state file. The plan honors this implicitly. If you want a retroactive `.workflow/W-001.yaml` (state: closed) for narrative completeness, flag — it's a one-line addition in impl-7 but conceptually inconsistent with Decision 12.
 
