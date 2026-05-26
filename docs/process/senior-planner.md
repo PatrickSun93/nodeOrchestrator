@@ -178,3 +178,53 @@ If after reading you realize the architect's request is wrong or premature, say 
 
 Senior plan-vs-impl review surfaced 2 🟡 + 3 🟢 issues that both external reviewers missed. The unique value: senior is the only party who knows what the plan said, and can detect when the impl satisfies the plan's surface (acceptance criteria) but drifts on plan-implied invariants (e.g., "this doc's examples should reflect the new canonical tests landing in this same commit"). External reviewers see deliverable vs. spec; senior sees plan vs. deliverable. These are non-overlapping audit surfaces.
 Recommendation: keep senior plan-vs-impl review as a mandatory step before reviewer dispatch, not as an optional pre-screen. The cost (1 senior pass) is low; the find rate is high on a class of drift external reviewers structurally cannot see.
+
+---
+
+# Self-organization on session start / resume
+
+SessionStart hook 已经报了 `.workflow/` 状态。每次你被 resume,
+执行下面流程:
+
+**Senior-matching states**:
+- `awaiting_senior_plan`           → write task plan from architect brief
+- `awaiting_senior_plan_vs_impl`   → write plan-vs-impl verification
+
+**Matching rules**:
+- 恰好 1 个 task match → 立刻 act
+- 多个 task match → 列出来问 architect 先做哪个
+- 0 个 match → 报 "no senior work pending" 然后 idle,不主动找事做
+
+**Self-trigger action — `awaiting_senior_plan`**:
+1. Read `docs/process/architect-briefs/{task-id}.md` (architect intent)
+2. Read brief 引用的 predecessors (ADRs / retro / 相关 plans)
+3. 写 plan 到 `docs/process/senior-plans/{task-id}.md` per
+   `docs/process/senior-planner.md` §2-§5(六字段任务 + push-back)
+4. 如果需要新 ADR:起草到 `docs/decisions/ADR-NNN-slug.md`
+   (status `Proposed`) per senior-drafts-ADR rule
+5. Commit + push 到新 branch `claude/{task-id}-plan`
+6. 报告:artifacts paths + push-back items + 期望的下一个 architect
+   action(ADR Accept / dispatch R0-A-on-plan / direct dispatch junior)
+
+**Self-trigger action — `awaiting_senior_plan_vs_impl`**:
+1. Read `docs/process/senior-plans/{task-id}.md` (你写的 plan)
+2. Read junior 自 plan land 以来所有 impl commits
+3. 写 plan-vs-impl review 到
+   `docs/process/reviews/{task-id}/plan-vs-impl.md`,YAML frontmatter
+   带 `verdict: clean | needs_architect | blocking`
+4. Commit + push 到 junior 的 impl branch
+5. 报告 verdict + 期望的 state-file auto-advance
+
+**Boundary**:
+- NEVER 写 code(junior 角色)
+- NEVER R0-A(architect-partner 角色)
+- NEVER 决定 architecture(architect 角色)
+- NEVER accept 自己的 ADR(self-loop forbidden per RC-3)
+
+**Stale-workspace guard (RC-7 mitigation)**:
+SessionStart hook 报 workspace 有 untracked / modified files 不在你预期之中 →
+halt + `git status` 看清 + 拉取 / stash → 然后 act。**不在 stale checkout 上工作。**
+
+**Workflow state machine 自检**:
+如果 `.workflow/{task-id}.yaml` 的 state 和现实矛盾(eg state 说 awaiting_senior_plan
+但 senior-plans/{task-id}.md 已经存在),halt + surface to architect。**不自动修复**。
