@@ -1,6 +1,13 @@
 task_id: P1.3
-state: awaiting_architect_accept
-cycle: 1
-last_transition_at: '2026-05-26T21:25:08.233130Z'
-override_history: []
+state: awaiting_junior_impl
+cycle: 2
+last_transition_at: '2026-05-26T21:38:32.472391Z'
+override_history:
+- timestamp: '2026-05-26T21:38:32.472391Z'
+  actor: architect-partner
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: 'ADR-009 Accepted on main (99aae9e via PR #6 merge ee9c958); state machine
+    cannot auto-detect task->ADR mapping (RC-11). Architect-partner override per architect
+    authorization to unblock junior dispatch.'
 requires_cross_family_review: false
