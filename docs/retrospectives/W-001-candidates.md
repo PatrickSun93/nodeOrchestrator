@@ -116,6 +116,32 @@ RC-4 (test-coverage 6→3→6) was deferred at P1.2 close because **one** instan
 
 ---
 
+## RC-9 — Workflow-overview lifecycle vs ADR-008 state machine: R0-A-on-plan is missing as an explicit state
+
+**Surfaced:** 2026-05-26, when senior pushed full W-001-impl plan direct-to-main and asked for junior dispatch. Architect-partner noticed `workflow-overview.md` §2 lifecycle includes "Architect-partner R0-A reviews the plan + ADR" as step 4, but ADR-008's 9-state vocabulary does not include a state matching "R0-A on plan." All prior R0-A reviews in P1.2 happened either on a plan-plus-new-ADR cycle (where R0-A naturally covered both) or post-impl (the existing `awaiting_R0_A` state). W-001-impl is the **first plan-only post-Accept** case in project history; the gap was structural but invisible until now.
+
+**The ambiguity:**
+
+- `workflow-overview.md` §2 says R0-A on plan is part of the lifecycle.
+- ADR-008 Decision 1 gated/auto-triggered transitions table has no `awaiting_R0_A_on_plan` state.
+- C3/C4 precedent: R0-A on plan+ADR happened naturally because plan + new ADR co-posted.
+- W-001 (just-closed): R0-A on plan+ADR happened naturally (plan stub + ADR-008 draft).
+- W-001-impl (now): senior plan landed but **no new ADR**. Lifecycle says R0-A on plan; state machine has no state for it.
+
+**Architect's directional resolution (2026-05-26):** Option (c) — *"workflow-overview is correct, but R0-A on plan is an **architect-decision-triggered gated transition**, not an automatic state transition."* Architect dispatches R0-A per case (or skips); the state machine does not need to model it because dispatch goes through the existing `awaiting_architect_decision`-shaped human-in-the-loop pathway, not through a new explicit state.
+
+**Codification action (this session):** `workflow-overview.md` §2 lifecycle gets an explicit annotation at the R0-A-on-plan step: *"architect-dispatched (gated transition); architect decides per case whether to dispatch."* This makes the lifecycle map honest about which step is automatic and which is architect-judgement.
+
+**Secondary question — file naming when R0-A on plan AND R0-A on impl both exist:** the locked path `docs/process/reviews/{task-id}/R0-A.md` assumes one R0-A per task. For W-001-impl, there is potentially R0-A-on-plan (this dispatch) and R0-A-on-impl (after junior pushes). Two files in the same task folder need distinct names. **Provisional naming this cycle:** `R0-A-on-plan.md` for pre-impl plan review; `R0-A.md` for the standard post-impl review. W-001 close-out evaluates whether to canonicalize this or simplify.
+
+**Why this is captured + resolved rather than open:**
+
+Architect resolved the meta-question in the same session it surfaced. The resolution is small (one annotation in workflow-overview) and the precedent set this cycle (R0-A-on-plan.md path) is testable in subsequent cases. Following the pattern of RC-3 (senior-drafts-ADR — captured + codified same session), RC-9 is in the same shape: surfaced, resolved, codified, and now subject to "does the resolution hold up under one more instance?" evaluation at W-001 close.
+
+**Status:** captured + codified (workflow-overview annotation lands alongside this RC capture). W-001 close-out evaluates whether the file-naming precedent (`R0-A-on-plan.md`) holds and whether the architect-dispatched-R0-A pattern produces useful signal or becomes vestigial.
+
+---
+
 ## Notes for final W-001 retrospective
 
 When folding into `docs/retrospectives/W-001.md` at close:

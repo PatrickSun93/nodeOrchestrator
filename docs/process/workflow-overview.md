@@ -41,6 +41,12 @@ A typical task flows through these phases:
         → docs/decisions/ADR-NNN-slug.md (Proposed)
         ↓
 4. Architect-partner R0-A reviews the plan + ADR
+   — **architect-dispatched (gated transition)**; architect decides per case whether to dispatch.
+   When new ADR is co-posted with plan, R0-A naturally covers both.
+   When plan is post-Accept-only (no new ADR), architect decides whether
+   to R0-A the plan or skip directly to junior dispatch. Path:
+   `docs/process/reviews/{task-id}/R0-A-on-plan.md` to disambiguate from
+   post-impl `R0-A.md`. See RC-9 for resolution context.
         ↓
 5. Architect accepts ADR (Proposed → Accepted)
    — distance test pause between draft and accept —
