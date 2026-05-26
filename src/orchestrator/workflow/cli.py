@@ -3,10 +3,10 @@
 `verify-workspace` exists because two W-001-cycle instances of
 stale-workspace-as-truth (RC-7) surfaced the failure mode.
 
-Subcommands: status, init, advance (stub — see impl-6), override,
-verify-workspace. Framework-agnostic primitive; the Claude Code
-SessionStart hook (impl-5) shells out to this CLI. No logic lives
-in the hook beyond the invocation.
+Subcommands: status, init, advance, override, verify-workspace.
+Framework-agnostic primitive; the Claude Code SessionStart hook
+(impl-5) shells out to this CLI. No logic lives in the hook beyond
+the invocation.
 """
 
 from __future__ import annotations
@@ -16,11 +16,19 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from orchestrator.workflow.exceptions import WorkflowError
 from orchestrator.workflow.io import read_state, write_state
 from orchestrator.workflow.schema import OverrideEntry, TaskState, WorkflowState
-from orchestrator.workflow.transitions import record_override
+from orchestrator.workflow.transitions import (
+    ArtifactSnapshot,
+    GateSnapshot,
+    evaluate_merge_clean,
+    next_state,
+    parse_verdict,
+    record_override,
+)
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -29,6 +37,117 @@ from orchestrator.workflow.transitions import record_override
 
 def _state_path(workflow_dir: Path, task_id: str) -> Path:
     return workflow_dir / f"{task_id}.yaml"
+
+
+# Recognized review filenames per stub §5.2 — only these reach parse_verdict.
+_REVIEW_FILENAMES = frozenset({"plan-vs-impl.md", "R0-A.md", "R0-B.md", "R1-A.md", "R1-B.md"})
+
+
+def _safe_load_verdict(
+    path: Path,
+) -> Literal["clean", "blocking", "needs_architect", "absent"]:
+    """Parse a review file verdict. Returns 'absent' if the file is missing.
+    Only call with filenames from _REVIEW_FILENAMES (side-channel filter).
+    """
+    if not path.exists():
+        return "absent"
+    return parse_verdict(path)
+
+
+def _read_adr_status(task_id: str, repo_root: Path) -> Literal["proposed", "accepted", "none"]:
+    """Check docs/decisions/ADR-{task-id}.md for a Status line."""
+    adr_path = repo_root / "docs" / "decisions" / f"ADR-{task_id}.md"
+    if not adr_path.exists():
+        return "none"
+    content = adr_path.read_text(encoding="utf-8").lower()
+    if "status: accepted" in content or "**status:** accepted" in content:
+        return "accepted"
+    if "status: proposed" in content or "**status:** proposed" in content:
+        return "proposed"
+    return "none"
+
+
+def _has_commit_since(since: datetime, repo_root: Path) -> bool:
+    """Return True if any git commit was authored after `since`."""
+    since_str = since.strftime("%Y-%m-%dT%H:%M:%S")
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", f"--after={since_str}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            cwd=str(repo_root),
+        )
+        return bool(result.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _is_pr_merged(repo_root: Path) -> bool:
+    """Return True if HEAD is an ancestor of origin/main (branch merged)."""
+    try:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"],
+            capture_output=True,
+            timeout=10,
+            check=False,
+            cwd=str(repo_root),
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _current_branch(repo_root: Path) -> str:
+    """Return the current git branch name, or 'HEAD' if detached."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            cwd=str(repo_root),
+        )
+        return result.stdout.strip() or "HEAD"
+    except (OSError, subprocess.TimeoutExpired):
+        return "HEAD"
+
+
+def build_artifact_snapshot(
+    task_id: str,
+    state: TaskState,
+    workflow_dir: Path,
+) -> ArtifactSnapshot:
+    """Build ArtifactSnapshot from filesystem + git log.
+
+    Side-channel files are excluded: this builder only reads the specific
+    paths listed in _REVIEW_FILENAMES before calling parse_verdict. Stub
+    §5.2 side-channel-no-op invariant lives at this filter.
+    """
+    repo_root = workflow_dir.parent
+    reviews_dir = repo_root / "docs" / "process" / "reviews" / task_id
+
+    brief_exists = (repo_root / "docs" / "process" / "architect-briefs" / f"{task_id}.md").exists()
+    senior_plan_exists = (
+        repo_root / "docs" / "process" / "senior-plans" / f"{task_id}.md"
+    ).exists()
+    adr_status = _read_adr_status(task_id, repo_root)
+    junior_impl_commit_present = _has_commit_since(state.last_transition_at, repo_root)
+    plan_vs_impl_verdict = _safe_load_verdict(reviews_dir / "plan-vs-impl.md")
+    r0_a_verdict = _safe_load_verdict(reviews_dir / "R0-A.md")
+    pr_merged = _is_pr_merged(repo_root)
+
+    return ArtifactSnapshot(
+        brief_exists=brief_exists,
+        senior_plan_exists=senior_plan_exists,
+        adr_status=adr_status,
+        junior_impl_commit_present=junior_impl_commit_present,
+        plan_vs_impl_verdict=plan_vs_impl_verdict,
+        r0_a_verdict=r0_a_verdict,
+        pr_merged=pr_merged,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +224,12 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_advance(args: argparse.Namespace) -> int:
-    """Stub in impl-4. Auto-trigger glue body filled in impl-6."""
+    """Evaluate and apply the next auto-transition for a task.
+
+    Reads the state file, builds ArtifactSnapshot + GateSnapshot, calls
+    next_state, and writes the new state file if a transition fires.
+    Writes-then-renames atomically via write_state (§3 cleanup obligation).
+    """
     wdir = Path(args.workflow_dir)
     path = _state_path(wdir, args.task_id)
     try:
@@ -113,12 +237,39 @@ def cmd_advance(args: argparse.Namespace) -> int:
     except WorkflowError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    # impl-6 replaces this stub body with transition evaluation.
-    print(
-        f"{state.task_id}: currently {state.state} — "
-        "auto-trigger evaluation not yet wired (impl-6 pending)",
-        file=sys.stderr,
+
+    try:
+        artifacts = build_artifact_snapshot(args.task_id, state, wdir)
+    except WorkflowError as exc:
+        print(f"ERROR: building artifact snapshot: {exc}", file=sys.stderr)
+        return 1
+
+    repo_root = wdir.parent
+    branch = _current_branch(repo_root)
+    try:
+        merge_clean = evaluate_merge_clean(branch)
+    except WorkflowError:
+        merge_clean = False
+
+    gates = GateSnapshot(merge_clean=merge_clean)
+    result = next_state(state.state, artifacts, gates)
+
+    if result is None:
+        print(f"{args.task_id}: no transition fires (current state: {state.state})")
+        return 0
+
+    new_state = state.model_copy(
+        update={
+            "state": result,
+            "last_transition_at": datetime.now(UTC),
+        }
     )
+    try:
+        write_state(new_state, path)
+    except WorkflowError as exc:
+        print(f"ERROR: writing state: {exc}", file=sys.stderr)
+        return 1
+    print(f"{args.task_id}: {state.state} → {result}")
     return 0
 
 
@@ -245,7 +396,7 @@ def build_parser() -> argparse.ArgumentParser:
     # advance
     p_advance = sub.add_parser(
         "advance",
-        help="Evaluate and apply the next auto-transition (auto-trigger glue in impl-6).",
+        help="Evaluate and apply the next auto-transition.",
     )
     p_advance.add_argument("--task-id", required=True, metavar="TASK")
     p_advance.set_defaults(func=cmd_advance)
