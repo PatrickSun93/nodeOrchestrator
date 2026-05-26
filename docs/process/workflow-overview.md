@@ -176,16 +176,13 @@ These are not yet codified. Status as of W-001 design close:
 
 ---
 
-## 7. Distance test (current state — disputed)
+## 7. Distance test
 
-The distance test rule has two interpretable substrates that have diverged twice in the W-001 cycle:
+**Codified at substrate** as of 2026-05-26 — see `docs/process/distance-test.md` for the canonical rule, triggers, and waiver mechanism.
 
-- **(X) Strict elapsed time**: 24h+ from a reference timestamp. Auditable by clock.
-- **(Y) Sleep cycle + fresh-eye revisit**: cognitive break between architectural inscription and action. Honors the principle directly; requires self-report or proxy detection.
+The rule: between drafting and landing an architectural inscription, a fresh-eye revisit by the architect (typically after a sleep cycle) must occur. The architect self-reports OR explicitly waives with reason. Strict elapsed time (e.g., 24h) is a useful proxy / default reminder but not the binding rule.
 
-Architect has chosen (Y) over (X) twice (C4 junior same-day impl, W-001 ADR-008 same-day status flip). Codification deferred to W-001 close, but RC-8 is on the explicit graduate-at-W-001-close list.
-
-Until codified, use the architect's stated interpretation case-by-case. If you are surfacing a distance-test concern (architect-partner role), be explicit about which substrate (X / Y) you mean.
+This codification graduates RC-8 from W-001-candidates (three observed instances of architect choosing substrate over letter: P1.2-C4 junior same-day impl, W-001 ADR-008 ~13h status flip, P1.3 ADR-009 explicit no-pause). See distance-test.md § "How this rule emerged" for the full graduation trail.
 
 ---
 

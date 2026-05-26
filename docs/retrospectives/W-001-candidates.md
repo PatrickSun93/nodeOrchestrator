@@ -112,7 +112,7 @@ RC-4 (test-coverage 6→3→6) was deferred at P1.2 close because **one** instan
 
 **Sub-question for ADR-008 harness:** Does W-001-impl's session-start logic help here? Partial — if the harness gates status transitions on a "fresh-eye attestation" check, the substrate is enforced at the moment of the act. But forcing architect to type "I slept" may degrade compliance over time (theatre tax). Better: detect the substrate via observable artifacts (commit-history-shows-architect-nighttime-gap) rather than self-report.
 
-**Status:** open. Two instances within ~12 hours of each other constitutes data, not a coincidence. W-001 close-out evaluates: (1) which of α/β/γ to codify; (2) whether ADR-008 harness should enforce it; (3) whether the brief's wording template ("24h+ minimum") needs revision to reflect (Y) substrate.
+**Status:** **GRADUATED 2026-05-26.** Third instance (P1.3 ADR-009 — architect explicit "24h+ distance test pause is not needed at all") was the threshold. Codified at substrate per option α (sleep cycle + fresh-eye attestation) at `docs/process/distance-test.md`. Workflow-overview §7 supersede applied. Brief wording template needs no revision — the substrate-as-rule is now the standard; "24h+ minimum" remains usable as a default reminder per the waiver pattern in distance-test.md.
 
 ---
 
