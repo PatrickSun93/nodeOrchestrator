@@ -1,6 +1,6 @@
 # ADR-009: SKILL.md Frontmatter Schema + Loading Decision
 
-**Status:** Proposed — 2026-05-26
+**Status:** Accepted — 2026-05-26
 **Scope:** Governs the `SKILL.md` file format (YAML frontmatter +
 markdown body), the frontmatter contract every future skill author
 must follow, and the shape of the code-driven loading decision
