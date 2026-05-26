@@ -9,6 +9,9 @@ dependencies = [
     "PyYAML>=6.0",
 ]
 
+[project.scripts]
+workflow = "orchestrator.workflow.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
