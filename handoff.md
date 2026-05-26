@@ -1124,6 +1124,40 @@ Architect 自报精力 5/10 是 stop floor —— 低于不硬推。Architect-pa
 
 ---
 
+## 17. Workflow state machine (ADR-008, landed W-001-impl)
+
+Workflow sequencing now lives in `.workflow/{task-id}.yaml`, not in chat
+history or session memory. State is ground truth per Principle 11.
+
+**Module location**: `src/orchestrator/workflow/` (production code, same
+gates as `autonomy/` and `core/`). CLI entry-point: `uv run workflow`
+(five subcommands: `status`, `init`, `advance`, `override`,
+`verify-workspace`). SessionStart hook: `.claude/settings.json` runs
+`workflow status; workflow verify-workspace` on every session open — informational
+only, never blocks startup.
+
+**State vocabulary** (9 states): `awaiting_brief` → `awaiting_senior_plan`
+→ `awaiting_architect_accept` → `awaiting_junior_impl` →
+`awaiting_senior_plan_vs_impl` → `awaiting_R0_A` →
+`awaiting_architect_decision` → `awaiting_PR_merge` → `closed`.
+
+**Auto-triggers**: review frontmatter `verdict: clean` fires automatically;
+`verdict: blocking` or `verdict: needs_architect` routes to
+`awaiting_architect_decision` (no auto-advance). Merge-conflict also routes
+to `awaiting_architect_decision` (ADR-008 Decision 8).
+
+**Overrides**: `workflow override --task-id TASK --to-state STATE --reason TEXT --actor architect`
+records an `OverrideEntry` in `override_history` with timestamp and actor.
+Override to `awaiting_junior_impl` increments `cycle`.
+
+**Bootstrapping**: existing closed P1.x work has no retroactive state files
+(ADR-008 Decision 12). `.workflow/W-001-impl.yaml` is the first real state file.
+
+Cross-links: `docs/decisions/ADR-008-workflow-state-machine.md`,
+`docs/process/workflow-overview.md` §5, `.workflow/README.md`.
+
+---
+
 **最后一句话**:这个项目的核心价值不在"AI 多聪明",在"AI 让人更清楚"。如果你写的代码让 AI 替用户做决定,你就走错方向了。
 
 LLM 层的复杂性不是"为了支持更多 backend"——是为了让用户**控制**用什么 model、不被 hardcode 锁住、不被 vendor 决定。这是产品哲学的延伸。

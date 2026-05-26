@@ -45,6 +45,7 @@ tracks every cycle.
 | Meta-review (close-out) | `docs/process/reviews/{task-id}/meta.md` | one per task close |
 | ADR (if needed for the task) | `docs/decisions/ADR-NNN-slug.md` | next unused number, no reservation |
 | Retrospective (module close) | `docs/retrospectives/P*.md` | one per module |
+| Task workflow state file | `.workflow/{task-id}.yaml` | see ADR-008 and `.workflow/README.md`; do not hand-write — use `workflow init` CLI |
 
 Task IDs are case-preserved (`P1.2-C3`, not `p1.2-c3`). A `-B.md`
 file's absence is the evidence that no second reviewer was dispatched

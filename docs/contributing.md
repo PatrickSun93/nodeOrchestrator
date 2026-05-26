@@ -81,6 +81,13 @@ surface is intentionally left at the old shape (e.g. an ADR being
 superseded keeps its text), call that out explicitly in the row's
 status field, not silently.
 
+- **RC-1 pre-edit grep sub-rule**: For each surface in the scan, grep
+  the file for pre-edit values that the schema change rendered obsolete
+  and confirm they are absent. A `Status: Done` row is not legitimately
+  checked until this grep is clean. Reverse drift — re-stating a
+  position the architect already ruled out — is harder to catch than an
+  initial error and must be guarded against explicitly.
+
 **README.md is intentionally excluded from the 5-surface scan.** README
 is the project's entry point for new users — intro, motivation,
 quick-start. It should not contain spec-level detail (data structures,

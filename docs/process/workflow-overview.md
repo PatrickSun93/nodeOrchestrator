@@ -133,7 +133,7 @@ Forcing functions are project-level rules that survive across sessions, codified
 |---|---|---|
 | Tracking table in commit message | Reverse drift (silently re-deriving rejected positions) | `feedback_review_followup_tracking.md` (memory) |
 | 5-surface scan | Schema changes missed in code / yaml / ADR / arch doc / narrative | `contributing.md` Q3 |
-| **Pre-edit grep sub-rule** | "Surface edited" ≠ "consistent post-edit"; old values lingering | RC-1 graduation target — `contributing.md` Q3 sub-bullet (W-001-impl lands the edit) |
+| **Pre-edit grep sub-rule** | "Surface edited" ≠ "consistent post-edit"; old values lingering | `contributing.md` Q3 (RC-1 — graduated W-001-impl-8) |
 | Layer-crossing field-plumbing | Fields added but not threaded source→sink | `contributing.md` Q3 "Layer-crossing field plumbing" |
 | Constitutional tests | Invariants the type system cannot check (string content, structural conformance, data-flow source ≠ sink) | `tests/**/test_constitution_*.py` (15 tests as of W-001) |
 | 6-category test-coverage standard | Coverage gaps across cross-module / concurrency / cleanup / exception payload / boundary validators / schema invariants | `docs/architecture/test-coverage-standard.md` |
@@ -144,7 +144,7 @@ Forcing functions are project-level rules that survive across sessions, codified
 
 ## 5. Automation (ADR-008)
 
-The workflow is being automated with a per-task state machine. ADR-008 Accepted (2026-05-21); implementation lives in W-001-impl (commits no earlier than 2026-05-22 per distance test).
+The workflow is automated with a per-task state machine. ADR-008 Accepted (2026-05-21); implementation at `src/orchestrator/workflow/`; CLI entry-point: `workflow` (see `pyproject.toml [project.scripts]`); SessionStart hook in `.claude/settings.json`.
 
 Key points:
 
@@ -155,7 +155,7 @@ Key points:
 - **Override**: architect (or architect-partner with architect authorization) can force-advance, force-revert, or halt any task; all overrides recorded in `override_history` with `reason`.
 - **Bootstrapping**: existing P1.x closed work does NOT get retroactive state files. W-001-impl is the first task with a state file.
 
-Full design: `docs/decisions/ADR-008-workflow-state-machine.md`. Implementation: `docs/process/senior-plans/W-001-impl.md` (Draft stub; full plan post-Accept).
+Full design: `docs/decisions/ADR-008-workflow-state-machine.md`. Implementation: `src/orchestrator/workflow/` (landed W-001-impl). Senior plan: `docs/process/senior-plans/W-001-impl.md`.
 
 ---
 
@@ -165,7 +165,7 @@ These are not yet codified. Status as of W-001 design close:
 
 | Candidate | Status | Resolution moment |
 |---|---|---|
-| **RC-1** (pre-edit grep sub-rule) | ✅ Ready to graduate | W-001-impl lands `contributing.md` Q3 sub-bullet |
+| **RC-1** (pre-edit grep sub-rule) | ✅ Graduated — W-001-impl-8 landed `contributing.md` Q3 sub-bullet | — |
 | **RC-2** (cross-family R0-B sufficiency) | ⏸ Empirically deferred — 4 consecutive P1.2+ skips, no contract bug surfaced | P1.3 freeze should dispatch R0-B given new work shape |
 | **RC-3** (senior-drafts-ADR) | ✅ Graduated + tested via ADR-006/007/008 | — |
 | **RC-4** (test-coverage reversal pattern) | ⏸ Defer until second instance observed | P1.3+ |
