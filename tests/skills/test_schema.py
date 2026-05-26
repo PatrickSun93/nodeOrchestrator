@@ -217,7 +217,7 @@ class TestSkill:
 class TestSkillMatchRecord:
     def test_frozen_raises_on_mutation(self) -> None:
         with pytest.raises(ValidationError):
-            _VALID_MATCH_RECORD.skill_id = "other"  # Pydantic frozen raises ValidationError at runtime
+            _VALID_MATCH_RECORD.skill_id = "other"  # frozen: raises at runtime
 
     def test_extra_forbid_raises(self) -> None:
         with pytest.raises(ValidationError):

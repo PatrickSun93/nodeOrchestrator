@@ -158,7 +158,7 @@ def test_all_room_types_can_match(room_type: RoomType) -> None:
 
 
 def test_agent_mismatch_takes_precedence_over_room_type_mismatch() -> None:
-    """When both agent AND room_type fail, rejection_reason is agent_mismatch (predicate 1 first)."""
+    """When agent AND room_type both fail, agent_mismatch is reported (predicate 1 first)."""
     skills = {
         "specific-skill": _skill(
             "specific-skill",
@@ -171,7 +171,7 @@ def test_agent_mismatch_takes_precedence_over_room_type_mismatch() -> None:
 
 
 def test_room_type_mismatch_takes_precedence_over_room_state_mismatch() -> None:
-    """When room_type AND room_state both fail, room_type_mismatch is reported (predicate 2 first)."""
+    """When room_type AND room_state both fail, room_type_mismatch is reported (predicate 2)."""
     skills = {
         "room-skill": _skill(
             "room-skill",

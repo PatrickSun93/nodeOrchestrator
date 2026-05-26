@@ -299,6 +299,15 @@ skills/
 
 每个 skill 用标准 SKILL.md 格式。
 
+**P1.3 已落地**: loader + matcher + 2 个 sample skills 已实装。
+
+- 实现位置: `src/orchestrator/skills/` (schema, loader, decision, exceptions)
+- 加载 API: `orchestrator.skills.loader.load_skills(directory: Path) -> dict[str, Skill]`
+- 匹配 API: `orchestrator.skills.decision.decide_skills_for_context(agent_id, room_type, room_state, *, available_skills) -> SkillSelection`
+- Sample skills: `config/skills/general/research-decomposition.md`, `config/skills/engineering/debugging-workflow.md`
+- 完整 10-skill 库为 downstream content task (P1.3 之后)
+- Agent-runtime 集成 (skills 进入 context window) 为 P1.4
+
 ### 5.4 工具集
 
 **第一层(永远在场)**:
