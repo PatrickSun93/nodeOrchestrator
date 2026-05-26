@@ -1,0 +1,407 @@
+"""Behavior tests for orchestrator.workflow.transitions.
+
+Covers: next_state (one test per ADR-008 Decision 1 row), record_override
+(rework cycle, frozen copy), evaluate_merge_clean (subprocess behavior),
+parse_verdict (frontmatter parsing, boundary validators per §5).
+
+§3 cleanup: subprocess timeout + CalledProcessError covered below.
+§4 exception payload: WorkflowError.task_id / .path fields verified.
+§5 boundary: parse_verdict rejects invalid verdict values.
+§6 schema: ArtifactSnapshot + GateSnapshot frozen/extra-forbid covered.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Literal
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from orchestrator.workflow.exceptions import WorkflowError
+from orchestrator.workflow.schema import OverrideEntry, TaskState, WorkflowState
+from orchestrator.workflow.transitions import (
+    ArtifactSnapshot,
+    GateSnapshot,
+    evaluate_merge_clean,
+    next_state,
+    parse_verdict,
+    record_override,
+)
+
+_NOW = datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _snap(
+    *,
+    brief_exists: bool = False,
+    senior_plan_exists: bool = False,
+    adr_status: Literal["proposed", "accepted", "none"] = "none",
+    junior_impl_commit_present: bool = False,
+    plan_vs_impl_verdict: Literal["clean", "blocking", "needs_architect", "absent"] = "absent",
+    r0_a_verdict: Literal["clean", "blocking", "needs_architect", "absent"] = "absent",
+    pr_merged: bool = False,
+) -> ArtifactSnapshot:
+    return ArtifactSnapshot(
+        brief_exists=brief_exists,
+        senior_plan_exists=senior_plan_exists,
+        adr_status=adr_status,
+        junior_impl_commit_present=junior_impl_commit_present,
+        plan_vs_impl_verdict=plan_vs_impl_verdict,
+        r0_a_verdict=r0_a_verdict,
+        pr_merged=pr_merged,
+    )
+
+
+def _gates(*, merge_clean: bool = True) -> GateSnapshot:
+    return GateSnapshot(merge_clean=merge_clean)
+
+
+def _state(state: WorkflowState = WorkflowState.AWAITING_BRIEF, cycle: int = 1) -> TaskState:
+    return TaskState(
+        task_id="TEST-001",
+        state=state,
+        cycle=cycle,
+        last_transition_at=_NOW,
+    )
+
+
+# ---------------------------------------------------------------------------
+# §6 schema: ArtifactSnapshot + GateSnapshot frozen / extra-forbid
+# ---------------------------------------------------------------------------
+
+
+def test_artifact_snapshot_frozen() -> None:
+    from pydantic import ValidationError
+
+    s = _snap()
+    with pytest.raises(ValidationError):
+        s.brief_exists = True
+
+
+def test_artifact_snapshot_extra_forbid() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ArtifactSnapshot(  # type: ignore[call-arg]
+            brief_exists=False,
+            senior_plan_exists=False,
+            adr_status="none",
+            junior_impl_commit_present=False,
+            plan_vs_impl_verdict="absent",
+            r0_a_verdict="absent",
+            pr_merged=False,
+            extra_field="bad",
+        )
+
+
+def test_gate_snapshot_frozen() -> None:
+    from pydantic import ValidationError
+
+    g = _gates()
+    with pytest.raises(ValidationError):
+        g.merge_clean = False
+
+
+def test_gate_snapshot_extra_forbid() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        GateSnapshot(merge_clean=True, unknown="bad")  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# next_state — gated transitions (ADR-008 Decision 1)
+# ---------------------------------------------------------------------------
+
+
+def test_next_state_awaiting_brief_no_brief_returns_none() -> None:
+    assert next_state(WorkflowState.AWAITING_BRIEF, _snap(), _gates()) is None
+
+
+def test_next_state_awaiting_brief_brief_exists_advances() -> None:
+    result = next_state(WorkflowState.AWAITING_BRIEF, _snap(brief_exists=True), _gates())
+    assert result == WorkflowState.AWAITING_SENIOR_PLAN
+
+
+def test_next_state_awaiting_senior_plan_no_plan_returns_none() -> None:
+    assert next_state(WorkflowState.AWAITING_SENIOR_PLAN, _snap(), _gates()) is None
+
+
+def test_next_state_awaiting_senior_plan_plan_exists_advances() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN, _snap(senior_plan_exists=True), _gates()
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_ACCEPT
+
+
+def test_next_state_awaiting_architect_accept_not_accepted_returns_none() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_ARCHITECT_ACCEPT, _snap(adr_status="proposed"), _gates()
+    )
+    assert result is None
+
+
+def test_next_state_awaiting_architect_accept_accepted_advances() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_ARCHITECT_ACCEPT, _snap(adr_status="accepted"), _gates()
+    )
+    assert result == WorkflowState.AWAITING_JUNIOR_IMPL
+
+
+def test_next_state_awaiting_junior_impl_no_commit_returns_none() -> None:
+    assert next_state(WorkflowState.AWAITING_JUNIOR_IMPL, _snap(), _gates()) is None
+
+
+def test_next_state_awaiting_junior_impl_commit_present_advances() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_JUNIOR_IMPL,
+        _snap(junior_impl_commit_present=True),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL
+
+
+def test_next_state_awaiting_pr_merge_not_merged_returns_none() -> None:
+    assert next_state(WorkflowState.AWAITING_PR_MERGE, _snap(), _gates()) is None
+
+
+def test_next_state_awaiting_pr_merge_merged_closes() -> None:
+    result = next_state(WorkflowState.AWAITING_PR_MERGE, _snap(pr_merged=True), _gates())
+    assert result == WorkflowState.CLOSED
+
+
+# ---------------------------------------------------------------------------
+# next_state — auto-triggered transitions
+# ---------------------------------------------------------------------------
+
+
+def test_next_state_plan_vs_impl_absent_returns_none() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL, _snap(plan_vs_impl_verdict="absent"), _gates()
+    )
+    assert result is None
+
+
+def test_next_state_plan_vs_impl_clean_advances_to_r0_a() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL,
+        _snap(plan_vs_impl_verdict="clean"),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_R0_A
+
+
+def test_next_state_plan_vs_impl_blocking_routes_to_architect_decision() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL,
+        _snap(plan_vs_impl_verdict="blocking"),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+def test_next_state_plan_vs_impl_needs_architect_routes_to_architect_decision() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL,
+        _snap(plan_vs_impl_verdict="needs_architect"),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+def test_next_state_r0_a_absent_returns_none() -> None:
+    result = next_state(WorkflowState.AWAITING_R0_A, _snap(r0_a_verdict="absent"), _gates())
+    assert result is None
+
+
+def test_next_state_r0_a_blocking_routes_to_architect_decision() -> None:
+    result = next_state(WorkflowState.AWAITING_R0_A, _snap(r0_a_verdict="blocking"), _gates())
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+def test_next_state_r0_a_needs_architect_routes_to_architect_decision() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_R0_A, _snap(r0_a_verdict="needs_architect"), _gates()
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+def test_next_state_r0_a_clean_merge_clean_advances_to_pr_merge() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_R0_A,
+        _snap(r0_a_verdict="clean"),
+        _gates(merge_clean=True),
+    )
+    assert result == WorkflowState.AWAITING_PR_MERGE
+
+
+def test_next_state_r0_a_clean_merge_conflict_routes_to_architect_decision() -> None:
+    result = next_state(
+        WorkflowState.AWAITING_R0_A,
+        _snap(r0_a_verdict="clean"),
+        _gates(merge_clean=False),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+# ---------------------------------------------------------------------------
+# record_override — ADR-008 Decision 10 + 11
+# ---------------------------------------------------------------------------
+
+
+def test_record_override_updates_state_and_appends_history() -> None:
+    original = _state()
+    override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_BRIEF,
+        to_state=WorkflowState.AWAITING_SENIOR_PLAN,
+        reason="brief was published out-of-band",
+    )
+    result = record_override(original, override)
+    assert result.state == WorkflowState.AWAITING_SENIOR_PLAN
+    assert len(result.override_history) == 1
+    assert result.override_history[0].reason == "brief was published out-of-band"
+
+
+def test_record_override_does_not_mutate_original() -> None:
+    original = _state()
+    override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_BRIEF,
+        to_state=WorkflowState.AWAITING_SENIOR_PLAN,
+        reason="test",
+    )
+    record_override(original, override)
+    assert original.state == WorkflowState.AWAITING_BRIEF
+    assert len(original.override_history) == 0
+
+
+def test_record_override_rework_increments_cycle() -> None:
+    original = _state(state=WorkflowState.AWAITING_ARCHITECT_DECISION, cycle=1)
+    override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_ARCHITECT_DECISION,
+        to_state=WorkflowState.AWAITING_JUNIOR_IMPL,
+        reason="rework: R0-A finding resolved",
+    )
+    result = record_override(original, override)
+    assert result.cycle == 2
+    assert result.state == WorkflowState.AWAITING_JUNIOR_IMPL
+
+
+def test_record_override_non_rework_does_not_change_cycle() -> None:
+    original = _state(state=WorkflowState.AWAITING_R0_A, cycle=2)
+    override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_R0_A,
+        to_state=WorkflowState.AWAITING_PR_MERGE,
+        reason="force-advance: R0-A author unavailable",
+    )
+    result = record_override(original, override)
+    assert result.cycle == 2
+
+
+# ---------------------------------------------------------------------------
+# parse_verdict — §4 exception payload + §5 boundary validators
+# ---------------------------------------------------------------------------
+
+
+def test_parse_verdict_clean(tmp_path: Path) -> None:
+    review = tmp_path / "R0-A.md"
+    review.write_text("---\nverdict: clean\nfindings_count:\n  red: 0\n---\nbody\n")
+    assert parse_verdict(review) == "clean"
+
+
+def test_parse_verdict_blocking(tmp_path: Path) -> None:
+    review = tmp_path / "R0-A.md"
+    review.write_text("---\nverdict: blocking\n---\nbody\n")
+    assert parse_verdict(review) == "blocking"
+
+
+def test_parse_verdict_needs_architect(tmp_path: Path) -> None:
+    review = tmp_path / "R0-A.md"
+    review.write_text("---\nverdict: needs_architect\n---\nbody\n")
+    assert parse_verdict(review) == "needs_architect"
+
+
+def test_parse_verdict_missing_file_raises(tmp_path: Path) -> None:
+    path = tmp_path / "nonexistent.md"
+    with pytest.raises(WorkflowError) as exc_info:
+        parse_verdict(path)
+    assert exc_info.value.path == path
+
+
+def test_parse_verdict_missing_frontmatter_raises(tmp_path: Path) -> None:
+    review = tmp_path / "R0-A.md"
+    review.write_text("no frontmatter here\n")
+    with pytest.raises(WorkflowError, match="missing YAML frontmatter"):
+        parse_verdict(review)
+
+
+def test_parse_verdict_missing_verdict_key_raises(tmp_path: Path) -> None:
+    review = tmp_path / "R0-A.md"
+    review.write_text("---\nfindings_count:\n  red: 0\n---\nbody\n")
+    with pytest.raises(WorkflowError, match="missing required key 'verdict'") as exc_info:
+        parse_verdict(review)
+    assert exc_info.value.path == review
+
+
+def test_parse_verdict_invalid_verdict_empty_raises(tmp_path: Path) -> None:
+    review = tmp_path / "R0-A.md"
+    review.write_text("---\nverdict: ''\n---\n")
+    with pytest.raises(WorkflowError):
+        parse_verdict(review)
+
+
+def test_parse_verdict_invalid_verdict_typo_raises(tmp_path: Path) -> None:
+    review = tmp_path / "R0-A.md"
+    review.write_text("---\nverdict: almost_clean\n---\n")
+    with pytest.raises(WorkflowError):
+        parse_verdict(review)
+
+
+# ---------------------------------------------------------------------------
+# evaluate_merge_clean — §3 subprocess cleanup + timeout
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_merge_clean_returns_true_when_no_conflicts() -> None:
+    mock_result = MagicMock()
+    mock_result.stdout = "some diff output\nno conflict markers here\n"
+    with patch("subprocess.run", return_value=mock_result):
+        assert evaluate_merge_clean("feature-branch") is True
+
+
+def test_evaluate_merge_clean_returns_false_when_conflicts() -> None:
+    mock_result = MagicMock()
+    mock_result.stdout = "<<<<<<< HEAD\nconflict\n=======\nother\n>>>>>>> branch\n"
+    with patch("subprocess.run", return_value=mock_result):
+        assert evaluate_merge_clean("feature-branch") is False
+
+
+def test_evaluate_merge_clean_timeout_raises_workflow_error() -> None:
+    with (
+        patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)),
+        pytest.raises(WorkflowError, match="timed out"),
+    ):
+        evaluate_merge_clean("feature-branch")
+
+
+def test_evaluate_merge_clean_os_error_raises_workflow_error() -> None:
+    with (
+        patch("subprocess.run", side_effect=OSError("git not found")),
+        pytest.raises(WorkflowError),
+    ):
+        evaluate_merge_clean("feature-branch")
