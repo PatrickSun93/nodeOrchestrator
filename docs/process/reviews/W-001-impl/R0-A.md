@@ -1,12 +1,25 @@
 ---
 task_id: W-001-impl
 round: R0-A
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
+  yellow: 0
   green: 4
 ---
+
+> **Frontmatter updated 2026-05-26 after R0-A-1 resolution.**
+> Original review (commit `e2cf573`) had `verdict: needs_architect`
+> with `yellow: 1` reflecting R0-A-1 (env-fragile test). Junior fix
+> `8af18bd` (`tests/workflow/test_integration.py` `git_repo` fixture
+> + `commit.gpgsign=false`) resolved R0-A-1; architect-partner
+> light-verified the fix in chat (379 tests green, mypy/ruff clean,
+> single-file fixture line addition, no collateral changes).
+> Frontmatter now reads `verdict: clean` so the state machine can
+> auto-advance per ADR-008 Decision 1; git history at `e2cf573`
+> preserves the original verdict for audit. The findings table below
+> describes R0-A-1 as captured at write time; it is now resolved.
+
 
 # W-001-impl R0-A review
 
