@@ -89,6 +89,7 @@ def test_state_transition_meta_frozen() -> None:
     with pytest.raises((ValidationError, TypeError)):
         m.new_state = "other"
 
+
 def test_state_transition_meta_extra_forbid() -> None:
     with pytest.raises(ValidationError):
         StateTransitionMeta(new_state="x", unknown_field="y")  # type: ignore[call-arg]
@@ -137,6 +138,7 @@ def test_regex_trigger_frozen() -> None:
     with pytest.raises((ValidationError, TypeError)):
         t.pattern = "y"
 
+
 def test_regex_trigger_extra_forbid() -> None:
     with pytest.raises(ValidationError):
         RegexTrigger(pattern="x", extra="y")  # type: ignore[call-arg]
@@ -162,6 +164,7 @@ def test_event_type_trigger_frozen() -> None:
     with pytest.raises((ValidationError, TypeError)):
         t.event_type = EventType.DECISION
 
+
 # ===========================================================================
 # StateChangeTrigger — §6
 # ===========================================================================
@@ -181,6 +184,7 @@ def test_state_change_trigger_frozen() -> None:
     t = StateChangeTrigger(target_state="x")
     with pytest.raises((ValidationError, TypeError)):
         t.target_state = "y"
+
 
 # ===========================================================================
 # Agent — §5 + §6
@@ -215,6 +219,7 @@ def test_agent_positive_cooldown_ok() -> None:
 def test_agent_frozen() -> None:
     with pytest.raises((ValidationError, TypeError)):
         _MIN_AGENT.id = "other"
+
 
 def test_agent_extra_forbid() -> None:
     with pytest.raises(ValidationError):
@@ -267,6 +272,7 @@ def test_speech_decision_frozen() -> None:
     with pytest.raises((ValidationError, TypeError)):
         d.speak = True
 
+
 def test_speech_decision_extra_forbid() -> None:
     with pytest.raises(ValidationError):
         SpeechDecision(  # type: ignore[call-arg]
@@ -297,6 +303,7 @@ def test_agent_match_record_frozen() -> None:
     with pytest.raises((ValidationError, TypeError)):
         r.loaded = False
 
+
 # ===========================================================================
 # AgentSelectionTrace — §6
 # ===========================================================================
@@ -319,6 +326,7 @@ def test_agent_selection_trace_frozen() -> None:
     t = AgentSelectionTrace(considered=[], loaded_count=0)
     with pytest.raises((ValidationError, TypeError)):
         t.loaded_count = 5
+
 
 # ===========================================================================
 # AgentSelection — §6
@@ -344,6 +352,7 @@ def test_agent_selection_frozen() -> None:
     with pytest.raises((ValidationError, TypeError)):
         sel.loaded = [_MIN_AGENT]
 
+
 # ===========================================================================
 # AgentContext — §6
 # ===========================================================================
@@ -358,6 +367,7 @@ def test_agent_context_frozen() -> None:
     ctx = AgentContext(agent=_MIN_AGENT, skill_bodies=[])
     with pytest.raises((ValidationError, TypeError)):
         ctx.skill_bodies = ["x"]
+
 
 def test_agent_context_extra_forbid_rejects_snapshot_excerpt() -> None:
     with pytest.raises(ValidationError):
@@ -403,6 +413,7 @@ def test_turn_result_frozen() -> None:
     r = TurnResult(utterances=[], total_asked=0)
     with pytest.raises((ValidationError, TypeError)):
         r.total_asked = 1
+
 
 def test_turn_result_extra_forbid() -> None:
     with pytest.raises(ValidationError):

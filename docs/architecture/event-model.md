@@ -234,6 +234,11 @@ application-layer validation won. The format exists because future code
 (should-agent-speak gating, UI rendering, decision-trace attribution)
 needs to discriminate speakers without parsing prose.
 
+**P1.4 single-point-of-truth**: `orchestrator.core.event.build_author(agent_id)` is the
+canonical constructor for `agent:<id>` strings. All dispatch and cooldown code uses it
+instead of f-string literals — defense against silent bypass on malformed author strings
+(ADR-010 D2).
+
 ## Read-API empty vs unknown
 
 Different read APIs treat "the id you asked for doesn't exist" differently,
