@@ -243,6 +243,15 @@ Plan style:
   (passive phrasing; junior may default to sequential).
 - Each parallel task still commits its own atomic; landing commit
   reconciles + runs the 5-surface scan.
+- **One atomic = one commit, one commit subject** (codified post-P1.5
+  per RC-17). If junior dispatches N parallel agents for N atomics,
+  the result MUST be N commits, each named after its specific atomic
+  (`P1.x-4: <subject>`, `P1.x-5: <subject>`, `P1.x-6: <subject>`).
+  Bundling two atomics under one commit subject (P1.5 case: `P1.5-4`
+  bundled under `P1.5-6: ...`) breaks the tracking-table → commit
+  mapping in landing commits + makes per-atomic acceptance verification
+  harder during plan-vs-impl review. Coverage is unaffected by
+  bundling; subject discipline is the constraint.
 
 **Sequential when:**
 - One task's output is another's input (schema → loader; loader → matcher).
