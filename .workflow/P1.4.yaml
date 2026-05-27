@@ -1,6 +1,6 @@
 task_id: P1.4
-state: awaiting_junior_impl
+state: awaiting_PR_merge
 cycle: 1
-last_transition_at: '2026-05-27T06:12:57.057879Z'
+last_transition_at: '2026-05-27T07:14:29.189928Z'
 override_history: []
 requires_cross_family_review: false

@@ -207,6 +207,20 @@ agent:
   output_schema: JSONSchema
 ```
 
+**P1.4 已落地**: multi-agent dispatch primitive (sequential, sync) + speaking-trigger evaluation + agent loader 已实装。
+
+- 实现位置: `src/orchestrator/agents/` (schema, loader, selection, speaking, dispatch, exceptions)
+- 加载 API: `orchestrator.agents.loader.load_agents(directory, *, models) -> (agents_dict, regex_registry)`
+- 发言权 API: `orchestrator.agents.speaking.should_agent_speak(agent, snapshot, *, current_event, regex_registry) -> SpeechDecision`
+- 调度 API: `orchestrator.agents.dispatch.dispatch_turn(agents, room, event, *, event_store, llm_router, available_skills, regex_registry) -> TurnResult`
+- `StateTransitionMeta` + `build_author` 加入 `orchestrator.core.event`(ADR-010 D1/D2)
+- 发言触发器三种: `RegexTrigger` / `EventTypeTrigger` / `StateChangeTrigger`(ADR-010 D1)
+- Cooldown: `cooldown_seconds` × 1000.0 ms→s 转换,单点在 `speaking.py`(ADR-010 D2)
+- Dispatch order: alphabetical by `agent.id`(ADR-011 D3 revised; no priority field in P1.4)
+- LLM exception: log + skip + continue; event_store exception: propagates unwrapped(ADR-011 D7/D7-b)
+- Agent YAML: `config/agents/skeptic.yaml`, `config/agents/prober.yaml`
+- 召唤决策(summon)推迟到 P1.5+
+
 ### 4.5 跨房间记忆
 
 四类,**严格分开**:
@@ -306,7 +320,7 @@ skills/
 - 匹配 API: `orchestrator.skills.decision.decide_skills_for_context(agent_id, room_type, room_state, *, available_skills) -> SkillSelection`
 - Sample skills: `config/skills/general/research-decomposition.md`, `config/skills/engineering/debugging-workflow.md`
 - 完整 10-skill 库为 downstream content task (P1.3 之后)
-- Agent-runtime 集成 (skills 进入 context window) 为 P1.4
+- Agent-runtime 集成 (skills 进入 context window): `build_agent_context` 在 P1.4 已实装 — `decide_skills_for_context` → `AgentContext.skill_bodies`
 
 ### 5.4 工具集
 
