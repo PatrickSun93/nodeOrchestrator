@@ -1,19 +1,24 @@
 ---
 task_id: P1.4
 round: R0-B-cross-family
-verdict: clean
+verdict: needs_architect
 findings_count:
-  red: 0
-  yellow: 0
-  green: 10
+  red: 2
+  yellow: 4
+  green: 4
 verdict_history:
   - verdict: needs_architect
     at_commit: 466e98d
     findings_count: { red: 2, yellow: 5, green: 3 }
+    note: Proxy-lens review (Claude subagent with contrarian prompt)
   - verdict: clean
     at_commit: 33977db
     findings_count: { red: 0, yellow: 0, green: 10 }
     note: All 2 🔴 + 5 🟡 absorbed into senior revision per architect-routing ack-all-leans (7 findings → 7 new 🟢).
+  - verdict: needs_architect
+    at_commit: f7b14d2
+    findings_count: { red: 2, yellow: 4, green: 4 }
+    note: True cross-family review (DeepSeek V4 Pro, 2026-05-27). New runtime-integration findings not covered by proxy-lens review. See "True cross-family R0-B review" section below.
 ---
 
 # P1.4 R0-B cross-family review (proxy lens — see Caveat below)
@@ -193,3 +198,138 @@ biases that I can prompt around; biases I am structurally unable to
 neutralize (e.g., systematic over-confidence in Pydantic-validation
 approaches, blind spots around what production multi-agent systems
 actually break on) need a genuinely different model family to surface.
+
+---
+
+# True cross-family R0-B review (DeepSeek V4 Pro — 2026-05-27)
+
+**Reviewer:** DeepSeek V4 Pro session (genuinely different model family from
+Claude). This review is independent of the proxy-lens review above — it
+reads the same artifacts fresh and may re-surface or confirm prior findings
+from a different cognitive angle.
+
+**Date:** 2026-05-27
+**Artifacts reviewed (post-revision state):**
+- `docs/process/senior-plans/P1.4.md` (revised, post R0-A + proxy-R0-B absorption)
+- `docs/decisions/ADR-010-should-agent-speak-contract.md` (revised)
+- `docs/decisions/ADR-011-multi-agent-dispatch-sequential.md` (revised)
+- `src/orchestrator/core/event.py` (current main, TYPED_METADATA + EventStore.append)
+- `src/orchestrator/core/event_store.py` (append exception surface)
+
+**Prior reviews already absorbed (not re-litigated):**
+- Proxy R0-B 🔴#1 (cooldown ms-vs-s) → ADR-010 D2 `/1000.0` conversion site ✅
+- Proxy R0-B 🔴#2 (StateTransitionMeta missing) → P1.4-4 scope add ✅
+- Proxy R0-B 🟡#3 (Agent.priority drop) → ADR-011 D3 revised ✅
+- Proxy R0-B 🟡#4 (sync not async) → ADR-011 D1 revised ✅
+- Proxy R0-B 🟡#5 (build_agent_context honest framing) → ADR-011 D4 revised ✅
+- Proxy R0-B 🟡#6 (snapshot_excerpt drop) → removed from AgentContext ✅
+- Proxy R0-B 🟡#7 (snapshot-per-turn latency named) → ADR-011 Consequences ✅
+- R0-A Y1 (AgentMatchRecord.reason drop) ✅
+- R0-A Y2 (ADR-011 D7 LLM exception policy) ✅
+- R0-A Y3 (regex_registry separate from frozen model) ✅
+
+---
+
+## Cross-family lens calibration
+
+DeepSeek-family models differ from Claude-family on several cognitive axes
+relevant to this review:
+
+- **Higher sensitivity to runtime failure modes.** Claude tends to trust
+  that "if the types are right, the runtime is right." DeepSeek is more
+  likely to ask "what happens when this specific call fails at 3am."
+- **Lower tolerance for signature-dishonesty.** Claude accepts "add the
+  parameter now, implement it later" as forward-compat. DeepSeek views
+  unused parameters in a shipped function as a false signal.
+- **Higher weight on integration-surface correctness.** Claude reviews
+  individual modules well; DeepSeek is more likely to catch gaps at the
+  seams between modules (loader → dispatch → speak, dispatch → event_store).
+- **Similar closed-enum discipline appreciation.** Both families agree on
+  Principle 4; no systematic bias difference here.
+
+Where this review disagrees with the proxy R0-B above, it's because the
+proxy was a Claude model simulating a contrarian — structurally limited in
+which biases it can escape. This review has different structural biases
+and may therefore surface different findings.
+
+---
+
+## Findings
+
+| # | Severity | File:section | What's wrong | What should be |
+|---|----------|-------------|--------------|----------------|
+| 1 | 🔴 | ADR-011 §D7 (LLM exception); plan P1.4-8 (line 283-300) | **No failure path for `event_store.append()` inside `dispatch_turn`.** ADR-011 D7 covers LLM call failures exhaustively (log+skip+continue, with 3 considered alternatives). But after a successful LLM call, `dispatch_turn` calls `event_store.append(event)` to persist the utterance (plan line 294). `EventStore.append()` can raise: `RoomNotFoundError`, `InvalidParentError`, `MetadataValidationError`, and `sqlite3.OperationalError` (disk I/O, database locked). The LLM cost is already sunk (the model generated the response), but the utterance can't be persisted. Unlike the LLM-failure case where continuing to the next agent preserves multi-perspective, an event-store failure means the system's single source of truth is unavailable — continuing to dispatch MORE agents burns more LLM budget for events that also can't be persisted. | Add to ADR-011 D7 scope (or as D7-b): event-store append failure **aborts the turn** (raise, don't continue). The rationale is different from the LLM-failure case: LLM failure is per-agent (other agents' work is independent); event-store failure is per-turn (no agent's work can be persisted). The test in P1.4-8 should add a §3 cleanup variant: mock `event_store.append` to raise `sqlite3.OperationalError` on agent A's utterance; assert the exception propagates (does not continue to agent B); assert no further LLM calls are made. |
+| 2 | 🔴 | ADR-011 §D2+D7; plan P1.4-8 acceptance | **All-agents-fail produces zero utterances with no contract for the caller.** ADR-011 D7 says "skip that agent's utterance append; continue to next agent." If ALL agents' LLM calls fail (rate-limit cascade, fallback-chain exhaustion, API outage), `dispatch_turn` returns `[]`. This is tested (P1.4-8 "no-agent-speaks" test covers the trigger-mismatch case, but the all-agents-LFAIL case is NOT the same — in the trigger-mismatch case, zero agents were ASKED to speak; in the all-fail case, N agents were asked, N failed, and the returned `[]` is indistinguishable from "nobody wanted to speak." The caller (room runtime, P1.5+) cannot tell the difference between "nothing to say" and "everything broke." | Add to `dispatch_turn` return shape or to an out-of-band signal: either (a) return a richer type than `list[Event]` (e.g., a `TurnResult` with `utterances: list[Event]` + `failed_agents: list[str]` + `total_asked: int`), or (b) document in ADR-011 D7 that the caller MUST check logs for the WARNING-level messages emitted by the exception handler. Option (b) is cheaper for P1.4 but creates a silent dependency on log observation. I recommend (a) with a minimal `TurnResult` Pydantic model — adds one type, one §6 test, and makes the all-fail case programmatically detectable. The plan P1.4-8 already acknowledges the return type; extending it to a small struct is a low-cost pre-emptive fix. |
+| 3 | 🟡 | plan P1.4-6 §5 push-back #4; P1.4-6 acceptance | **`decide_agents_for_room(room_type, room_state, *, available_agents)` takes two parameters it ignores.** P1.4 returns every agent regardless of room_type or room_state. The plan acknowledges this as "P1.4 simple shape" but keeps the full signature. A function that takes parameters it ignores trains readers to not trust function signatures — "does this param matter? did someone forget to implement it? was it for a future PR that never landed?" When P1.5+ adds real room-type filtering, the function body changes — adding the parameters THEN (additive signature change) costs nothing in P1.4 (zero callers outside the agents module). | Remove `room_type` and `room_state` from the P1.4 signature. Add them in P1.5+ alongside the filtering logic. The function's docstring should say "P1.4: returns all available agents. P1.5+: filters by agent.applies_to.room_types." The plan's §5 push-back #4 can stay as-is (the deferral reasoning is correct); the signature just shouldn't pretend the filtering exists yet. |
+| 4 | 🟡 | plan P1.4-5 loader + P1.4-8 dispatch + P1.4-7 speak | **regex_registry threading across three modules has no §1 integration test.** The compiled regex patterns flow: P1.4-5 loader creates `dict[(agent_id, trigger_index), Pattern]` → P1.4-8 `dispatch_turn` receives it as kwarg → P1.4-7 `should_agent_speak` reads `regex_registry[(agent.id, trigger_index)]`. The plan has §1 cross-module tests for skill bodies (source≠sink) and utterance authorship, but nothing verifying that a Pattern compiled at load-time is the same object used at match-time. A regression where someone refactors the loader to return uncompiled patterns (or where the registry key shape changes) would silently break `should_agent_speak`'s regex evaluation at runtime (KeyError on registry miss, caught by the plan's "registry-miss raises SpeakingTriggerError" test — but that test uses a manually constructed registry, not the one from the loader). | Add one §1 integration test in `tests/agents/test_integration.py` (or P1.4-8's test_dispatch.py): load a real agent yaml with a regex trigger via `load_agents`, extract the regex_registry, construct a matching event, call `should_agent_speak` with that registry, assert `speak=True` with the correct `matched_trigger_index`. This verifies the key shape `(agent_id, trigger_index)` matches between loader producer and speak consumer. |
+| 5 | 🟡 | plan P1.4-4 schema; ADR-011 §D4 | **`AgentContext` naming is misleading for P1.4 scope.** The model contains `agent: Agent` + `skill_bodies: list[str]`. The name "Context" implies the full prompt-ready context, but it's missing room state, event snapshot excerpt, agent persona templating, and autonomy-aware tool context — all named in ADR-011 D4 as future additions. When P1.5+ adds those, either `AgentContext` grows (fine) or a sibling type appears ("which one is the REAL context?"). Consider renaming to `AgentSkillContext` for P1.4 to be honest about scope. If the name stays, add a docstring field explicitly listing what's deferred to P1.5+. |
+| 6 | 🟡 | ADR-010 §D2 (line 147-148); `core/event.py` author validation | **Cooldown lookup depends on exact author string format with no defense-in-depth.** ADR-010 D2 step 1 searches for `author == f"agent:{agent.id}"` in the snapshot. The author format `agent:<id>` is validated by regex at the application layer (`is_valid_author` in `core/event.py:275-278`), not at SQLite CHECK constraint level (ADR-001 D11 explicitly chose application-layer-only). If a future bug (or direct SQL insert bypassing the API, or a hand-rolled Event constructor in a test fixture) produces `author="agent: skeptic"` (space), `author="Agent:skeptic"` (capital A), or `author="agent:skeptic "` (trailing space), the string comparison silently fails — the agent is never found in cooldown, and speaks more often than intended. This is not a P1.4 bug (it's a pre-existing ADR-001 design choice), but P1.4 is the **first code path where this lookup has real behavioral consequences** (agent speaks with incorrect cooldown gating). | No schema change needed. Add a comment in `should_agent_speak`'s cooldown section: "Depends on exact `f'agent:{agent.id}'` format matching `Event.author`. See `core/event.py:is_valid_author` for the canonical format. A malformed author string (e.g., extra whitespace, wrong case) causes silent cooldown bypass." The P1.4-7 table-driven tests should include one case with a correctly-formatted author string to lock the format expectation. Optionally: add a `build_author(agent_id: str) -> str` helper in `core/event.py` and use it in both the Event constructor and `should_agent_speak` — single point of format truth. |
+| 7 | 🟢 | ADR-011 §D1 (sync `def`) | **Sequential + synchronous dispatch is the correct choice for P1.4.** Confirmed. The R0-B 🟡#4 revision (async→sync) was correct. The additive-upgrade path is documented with zero migration cost. |
+| 8 | 🟢 | ADR-011 §D3 (no `Agent.priority`) | **Dropping `Agent.priority` from P1.4 is correct.** Confirmed. The 2-agent sample with disjoint triggers has no real conflict surface. The P1.5+ additive migration cost is small (one field + one default + tune 2 yamls). |
+| 9 | 🟢 | ADR-010 §D6 (separate regex_registry) | **Separate registry over `model_post_init` private attr is the right trade.** Confirmed. Frozen-model invariant preservation is load-bearing for the project's discipline; threading one extra kwarg through two function signatures is cheap insurance. |
+| 10 | 🟢 | ADR-011 §D7 (log+skip+continue) | **Per-agent LLM exception policy is the correct default.** Confirmed. Abort-on-first-failure would violate multi-perspective Principle 6. The 3 considered alternatives are correctly rejected for P1.4. Finding #2 above (all-agents-fail) is about the *caller's* ability to detect the failure, not about the intra-turn policy itself. |
+
+---
+
+## Cross-checks (post-revision state)
+
+- [x] ADR-010 D2 `/1000.0` conversion site explicitly inscribed ✅
+- [x] `StateTransitionMeta` scoped into P1.4-4 ✅
+- [x] ADR-011 D1 `def` not `async def` ✅
+- [x] ADR-011 D3 alphabetical-id only, no `Agent.priority` ✅
+- [x] ADR-011 D4 honest framing (no oversold justification) ✅
+- [x] `AgentContext.snapshot_excerpt` dropped ✅
+- [x] `AgentMatchRecord.reason` dropped ✅
+- [ ] **event_store failure path** — absent (finding #1)
+- [ ] **all-agents-fail caller contract** — absent (finding #2)
+- [ ] **regex_registry §1 threading test** — absent (finding #4)
+- [x] Three new constitutional tests correctly specified
+- [x] No new `LLMPurpose` values; `AGENT_RESPONSE` + `caller_agent_id` reused
+- [x] No new `EventType` values (turn boundaries correctly deferred)
+- [x] P1.4-4 `StateTransitionMeta` addition is one-direction `core → agents` (correct)
+
+---
+
+## Cross-model comparison with proxy R0-B
+
+The proxy R0-B (Claude with contrarian prompt) caught **unit-consistency** and
+**missing-schema-dependency** bugs — both are specification-level errors that
+are visible from the document text alone. These are real and were correctly
+absorbed.
+
+This true cross-family review catches **runtime-integration** gaps —
+event-store failure, all-agents-fail detectability, registry threading,
+signature honesty. These are harder for any Claude-family review to surface
+because Claude's cognitive style trusts that "if the contracts are right,
+the integration is right." DeepSeek is structurally more likely to ask
+"what happens when this specific call fails at runtime."
+
+The two 🔴 findings here do NOT invalidate the absorbed revisions. They
+address failure paths the revised ADRs and plan still don't cover. Both
+are fixable with small scope additions (one new exception-handling branch
+in dispatch_turn for #1; one TurnResult struct for #2).
+
+---
+
+## Net assessment (true cross-family)
+
+**Verdict: `needs_architect`** — 2 🔴 / 4 🟡 / 4 🟢
+
+The two 🔴 findings are runtime-failure gaps that become production bugs the
+first time SQLite has an I/O error or an API outage cascades across all agents.
+Both are fixable with targeted scope additions to P1.4-8 (dispatch_turn) +
+ADR-011 D7 extension. Neither requires re-opening the absorbed proxy-R0-B
+revisions.
+
+The four 🟡 findings share a theme: **the plan trusts its abstractions more
+than it verifies their integration.** The signature-dishonesty (#3), missing
+registry threading test (#4), misleading naming (#5), and silent format
+dependency (#6) are all "correct on paper, fragile at the seams." They won't
+break the build but they will break the first junior who refactors the loader
+without re-reading all three module specs.
+
+**Recommendation:** address 🔴#1 and 🔴#2 before architect Accept on
+ADR-010 + ADR-011. The 🟡 cluster can be resolved via plan revision
+(acceptance criteria additions) without ADR changes. Architect routing
+expected within the same acceptance window as the already-absorbed proxy
+R0-B revisions.
