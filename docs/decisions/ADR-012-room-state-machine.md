@@ -1,6 +1,6 @@
 # ADR-012: Per-RoomType State Machine + `agent.applies_to` Filtering
 
-**Status:** Proposed — 2026-05-27
+**Status:** Accepted — 2026-05-27
 **Scope:** Governs the per-`RoomType` state machine implemented in
 `src/orchestrator/rooms/`, the `next_room_state` pure decision
 function, the `agent.applies_to.room_types` / `room_states` Pydantic
