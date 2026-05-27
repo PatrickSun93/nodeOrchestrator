@@ -1,6 +1,6 @@
 # ADR-011: Multi-Agent Dispatch — Sequential, Snapshot-Per-Turn
 
-**Status:** Proposed — 2026-05-26
+**Status:** Proposed — 2026-05-26 (revised 2026-05-27 absorbing R0-A-on-plan + R0-B-cross-family architect-routing — see `docs/process/reviews/P1.4/architect-routing.md`)
 **Scope:** Governs the per-turn primitive that decides which loaded
 agent(s) speak on a given event and how their LLM calls are
 dispatched. Inscribes the sequential-dispatch model for P1.4 (with
@@ -67,16 +67,35 @@ Hard requirements:
 
 ## Decisions
 
-### 1. Sequential dispatch for P1.4 — concurrent is additive in P1.5+
+### 1. Sequential + synchronous dispatch for P1.4 — concurrent is a future re-shape (P1.5+)
 
-P1.4 dispatches agents **sequentially within a turn**: for each
-loaded agent (in conflict-resolution order from Decision 3), the
-dispatch primitive calls `should_agent_speak`; for every agent that
-returns `speak=True`, it calls the LLM (via the existing
-`LLMRouter` with `LLMPurpose.AGENT_RESPONSE` and the agent's
-`llm_config`); each successful response appends one `utterance`
-event to the stream before the next agent's LLM call begins. Total
-parallelism per turn: one LLM call in flight at a time.
+P1.4 dispatches agents **sequentially and synchronously within a
+turn**: for each loaded agent (in conflict-resolution order from
+Decision 3), the dispatch primitive calls `should_agent_speak`;
+for every agent that returns `speak=True`, it calls the LLM (via
+the existing `LLMRouter` with `LLMPurpose.AGENT_RESPONSE` and the
+agent's `llm_config`); each successful response appends one
+`utterance` event to the stream before the next agent's LLM call
+begins. Total parallelism per turn: one LLM call in flight at a
+time. The dispatch primitive is a regular **`def`** (not `async
+def`); no `asyncio` surface introduced in P1.4.
+
+**Signature:** `def dispatch_turn(agents, room, current_event, *,
+event_store, llm_router, available_skills, regex_registry) ->
+list[Event]`. Synchronous; returns the list of appended utterance
+events.
+
+**`async def` rejected for P1.4 (2026-05-27 revision per R0-B 🟡#4
+routing).** Original draft kept the signature `async def` as a
+"concurrent-ready" interface. R0-B correctly challenged: the
+project has no `asyncio.run(...)` surface anywhere; introducing
+`asyncio` color to satisfy a hypothetical P1.5+ concurrent upgrade
+is strictly larger blast radius than re-shaping sync→async when
+concurrency actually lands. `dispatch_turn` has exactly one
+expected caller (the room runtime, not yet written); changing both
+the body and the signature when concurrency lands touches one
+call-site at most. **Pick sync now; re-shape both signature and
+body in the P1.5+ commit that adds real concurrency.**
 
 Rejected alternative: concurrent dispatch (multiple agents'
 `should_agent_speak` calls in parallel, then concurrent LLM calls
@@ -101,11 +120,12 @@ all complete). Reasons for sequential:
 - **Run > polish (project value)**: sequential is the simplest
   thing that demonstrates the multi-agent decision contract.
 
-The dispatch primitive's signature stays async-shaped (`async def
-dispatch_turn(...)`), so a P1.5+ amendment can replace the body
-with concurrent semantics without changing callers. The interface
-is concurrent-ready; the implementation is sequential. This is the
-additive-upgrade path.
+**Additive-upgrade path (P1.5+):** the commit that introduces
+concurrent dispatch will re-shape `dispatch_turn` from `def` to
+`async def` AND update its body to use `asyncio.gather`. Callers
+update in the same commit. Since P1.4 ships zero callers (the
+room runtime is P1.5+ scope), no migration cost is incurred at
+the moment of the re-shape.
 
 ### 2. Per-turn snapshot semantics
 
@@ -140,27 +160,36 @@ This rule resolves brief Boundary (c). Implications:
   changes between turns. Turn-as-atomic-unit is the right
   abstraction.
 
-### 3. Conflict resolution — priority then alphabetical id
+### 3. Conflict resolution — alphabetical by `agent.id` (P1.4); `Agent.priority` added additively in P1.5+
 
 When multiple loaded agents return `speak=True` for the same
-`current_event`, dispatch order is:
+`current_event`, dispatch order is **alphabetical by `agent.id`
+ascending**. Deterministic; portable across OSes; greppable.
 
-1. **Priority ascending** (`agent.priority`, int 0-100, default 50,
-   lower = earlier). Author-tunable per agent yaml.
-2. **Alphabetical by `agent.id`** as tiebreaker (deterministic;
-   portable across OSes; greppable).
-
-All speak=True agents dispatch within the turn — the priority order
-controls the **order of their utterance events** in the stream, not
-which agents are skipped. This matches handoff §4.4's "multi-
+All speak=True agents dispatch within the turn — the order controls
+the **order of their utterance events** in the stream, not which
+agents are skipped. This matches `handoff.md` §4.4's "multi-
 perspective by default" (Principle 6) — we don't silently drop
 agents.
 
-`Agent.priority` is a new schema field (P1.4-4 schema landing). Its
-inclusion is a senior judgement: parallels `Skill.priority` (ADR-009
-D6), tunable conflict resolution becomes essential once 3+ agents
-are loaded per room (P1.5+), and the migration cost of adding it
-later is higher than the cost of including it now.
+**`Agent.priority` is NOT in P1.4 (2026-05-27 revision per R0-B 🟡#3
+routing).** Original draft included `Agent.priority: int = 50` for
+author-tunable conflict resolution. R0-B correctly challenged: P1.4
+ships 2 agents (skeptic + prober) with disjoint speaking-triggers
+(prober on user_input regex; skeptic on hypothesis event_type) — no
+real conflict surface exists. The Skill.priority precedent (ADR-009
+D6) argues the OTHER way than the original draft framing: ADR-009
+added `Skill.priority` BECAUSE real ordering needs existed in the
+current skill set. P1.4's 2-agent sample doesn't have those needs.
+Adding `Agent.priority` later when the first real conflict appears
+(P1.5+ with 3+ agents per room) is one field + one default +
+migration across 2 (now-existing) agent yamls — cheap.
+
+**Additive-upgrade path:** `Agent.priority: int = 50, ge=0, le=100`
+lands as an additive Pydantic field in the P1.5+ commit that
+introduces multi-agent conflict. Existing skeptic + prober yamls
+get the default; new agents tune. ADR-011 D3 is revised in that
+commit to "priority asc, alphabetical id as tiebreak."
 
 ### 4. Skill integration via `build_agent_context` function
 
@@ -187,19 +216,25 @@ speaking agent before invoking that agent's LLM call. The function
 is pure (skill selection is pure per ADR-009), takes the per-turn
 snapshot as an explicit parameter (Decision 2 invariant), and
 returns an `AgentContext` Pydantic model carrying the skills'
-bodies plus any other per-turn data (system prompt, persona, recent
-event excerpts) the LLM call needs.
+bodies (P1.4 body is just `[s.body for s in selected]` —
+deliberately trivial).
 
-Rationale for separate function (rather than inline in dispatch):
-
-- **Testable in isolation.** "Given this agent and this room state,
-  what skills enter context?" is a pure-function unit test, no
-  dispatch mocking required.
-- **Reusable.** A future "preview what agent X would see" UI
-  (P2-ish) can call `build_agent_context` without dispatching.
-- **Single concern per function.** Dispatch primitive decides
-  *which agent speaks*; context-builder decides *with what
-  background*. Mixing concerns makes both harder to change.
+**Honest framing (2026-05-27 revision per R0-B 🟡#5 routing).** The
+original draft justified `build_agent_context` with "testable in
+isolation" + "reusable for a future preview UI (P2-ish)" + "single
+concern per function." R0-B correctly challenged: the testability
+argument is partially tautological (the underlying
+`decide_skills_for_context` is already pure-function tested in
+P1.3); the preview-UI justification is speculative-future-callsite;
+the function in P1.4 does one trivial thing (`[s.body for s in
+selected]`). **The honest rationale: the function is kept for
+symmetry with the dispatch-vs-context concern separation and as a
+future-callsite hook, even though the P1.4 body is trivial.** The
+separation pays its keep in P1.5+ when context-building grows
+(snapshot excerpting, persona templating, autonomy-aware tool
+context for operator agent); landing the seam now means those
+P1.5+ additions don't reshape `dispatch_turn`. **The trade is
+honest: small-now-with-symmetry vs inlined-now-with-refactor-then.**
 
 Skill→agent integration is one-directional (dispatch calls
 context-builder calls `decide_skills_for_context`; skills package
@@ -257,16 +292,78 @@ When P1.5+ upgrades to concurrent dispatch, §2 expands to true
 race-condition tests; this ADR's §2 test remains valid (snapshot
 invariant is preserved under concurrent — same contract).
 
+### 7. Per-agent LLM exception policy — log + skip + continue turn (added 2026-05-27 per R0-A Y2 routing)
+
+When an agent's LLM call raises an exception during `dispatch_turn`,
+the dispatch primitive **logs the exception via the project logger
+convention** (`logging.getLogger('orchestrator.agents.dispatch').warning(...)`
+with `agent_id` + the exception type/message), **skips that agent's
+utterance append** (no partial event written to the stream), and
+**continues to the next agent in the conflict-resolution order**.
+The turn completes with the surviving agents' utterances appended.
+
+Cancellation semantics differ: `asyncio.CancelledError` (or any
+`BaseException`-not-`Exception`) propagates unwrapped per Python
+asyncio convention — turn aborts cleanly; no partial state.
+
+**Rationale.** Multi-perspective Principle 6 (`handoff.md` §3.1)
+says we don't silently drop agents. A model-side failure for one
+agent (rate-limit, network blip, fallback exhaustion) is exactly
+the kind of operational failure that shouldn't lose the rest of
+the turn — losing prober because skeptic's Opus call rate-limited
+defeats the multi-perspective design. The user's question still
+gets prober's answer; skeptic re-tries on the next turn (cooldown
+honored against the missing utterance — agent without prior
+utterance is not in cooldown per ADR-010 D2).
+
+**Considered alternatives:**
+
+- **Abort-on-first-failure.** One agent fails → whole turn aborts;
+  no utterances appended. Rejected: loses surviving agents' work;
+  amplifies operational failures into user-facing dead-turns;
+  inconsistent with multi-perspective Principle 6.
+- **Abort-on-N-failures.** Configurable threshold (e.g., abort if
+  2+ agents fail in one turn). Rejected for P1.4: introduces a
+  tunable that has no clear default and no operational data to
+  guide tuning. Defer until P1.5+ ops surface the need.
+- **Per-agent retry within the turn.** Catch exception → retry once
+  via fallback model → if still fails, skip. Rejected for P1.4: the
+  `LLMRouter` already implements model-level fallback per agent's
+  `llm_config.fallback_chain` (P1.1); a higher-level retry on top
+  is redundant. If `LLMRouter` exhausts the fallback chain, the
+  exception is a real "no model in this agent's stack can serve" —
+  retrying the same call doesn't help.
+
+**Log specification.** `logging.getLogger('orchestrator.agents.dispatch').warning(
+"agent %s LLM call failed; skipping turn (continuing): %s",
+agent.id, exc)`. **No `print`. No stdout.** Honors the
+P1.3-R0-A-1 + W-002-3 logging convention precedent.
+
+**Test coverage (P1.4-8 acceptance).** §3 cleanup test: mock
+`LLMRouter.call` to raise on agent A; assert no event for A is
+appended; assert subsequent agent B's `should_agent_speak` is still
+called; assert B's utterance IS appended; assert the captured log
+contains "agent skeptic LLM call failed". Also: `asyncio.CancelledError`
+mid-flight (if `LLMRouter.call` ever becomes async — currently sync)
+re-raises unwrapped.
+
 ## Considered alternatives
 
 ### A. Concurrent dispatch (`asyncio.gather` on all speak=True agents)
 
 Multiple agents' LLM calls fire in parallel; results appended in
-priority order after all complete. **Rejected** (Decision 1):
+alphabetical-id order after all complete. **Rejected** (Decision 1):
 larger test surface, no perf need at P1.4 scale, introduces
 project's first true concurrency surface alongside the multi-agent
-contract — too much novelty at once. Path preserved as P1.5+
-additive upgrade behind the same `async def dispatch_turn` signature.
+contract — too much novelty at once. **The original draft preserved
+this as an "additive upgrade behind the same `async def` signature."
+The 2026-05-27 revision (R0-B 🟡#4) rejected the async-shape-now
+framing** — the project has no asyncio surface to amortize against;
+introducing one for a hypothetical P1.5+ caller is strictly larger
+blast radius than re-shaping sync→async when concurrency actually
+lands. P1.4 dispatch is `def`; P1.5+ concurrent upgrade re-shapes
+both signature and body in the same commit (one call-site at most;
+the room runtime that calls `dispatch_turn` is itself P1.5+ scope).
 
 ### B. Live event-stream reads (agent B sees agent A within same turn)
 
@@ -310,28 +407,37 @@ shape.
 
 ### F. Drop `Agent.priority` field; rely on alphabetical id alone
 
-**Rejected** (Decision 3): alphabetical id is portable but not
-author-controllable. Adding priority later requires schema migration
-across all agent yamls. Including it now matches Skill.priority
-(ADR-009 D6) and keeps the schema consistent.
+**Adopted in 2026-05-27 revision (per R0-B 🟡#3 routing).** The
+original draft rejected this alternative; R0-B correctly challenged
+that argument. P1.4 ships 2 agents with disjoint speaking-triggers
+— there is no real conflict for `Agent.priority` to resolve.
+Skill.priority precedent (ADR-009 D6) actually argues the other
+way: that field was added because real ordering needs existed in
+the current skill set; P1.4's 2-agent sample doesn't have those
+needs. The migration cost when P1.5+ surfaces real multi-agent
+conflict is small (one Pydantic field + one default + tune 2 now-
+existing agent yamls). See Decision 3 (revised) for the additive-
+upgrade path.
 
 ## Consequences
 
 **Easier:**
 
-- Sequential dispatch makes turn semantics easy to reason about:
-  one LLM call at a time, deterministic event order, no race
-  conditions.
+- Sequential + synchronous dispatch makes turn semantics easy to
+  reason about: one LLM call at a time, deterministic event order,
+  no race conditions, no `asyncio` color in the project.
 - Snapshot-per-turn makes multi-agent debugging tractable: every
   agent's decision is reproducible from the snapshot + the agent's
   configuration.
-- Separate `build_agent_context` function is unit-testable without
-  dispatch mocking.
+- Separate `build_agent_context` function preserves the dispatch-vs-
+  context concern separation; P1.5+ context-building additions
+  (snapshot excerpting, persona templating, autonomy-aware tool
+  context) don't reshape `dispatch_turn`.
 - The three new constitutional tests catch layering slips at PR
   time (analogous to W-001-impl Y1 pattern paying off).
-- P1.5+ upgrade to concurrent dispatch is additive: change the
-  body, not the interface. The decision is documented as the
-  reverse path.
+- D7 LLM-exception policy means one agent's failure doesn't lose
+  the whole turn — preserves multi-perspective Principle 6 under
+  realistic operational conditions.
 
 **Harder:**
 
@@ -343,14 +449,24 @@ across all agent yamls. Including it now matches Skill.priority
   doesn't agent B see agent A in the same turn?" — the answer is
   in this ADR and in ADR-010 D5, but it's not the most intuitive
   default.
-- `Agent.priority` adds a schema field that's MVP-overengineering
-  for 2 agents. The cost is one int field + one validator + one
-  test; the alternative (migration to add it later) is higher.
-- The dispatch primitive's body is async-shaped even though the
-  P1.4 body is sequential. Reading the code, "why is this async
-  if it doesn't await anything concurrent" is a real question
-  newcomers ask. Mitigated by a docstring note pointing at this
-  ADR.
+- **User-facing latency cost of snapshot-per-turn (2026-05-27
+  revision per R0-B 🟡#7 routing):** snapshot-per-turn means agent
+  B's reaction to agent A's utterance is delayed by one turn — the
+  user sees A's response → user replies → only NOW B reacts to A's
+  earlier hypothesis/observation. For a 2-agent MVP this latency is
+  real and user-visible (one full round-trip per cross-agent
+  reaction). The trade is determinism + turn-as-atomic-reasoning-
+  unit; the Reversibility table correctly marks this Expensive to
+  reverse. Honest naming: the rule is correct for P1.4 scope but
+  buys atomicity at the cost of cross-agent reaction latency.
+  When P1.5+ user-experience work surfaces "skeptic should chain
+  off prober's hypothesis in the same turn," that's the prompt to
+  re-evaluate Boundary (c).
+- P1.5+ concurrent dispatch upgrade re-shapes both signature AND
+  body (`def` → `async def` AND body adds `asyncio.gather`). Since
+  P1.4 has zero callers (no room runtime yet), the re-shape cost is
+  one commit. Mitigated by the deliberate-not-incidental sync
+  choice in D1.
 
 **Neutral:**
 
@@ -369,12 +485,13 @@ across all agent yamls. Including it now matches Skill.priority
 
 | Decision | 6-month reversal cost |
 |---|---|
-| 1. Sequential dispatch (concurrent additive) | **Low** — the additive-upgrade path is explicit. P1.5+ replaces the body of `dispatch_turn` with concurrent semantics without changing callers. The reversal is a code change, not an ADR rewrite. |
-| 2. Per-turn snapshot semantics | **Expensive** — switching to live reads breaks turn atomicity, breaks every multi-agent test, breaks cooldown determinism. Pick this once. |
-| 3. Priority + alphabetical id conflict resolution | **Low** — alternative orderings are loader-code changes; agent yamls keep `priority` field. Removing `Agent.priority` requires migration across all yamls. |
-| 4. `build_agent_context` separate function | **Low** — inlining is a refactor; downstream callers update. The separate-function shape preserves testability. |
+| 1. Sequential + sync dispatch (concurrent re-shapes both body and signature in P1.5+) | **Low** — zero callers exist in P1.4; the P1.5+ commit that adds concurrency re-shapes both `def → async def` AND body together. One commit, one call-site at most (room runtime, itself P1.5+). |
+| 2. Per-turn snapshot semantics | **Expensive** — switching to live reads breaks turn atomicity, breaks every multi-agent test, breaks cooldown determinism. Pick this once. Cross-agent reaction latency is the named cost (Consequences). |
+| 3. Alphabetical-id conflict resolution (no `Agent.priority` in P1.4) | **Low** — `Agent.priority: int = 50` lands additively in the P1.5+ commit that surfaces real conflict; existing skeptic + prober yamls get the default; new agents tune. Migration touches 2 yamls at most. |
+| 4. `build_agent_context` separate function | **Low** — inlining is a refactor; downstream callers update. The separate-function shape preserves the dispatch-vs-context concern seam for P1.5+ context-building additions. |
 | 5. Three constitutional tests for layering | **Trivial** — adding more tests is additive. Removing means accepting a layering risk we deliberately rejected. |
 | 6. §2 sequential-snapshot test only | **Low** — when concurrent dispatch lands (P1.5+), §2 tests expand additively. The snapshot test remains valid because the snapshot invariant persists under concurrent. |
+| 7. Per-agent LLM exception policy (log + skip + continue) | **Low** — switching to abort-on-first-failure is a one-line change in `dispatch_turn` (re-raise instead of catch). Abort-on-N-failures is additive (counter + threshold). The current policy is the "preserve multi-perspective" default; alternatives ship later if ops surface need. |
 
 ## References
 

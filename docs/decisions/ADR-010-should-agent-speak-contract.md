@@ -1,6 +1,6 @@
 # ADR-010: `should_agent_speak` Decision Contract
 
-**Status:** Proposed — 2026-05-26
+**Status:** Proposed — 2026-05-26 (revised 2026-05-27 absorbing R0-A-on-plan + R0-B-cross-family architect-routing — see `docs/process/reviews/P1.4/architect-routing.md`)
 **Scope:** Governs the per-turn pure-function decision of whether a
 given agent speaks on a given turn: `should_agent_speak(agent,
 event_stream_snapshot, *, current_event) -> SpeechDecision`.
@@ -76,6 +76,12 @@ real agent need:
 - `state_change` — matches when the current event is a
   `state_transition` event AND the room's new state matches a target
   value. Used for "room enters research state, prober speaks."
+  **Depends on `StateTransitionMeta(new_state: str)` typed
+  metadata** (added to `core/event.py` `TYPED_METADATA` in P1.4-4
+  per R0-B 🔴#2 routing; closes the un-typed-metadata gap that made
+  this trigger type ship-incomplete in the original draft). The
+  trigger evaluation reads `current_event.metadata.new_state` (typed
+  field access; not `metadata["new_state"]` dict access).
 
 Adding a fourth trigger type (e.g., `multi_agent_disagreement` for
 arbiter agents in P1.5+) requires an ADR amendment + a constitutional
@@ -109,14 +115,42 @@ SpeakingTrigger = Annotated[
 
 `agent.cooldown_seconds` is enforced against the agent's most recent
 `utterance` event in the **same event-stream snapshot** the trigger
-evaluation reads. Mechanics:
+evaluation reads.
+
+**Unit-conversion contract (added in 2026-05-27 revision, R0-B 🔴#1):**
+`agent.cooldown_seconds` is human-readable seconds (yaml unit; `int`,
+seconds, ≥0). `event.timestamp` is project-internal milliseconds
+(`TimestampMs = NewType("TimestampMs", int)` per `core/event.py`,
+populated by `now_ms() = int(time.time() * 1000)`). **The conversion
+site is `should_agent_speak`'s cooldown evaluation, named here so
+the impl cannot silently get it wrong:**
+
+```python
+elapsed_s = (current_event.timestamp - last_utterance.timestamp) / 1000.0
+if elapsed_s < agent.cooldown_seconds:
+    cooldown_remaining_s = float(agent.cooldown_seconds) - elapsed_s
+    return SpeechDecision(speak=False, reason="cooldown_active",
+                          cooldown_remaining_s=cooldown_remaining_s, ...)
+```
+
+Yaml stays human-readable seconds. Event stream stays ms. The `/1000.0`
+in the comparison + the `cooldown_remaining_s: float` field both
+match the seconds-as-float human-readable unit. The cost of getting
+this wrong is silent (a `cooldown_seconds=60` agent would block for
+60ms not 60s; tests that don't sleep wouldn't catch it). The fix is
+load-bearing for the contract to ship correctly. P1.4-7's
+`should_agent_speak` body MUST inscribe this exact `/1000.0` site
+per ADR cross-reference.
+
+**Mechanics (in order):**
 
 1. Find the most recent event in the snapshot where `author ==
    f"agent:{agent.id}"` and `type == EventType.UTTERANCE`.
-2. Compute `elapsed = current_event.timestamp - last_utterance.timestamp`.
-3. If `elapsed < agent.cooldown_seconds`, the agent is in cooldown;
+2. Compute `elapsed_s = (current_event.timestamp - last_utterance.timestamp) / 1000.0`.
+3. If `elapsed_s < agent.cooldown_seconds`, the agent is in cooldown;
    `should_agent_speak` returns `SpeechDecision(speak=False,
-   reason="cooldown_active", ...)` regardless of trigger match.
+   reason="cooldown_active", cooldown_remaining_s=...)` regardless
+   of trigger match.
 4. If no prior utterance exists in the snapshot, the agent is not
    in cooldown.
 
@@ -217,9 +251,22 @@ The agent loader validates `speaking_triggers` at agent-load time:
   union — Pydantic does this automatically).
 - Every `RegexTrigger.pattern` compiles via `re.compile()` at load
   time (a malformed regex caught at agent-load, not at first
-  dispatch). The compiled pattern is cached on the trigger (mutable
-  cache on a frozen model — handled via a separate registry in the
-  loader, OR via `model_post_init` storing on a private attribute).
+  dispatch). The compiled pattern is cached in a **separate loader-
+  level registry** (chosen explicitly in the 2026-05-27 revision per
+  R0-A Y3 routing). The registry shape is `dict[(agent_id: str,
+  trigger_index: int), re.Pattern[str]]`; the loader populates it
+  at agent-load time. `should_agent_speak` accepts the registry via
+  a keyword-only parameter (threaded through `dispatch_turn` per
+  ADR-011 D1). **Rationale for separate registry over
+  `model_post_init` private attribute:** frozen-model semantics are
+  load-bearing for the project's invariant discipline; storing a
+  mutable compiled-pattern as a private attribute on a `frozen=True,
+  extra="forbid"` model bypasses the discipline enforced elsewhere
+  (Pydantic models in `core/`, `autonomy/`, `skills/`, `workflow/`
+  are all frozen-with-no-mutable-private-state). The separate
+  registry preserves the frozen-model invariant at the small cost
+  of threading the registry as a parameter through `dispatch_turn`
+  → `should_agent_speak`.
 - Every `EventTypeTrigger.event_type` is in the `EventType` enum
   (Pydantic enforces).
 - Every `StateChangeTrigger.target_state` is a non-empty string
@@ -314,11 +361,12 @@ in surprising ways.
 
 **Neutral:**
 
-- The frozen-model + compiled-regex-cache requires either a
-  separate registry or a `model_post_init` private-attribute write.
-  Pydantic supports both; the loader picks one and a constitutional
-  test pins the choice. Pure ergonomic difference; no behavior
-  impact.
+- The frozen-model + compiled-regex-cache uses a **separate
+  loader-level registry** (D6, revised pick). Threading the registry
+  through `dispatch_turn` → `should_agent_speak` adds one keyword-only
+  parameter to two function signatures. Pure ergonomic cost; no
+  behavior impact. The alternative (`model_post_init` private attr)
+  was explicitly rejected to preserve frozen-model invariants.
 - Trigger evaluation is O(N) per agent per turn where N is the
   number of triggers. For MVP agents (3-5 triggers each, 2-5 agents
   per room) this is bounded; at scale the per-turn cost is
