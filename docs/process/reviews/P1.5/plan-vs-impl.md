@@ -1,11 +1,18 @@
 ---
 task_id: P1.5
 round: plan-vs-impl
-verdict: blocking
+verdict: clean
 findings_count:
-  red: 1
+  red: 0
   yellow: 1
-  green: 3
+  green: 4
+verdict_history:
+  - verdict: blocking
+    date: 2026-05-27
+    summary: 1 🔴 R1 (test_state_transition_event_before_utterance fails in full-suite due to get_room_events unstable secondary ordering on ms-tied events) + 1 🟡 Y1 (commit 5d21370 bundles P1.5-4 under P1.5-6 subject)
+  - verdict: clean
+    date: 2026-05-27
+    summary: R1 fixed by 307a8fa per senior lean (a) — get_room_events ORDER BY changed from (timestamp, id) to (timestamp, rowid); root-cause diagnosis (random-UUID id is not insertion-order) matches review §R1 hypothesis exactly. 677 tests green; mypy strict + ruff clean. Y1 carried forward to retro as candidate forcing function (not blocking).
 ---
 
 # Review: P1.5 — plan-vs-impl
@@ -18,7 +25,27 @@ findings_count:
 
 ---
 
-## 🔴 BLOCKING (1 finding)
+## Post-fix update (2026-05-27)
+
+Junior pushed `307a8fa R1: fix get_room_events unstable ordering — ORDER BY rowid replaces id` per senior lean (a). Verdict bumped `blocking → clean` per RC-10 codified protocol; verdict_history preserved in frontmatter.
+
+**R1 resolution verification:**
+
+- Diagnosis matches review §R1 hypothesis: junior identified `id` is a random `evt_<uuid4.hex>` UUID, so `ORDER BY ... id ASC` was effectively random within ms ties. The `RoomRuntime` reliably appends state_transition + utterance within the same millisecond, making the ambiguity concrete.
+- Fix is **senior lean (a)**: `core/event_store.py` `get_room_events` ORDER BY changed from `(timestamp ASC, id ASC)` to `(timestamp ASC, rowid ASC)`. SQLite `rowid` is the implicit auto-increment B-tree key — insertion-order-stable.
+- Applied consistently: same fix in `_all_events` debug query.
+- Bonus refactor: covering index renamed `idx_events_room_ts_id` → `idx_events_room_ts` (one column dropped; rowid is the implicit B-tree key so SQLite uses it for the tiebreaker at no extra storage cost).
+- **Signature unchanged**: `get_room_events` return type + arguments identical. No downstream caller changes. The fix benefits every consumer of `get_room_events` (current P1.4 dispatch reads; future P1.6 snapshot mechanics; future P2 UI).
+- Junior commit body carries Q1-Q4 + tracking table per project convention.
+- Full suite: 677 tests green. ruff + mypy strict clean across 100 source files.
+
+**Y1 disposition:** carried forward to P1.5 retrospective as candidate forcing function "commit subject must enumerate all bundled task IDs whose content is in the commit body." Not blocking; architect rules at retro.
+
+The post-fix impl is **ready for R0-A dispatch**. State-machine auto-trigger expectation: with frontmatter `verdict: clean`, the harness routes `awaiting_senior_plan_vs_impl → awaiting_R0_A` per ADR-008 D1.
+
+---
+
+## 🔴 BLOCKING (1 finding) — RESOLVED in 307a8fa
 
 ### R1 — `test_state_transition_event_before_utterance` fails in full-suite
 
