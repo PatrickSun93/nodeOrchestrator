@@ -256,6 +256,17 @@ class AutonomyRefusalMetadata(_BaseMeta):
     refusal_reason: Literal["unknown_tool"]
 
 
+class StateTransitionMeta(_BaseMeta):
+    """Metadata for ``state_transition`` events.
+
+    Carries the target state name after a room state-machine transition.
+    Required by ``StateChangeTrigger`` evaluation in
+    ``should_agent_speak`` (ADR-010 D1, ADR-011 D5 R0-B 🔴#2).
+    """
+
+    new_state: str = Field(min_length=1)
+
+
 TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.HYPOTHESIS: HypothesisMeta,
     EventType.DECISION: DecisionMeta,
@@ -265,6 +276,7 @@ TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.TOOL_RESULT: ToolResultMeta,
     EventType.AUTONOMY_DECISION: AutonomyDecisionMetadata,
     EventType.AUTONOMY_REFUSAL: AutonomyRefusalMetadata,
+    EventType.STATE_TRANSITION: StateTransitionMeta,
 }
 
 
@@ -281,6 +293,19 @@ def is_valid_author(author: str) -> bool:
     `<id>` is one or more of `[a-zA-Z0-9_-]`.
     """
     return bool(_AUTHOR_PATTERN.fullmatch(author))
+
+
+def build_author(agent_id: str) -> str:
+    """Return the canonical Event.author string for an agent.
+
+    Single point of truth for the ``agent:<id>`` format.  Raises
+    ``ValueError`` on empty ``agent_id`` (defense-in-depth — the
+    returned string still passes ``is_valid_author`` at Event
+    construction; this guard catches the caller's bug earlier).
+    """
+    if not agent_id:
+        raise ValueError("agent_id must be non-empty")
+    return f"agent:{agent_id}"
 
 
 # ---------------------------------------------------------------------------
