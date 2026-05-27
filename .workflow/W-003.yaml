@@ -1,6 +1,6 @@
 task_id: W-003
-state: awaiting_senior_plan_vs_impl
+state: awaiting_PR_merge
 cycle: 1
-last_transition_at: '2026-05-27T21:02:34.641913Z'
+last_transition_at: '2026-05-27T21:31:09.108619Z'
 override_history: []
 requires_cross_family_review: false
