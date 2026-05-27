@@ -1,11 +1,11 @@
 ---
 task_id: P1.4
 round: R0-B-cross-family
-verdict: needs_architect
+verdict: clean
 findings_count:
-  red: 2
-  yellow: 4
-  green: 4
+  red: 0
+  yellow: 0
+  green: 14
 verdict_history:
   - verdict: needs_architect
     at_commit: 466e98d
@@ -19,6 +19,10 @@ verdict_history:
     at_commit: f7b14d2
     findings_count: { red: 2, yellow: 4, green: 4 }
     note: True cross-family review (DeepSeek V4 Pro, 2026-05-27). New runtime-integration findings not covered by proxy-lens review. See "True cross-family R0-B review" section below.
+  - verdict: clean
+    at_commit: 608eef5
+    findings_count: { red: 0, yellow: 0, green: 14 }
+    note: All 2 🔴 + 4 🟡 from DeepSeek section absorbed into senior revision per architect-routing-deepseek ack-all-leans (6 findings → 6 new 🟢; 4 prior 🟢 confirmations stand; 4 original-proxy 🟢 still in count). Fourth project use of frontmatter-as-live-signal pattern (RC-10 codification trigger reached).
 ---
 
 # P1.4 R0-B cross-family review (proxy lens — see Caveat below)
@@ -333,3 +337,41 @@ ADR-010 + ADR-011. The 🟡 cluster can be resolved via plan revision
 (acceptance criteria additions) without ADR changes. Architect routing
 expected within the same acceptance window as the already-absorbed proxy
 R0-B revisions.
+
+---
+
+## Verdict bump 2026-05-27 (RC-10 protocol — 4th project use)
+
+**Bumped `needs_architect → clean` after second-routing absorption at commit `608eef5`.** All 6 DeepSeek findings (2 🔴 + 4 🟡) absorbed faithfully per `docs/process/reviews/P1.4/architect-routing-deepseek.md` (commit `5b6c96f`). Architect-partner verified the senior revision (Bash grep of ADR-010 + ADR-011 + plan against each routed action):
+
+| DeepSeek finding | Routing | Absorption evidence |
+|---|---|---|
+| 🔴#1 event_store failure | D7-b: abort the turn | ADR-011 §7-b new section (line 363); P1.4-8 acceptance "On `event_store.append` exception" branch (line 351) |
+| 🔴#2 all-agents-fail caller contract | TurnResult Pydantic model | P1.4-4 schema `class TurnResult` (line 208); ADR-011 D1 signature returns `TurnResult` (line 83-91); D7 references `TurnResult.failed_agents` (line 347-352) |
+| 🟡#3 unused signature params | drop room_type/room_state from P1.4 | P1.4-6 signature now `decide_agents_for_room(*, available_agents)` (line 303, 309); docstring lists P1.5+ additive expansion |
+| 🟡#4 regex_registry §1 threading test | add integration test | P1.4-8 §1 cross-module integration test for regex_registry threading (line 356); P1.4-9 e2e references it |
+| 🟡#5 AgentContext naming | docstring deferrals (not rename) | AgentContext docstring "P1.5+ adds (additively, per future ADRs)" (line 188) |
+| 🟡#6 cooldown author format | build_author helper in core/event.py | P1.4-4 schema adds `def build_author(agent_id: str) -> str` (line 246); P1.4-7 cooldown step uses `build_author(agent.id)` (line 326); ADR-010 D2 mechanics step 1 references the helper (line 147-153) |
+
+All 6 findings reclassified as 🟢 in post-bump count (6 new 🟢 + 4 prior DeepSeek-confirmation 🟢 + 4 original proxy-section 🟢 = 14 total 🟢; original 🔴/🟡 finding bodies preserved above for audit).
+
+**Fourth project use of the frontmatter-as-live-signal pattern** (RC-10):
+1. W-001-impl R0-A (commit `96c1469`) — first use, post-fix verdict bump
+2. W-002 R0-A-on-plan (commit `440ab3b`) — post-revision bump
+3. P1.4 R0-A + R0-B proxy (commit `047daa4`) — first dual-review-bump
+4. **This bump (commit pending)** — first dual-routing-on-same-file bump (proxy absorbed at `33977db`; true cross-family absorbed at `608eef5`; both routings preserved in `verdict_history`)
+
+RC-10 has now hit graduation threshold (P1.3 retro §4: "if a third clean-absorption cycle exercises the pattern, RC-10 graduates for codification"). Codification target: `docs/process/reviews/README.md` "Post-resolution verdict-bump protocol" section. Defer to W-003 brief or architect-partner-direct addendum.
+
+**Captured for RC-15 (new candidate)**: dual-lens R0-B for shape-change is project standard going forward — proxy-lens first (catches doc-level errors), true cross-family second (catches integration errors). Two routing passes on the same task is acceptable when the lens count genuinely doubles coverage. Worth ~$2 + 30-40 min architect time per shape-change task; not warranted for mechanical refinement (W-002, W-002.5).
+
+## State-machine sequencing post-bump
+
+With this verdict bump:
+- `R0-B-cross-family.md` verdict: clean ✓
+- `R0-A-on-plan.md` verdict: clean ✓ (unchanged; DeepSeek findings were R0-B-only)
+- P1.4 ADR Accepts unblocked from review-side; gated only on:
+  - (a) Substrate distance test per `docs/process/distance-test.md`
+  - (b) Multi-ADR ergonomics via W-002.5 land (optional — architect can also accept 1-2 overrides during ADR Accepts if W-002.5 not yet impl'd)
+
+Verified by Bash spot-check of revised files; full proof in the commit diff at `608eef5`.
