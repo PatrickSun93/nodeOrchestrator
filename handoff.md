@@ -152,6 +152,17 @@ class Room:
     project_id: Optional[str]
 ```
 
+**P1.5 已落地**: Research room 状态机 + RoomRuntime + `AgentAppliesTo` 两层过滤已实装。
+
+- 实现位置: `src/orchestrator/rooms/` (state_machine, runtime, templates, exceptions)
+- 状态机 API: `orchestrator.rooms.state_machine.next_room_state(room, snapshot, *, current_event) -> RoomStateTransition | None`
+- 运行时 API: `orchestrator.rooms.runtime.run_turn(room, event, *, available_agents, available_skills, event_store, llm_router, regex_registry) -> TurnResult`
+- Research 状态链: `setup → exploration → divergence → convergence → snapshot_pending → closed`(事件触发; 非 LLM)
+- Agent 过滤: `Agent.applies_to: AgentAppliesTo` — `room_types` load-time 过滤 + `room_states` dispatch-time 过滤; `["*"]` sentinel = 匹配全部
+- `StateTransitionMeta` 扩展: 新增 `prior_state` 字段(ADR-012 D6)
+- `room.state` NOT mutated by `run_turn` — 状态变化通过 `state_transition` event 持久化
+- 4 个 constitutional tests: `rooms/` 层不引入 LLM + 依赖方向守护(core/agents/skills 不 import rooms)
+
 ### 4.3 自治度评分
 
 ```python
@@ -291,6 +302,14 @@ class ProjectArchive:
 | 做研究 | research | 全部 5 个 |
 | 评审代码 | code_review | operator, skeptic |
 | 验证想法 | idea_validation | 全部 5 个 + 强 skeptic |
+
+**P1.5 已落地**: 5 个房间模板已实装为 Python 数据结构。
+
+- 实现位置: `src/orchestrator/rooms/templates.py`
+- 模板常量: `ROOM_TEMPLATES: dict[RoomType, RoomTemplate]`
+- 加载 API: `orchestrator.rooms.templates.load_room(room_type, available_agents) -> tuple[Room, list[str]]`
+- Research 模板: 声明 5 个 agents (alphabetical) + `default_initial_state="setup"`; operator/divergence_mapper/logger 缺失时 graceful skip
+- 4 个 scaffold 模板: `declared_agents=[]`, `default_initial_state="setup"`
 
 ### 5.3 Skill 库(MVP 10 个)
 

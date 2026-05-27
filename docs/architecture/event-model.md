@@ -128,7 +128,7 @@ Defer adding it until the use case is concrete.
 | `tool_failed` | A tool call that errored | open |
 | `escalation` | Question kicked back to the user | open |
 | `summary_snapshot` | Structured snapshot of room state | open |
-| `state_transition` | Room state machine moved | open |
+| `state_transition` | Room state machine moved | yes |
 | `milestone` | Marked-as-significant moment | open |
 | `term_definition` | A term being explicitly defined for this room | open |
 | `decision_pivot` | Reframe — "we were asking the wrong question" | open |
@@ -138,6 +138,13 @@ Defer adding it until the use case is concrete.
 "Strict" types validate via Pydantic at append time. "Open" types accept
 `dict[str, Any]` for now and will be tightened (with an ADR) when their
 shape is reliably needed by code.
+
+**`state_transition` metadata** (`StateTransitionMeta` — P1.5, ADR-012 D6):
+- `prior_state: str` — the room state before the transition (min_length=1)
+- `new_state: str` — the room state after the transition (min_length=1)
+
+`StateTransitionMeta` is the first producer of `state_transition` events (P1.5);
+`room.state` is NOT mutated — the transition is fully captured in the event log.
 
 ## Append-only enforcement (three layers)
 
