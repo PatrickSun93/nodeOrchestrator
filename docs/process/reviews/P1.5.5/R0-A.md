@@ -1,14 +1,53 @@
 ---
 task_id: P1.5.5
 round: R0-A
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 8
+  yellow: 0
+  green: 9
+verdict_history:
+  - verdict: needs_architect
+    at_commit: dcc98a4
+    findings_count: { red: 0, yellow: 1, green: 8 }
+    note: Y1 (RC-19 bundled-fix mislabel — Z-suffix is timezone-defensive hardening, not the actual task-scoping fix the override commit named). Audit-trail-integrity issue, not code correctness.
+  - verdict: clean
+    at_commit: pending-this-bump
+    findings_count: { red: 0, yellow: 0, green: 9 }
+    note: Y1 routed δ per architect ("use UTC works. I am fine with any time lol") at architect-routing-R0-A.md. Defensive Z-suffix stays in tree; mislabel preserved as audit-trail-only confusion; actual RC-19 task-scoping fix stays queued for W-004 brief per c4e247d override intent. 9th project use of RC-10 verdict-bump protocol; 3rd under codified reviews/README.md section.
 ---
 
 # P1.5.5 R0-A review (architect-partner lens)
+
+> **Verdict bump 2026-05-27 (RC-10 codified protocol, 9th project use, 3rd codified):**
+> Architect routed Y1 → δ at `architect-routing-R0-A.md` ("use UTC works.
+> I am fine with any time lol"). Spot-check verified:
+>
+> - **Y1 absorbed via δ**: defensive Z-suffix hardening (`strftime
+>   "%Y-%m-%dT%H:%M:%SZ"`) stays in tree as-is; landing commit body +
+>   senior plan-vs-impl §G7 narrative also stay as-is. The mislabel
+>   ("RC-19 fix" framing for what is actually timezone-defensive
+>   hardening, not the task-scoping fix the override comment named)
+>   is accepted as audit-trail-only confusion; the corrective record
+>   lives in this review file + the routing artifact.
+> - **Actual RC-19 stays queued for W-004 brief** per the original
+>   architect override comment at `c4e247d` ("queued for W-004 brief").
+>   Design options (branch presence vs. subject prefix vs. file-touch
+>   filter) enumerated in Y1 alternative β; W-004 is the venue.
+>
+> Y1 reclassified as 🟢 G9 documenting the δ absorption (the routing
+> decision itself is the proof of resolution; absorbed-as-accepted is
+> the audit record). Verdict bumps `needs_architect → clean`
+> (0🔴 / 0🟡 / 9🟢; 8 prior 🟢 + 1 new 🟢 from Y1 → δ).
+>
+> **9th project use of frontmatter-as-live-signal pattern**; **3rd
+> under the codified protocol** (`reviews/README.md` post-`6365cce`;
+> W-003 R0-A-on-plan was 1st codified; P1.5.5 R0-A-on-plan was 2nd).
+> **First δ routing on an architect-partner R0-A 🟡 in 4 cycles** —
+> datapoint for retro: discipline gradient permits ack-without-action
+> when finding is audit-trail-only + architect judges cost > value.
+>
+
 
 | Field | Value |
 |---|---|
