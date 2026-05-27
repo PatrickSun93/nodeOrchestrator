@@ -1,14 +1,58 @@
 ---
 task_id: P1.5.5
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 8
+  yellow: 0
+  green: 10
+verdict_history:
+  - verdict: needs_architect
+    at_commit: f69d367
+    findings_count: { red: 0, yellow: 2, green: 8 }
+    note: Y1 (test_integration.py fixture extension unaddressed) + Y2 (tools.yaml 3-delta-from-brief elided as "values match") — "pre-investigation gap at plan-revision boundary" pattern, 4th + 5th cumulative instances (P1.5 Y1 + W-003 Y1+Y2 prior).
+  - verdict: clean
+    at_commit: pending-this-revision
+    findings_count: { red: 0, yellow: 0, green: 10 }
+    note: Y1 + Y2 absorbed per architect routing (both → α) at routing commit f3c966d. Senior corrected reviewer's speculative `ModelCapability` symbol → actual `Capability` via grep verification (R0-A "senior decides verification path" clause). 8th project use of RC-10 verdict-bump protocol; 2nd under codified `reviews/README.md` section (1st was W-003 R0-A-on-plan).
 ---
 
 # P1.5.5 R0-A-on-plan review (architect-partner lens)
+
+> **Verdict bump 2026-05-27 (RC-10 codified protocol, 8th project use, 2nd codified):**
+> Senior absorbed architect routing at this revision commit (Y1 → α;
+> Y2 → α per `architect-routing.md` at `f3c966d`). Spot-check verified:
+>
+> - **Y1 absorbed**: plan §2 P1.5.5-1 acceptance gains the
+>   `tests/agents/test_integration.py` fixture-extension bullet —
+>   `_make_model` replaced by caps-aware variant per `_CAPS_BY_MODEL`
+>   mapping; `_models_for_config()` extended to include
+>   `claude_code_haiku_45` + `qwen_mlx_30b`. **Senior correction**:
+>   import path is `from orchestrator.llm.types import Capability`
+>   (verified `src/orchestrator/llm/types.py:71`); routing-artifact
+>   sketch's `ModelCapability` symbol does not exist in the codebase
+>   (grep returned 0 hits). Per routing's "senior decides verification
+>   path" clause, senior used `Capability`. Plan §5 S3 also expanded
+>   to cover the parallel `test_integration.py` impact (originally
+>   only named `test_loader.py`).
+> - **Y2 absorbed**: plan §5 #7 rewritten — replaces single-paragraph
+>   "values match" claim with explicit 3-delta table (`web_fetch:
+>   brief 9 vs .example 10`; `log_event: brief 10 vs .example 8`;
+>   `run_tests: brief 8 vs .example 9`) + defense clause (`.example`
+>   wins per earlier ADR-005 D2 architect-approval; usage-based
+>   re-tune is P1.5+ territory; promotion verbatim keeps audit trail
+>   clean). P1.5.5-2 stays rename + delete (no value-touching).
+>
+> Y1 + Y2 reclassified as 🟢 G9 + G10 (the absorption itself is the
+> proof; "pre-investigation gap at plan-revision boundary" pattern
+> closed for this cycle). Verdict bumps `needs_architect → clean`
+> (0🔴 / 0🟡 / 10🟢; 8 prior 🟢 + 2 new 🟢 from Y1+Y2 absorption).
+>
+> **8th project use of frontmatter-as-live-signal pattern**; **2nd
+> under the codified protocol** (`reviews/README.md` post-`6365cce`;
+> W-003 R0-A-on-plan was 1st codified use). ADR-013 untouched (both
+> Y findings were plan-only per routing artifact decision §4).
+>
 
 | Field | Value |
 |---|---|
