@@ -228,3 +228,34 @@ halt + `git status` 看清 + 拉取 / stash → 然后 act。**不在 stale chec
 **Workflow state machine 自检**:
 如果 `.workflow/{task-id}.yaml` 的 state 和现实矛盾(eg state 说 awaiting_senior_plan
 但 senior-plans/{task-id}.md 已经存在),halt + surface to architect。**不自动修复**。
+
+---
+
+# Plan task parallelism — direct junior to dispatch parallel agents
+
+When a plan contains independent atomic tasks (no sequential
+dependency, no shared-file edit conflict), **explicitly direct the
+junior to dispatch them as parallel agents** to accelerate development.
+Plan style:
+
+- §3 (Execution order) names parallel sets explicitly: e.g.
+  "P1.x-N and P1.x-M run as parallel agents" — not just "any order"
+  (passive phrasing; junior may default to sequential).
+- Each parallel task still commits its own atomic; landing commit
+  reconciles + runs the 5-surface scan.
+
+**Sequential when:**
+- One task's output is another's input (schema → loader; loader → matcher).
+- Tasks edit the same file (concurrent edits → merge conflicts).
+- Interface freeze precedes implementation (P1.2-C2 pattern).
+
+**Parallel when:**
+- Independent modules / files touched (e.g., schema in `agents/`,
+  separate test files in `tests/agents/`, doc updates in `docs/`).
+- Distinct atomic commits, no shared mutable state.
+
+**Default for plans with 4+ atomic tasks**: identify the parallel /
+sequential split in §3 explicitly. Junior may still serialize if
+session/operational constraints require, but the senior plan should
+name the parallelism opportunity. Wall-time savings are real; review
+surface is unchanged (each commit is reviewed on its own merits).
