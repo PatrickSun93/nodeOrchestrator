@@ -173,14 +173,21 @@ def build_artifact_snapshot(
     reviews_dir = repo_root / "docs" / "process" / "reviews" / task_id
 
     brief_exists = (repo_root / "docs" / "process" / "architect-briefs" / f"{task_id}.md").exists()
-    senior_plan_exists = (
-        repo_root / "docs" / "process" / "senior-plans" / f"{task_id}.md"
-    ).exists()
+    senior_plan_path = repo_root / "docs" / "process" / "senior-plans" / f"{task_id}.md"
+    senior_plan_exists = senior_plan_path.exists()
     adr_status = _read_adr_status(task_id, repo_root)
     junior_impl_commit_present = _has_commit_since(state.last_transition_at, repo_root)
     plan_vs_impl_verdict = _safe_load_verdict(reviews_dir / "plan-vs-impl.md")
     r0_a_verdict = _safe_load_verdict(reviews_dir / "R0-A.md")
     pr_merged = _is_pr_merged(repo_root)
+
+    # Compute plan_has_adr for W-002-2b no-ADR routing in next_state.
+    # None = no frontmatter (legacy); False = frontmatter without adr key; True = has adr.
+    plan_fm = _read_plan_frontmatter(senior_plan_path)
+    if plan_fm is None:
+        plan_has_adr: bool | None = None
+    else:
+        plan_has_adr = "adr" in plan_fm
 
     return ArtifactSnapshot(
         brief_exists=brief_exists,
@@ -190,6 +197,7 @@ def build_artifact_snapshot(
         plan_vs_impl_verdict=plan_vs_impl_verdict,
         r0_a_verdict=r0_a_verdict,
         pr_merged=pr_merged,
+        plan_has_adr=plan_has_adr,
     )
 
 

@@ -48,6 +48,7 @@ def _snap(
     plan_vs_impl_verdict: Literal["clean", "blocking", "needs_architect", "absent"] = "absent",
     r0_a_verdict: Literal["clean", "blocking", "needs_architect", "absent"] = "absent",
     pr_merged: bool = False,
+    plan_has_adr: bool | None = None,
 ) -> ArtifactSnapshot:
     return ArtifactSnapshot(
         brief_exists=brief_exists,
@@ -57,6 +58,7 @@ def _snap(
         plan_vs_impl_verdict=plan_vs_impl_verdict,
         r0_a_verdict=r0_a_verdict,
         pr_merged=pr_merged,
+        plan_has_adr=plan_has_adr,
     )
 
 
@@ -138,6 +140,41 @@ def test_next_state_awaiting_senior_plan_no_plan_returns_none() -> None:
 def test_next_state_awaiting_senior_plan_plan_exists_advances() -> None:
     result = next_state(
         WorkflowState.AWAITING_SENIOR_PLAN, _snap(senior_plan_exists=True), _gates()
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_ACCEPT
+
+
+# ---------------------------------------------------------------------------
+# next_state — W-002-2b no-ADR routing (plan_has_adr discriminator)
+# ---------------------------------------------------------------------------
+
+
+def test_next_state_skips_accept_when_no_adr_key_in_frontmatter() -> None:
+    """plan_has_adr=False (frontmatter present, no adr key) → skip accept gate."""
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN,
+        _snap(senior_plan_exists=True, plan_has_adr=False),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_JUNIOR_IMPL
+
+
+def test_next_state_routes_through_accept_when_adr_key_present() -> None:
+    """plan_has_adr=True (frontmatter with adr key) → route through accept gate."""
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN,
+        _snap(senior_plan_exists=True, plan_has_adr=True),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_ACCEPT
+
+
+def test_next_state_legacy_no_frontmatter_routes_through_accept() -> None:
+    """plan_has_adr=None (legacy: no frontmatter) → preserve today's behavior."""
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN,
+        _snap(senior_plan_exists=True, plan_has_adr=None),
+        _gates(),
     )
     assert result == WorkflowState.AWAITING_ARCHITECT_ACCEPT
 

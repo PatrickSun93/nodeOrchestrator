@@ -34,6 +34,10 @@ class ArtifactSnapshot(BaseModel):
     plan_vs_impl_verdict: Literal["clean", "blocking", "needs_architect", "absent"]
     r0_a_verdict: Literal["clean", "blocking", "needs_architect", "absent"]
     pr_merged: bool
+    # None = legacy plan (no frontmatter) → route through awaiting_architect_accept.
+    # False = frontmatter present, no `adr` key → skip awaiting_architect_accept.
+    # True = frontmatter present with `adr` key → route through awaiting_architect_accept.
+    plan_has_adr: bool | None = None
 
 
 class GateSnapshot(BaseModel):
@@ -137,6 +141,10 @@ def next_state(
         return WorkflowState.AWAITING_SENIOR_PLAN
 
     if current == WorkflowState.AWAITING_SENIOR_PLAN and artifacts.senior_plan_exists:
+        # plan_has_adr=False: frontmatter present, no `adr` key → no-ADR task, skip
+        # accept gate (W-002-2b). plan_has_adr=None (legacy) or True → accept gate.
+        if artifacts.plan_has_adr is False:
+            return WorkflowState.AWAITING_JUNIOR_IMPL
         return WorkflowState.AWAITING_ARCHITECT_ACCEPT
 
     if current == WorkflowState.AWAITING_ARCHITECT_ACCEPT and artifacts.adr_status == "accepted":
