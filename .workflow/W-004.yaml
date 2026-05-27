@@ -1,6 +1,6 @@
 task_id: W-004
-state: awaiting_senior_plan
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-05-27T23:45:00.000000Z'
+last_transition_at: '2026-05-27T23:51:59.917085Z'
 override_history: []
 requires_cross_family_review: false
