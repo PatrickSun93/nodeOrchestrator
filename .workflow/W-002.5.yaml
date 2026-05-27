@@ -1,6 +1,6 @@
 task_id: W-002.5
-state: awaiting_junior_impl
+state: awaiting_PR_merge
 cycle: 1
-last_transition_at: '2026-05-27T05:34:51.381673Z'
+last_transition_at: '2026-05-27T06:02:19.598360Z'
 override_history: []
 requires_cross_family_review: false

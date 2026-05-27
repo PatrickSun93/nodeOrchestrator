@@ -384,6 +384,62 @@ def test_e2e_path_beta_task_with_adr_advances(git_repo: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# §1 cross-module: multi-ADR plan (W-002.5)
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_multi_adr_plan_advances_when_all_accepted(git_repo: Path) -> None:
+    """§1 cross-module: SYNTH-002.5 plan declares `adr: [ADR-098, ADR-099]`.
+    Both Proposed → state stays at awaiting_architect_accept.
+    Both Accepted → state advances to awaiting_junior_impl.
+    Source ≠ sink: task_id='SYNTH-002.5'; ADR filenames differ from task_id.
+    """
+    task_id = "SYNTH-002.5"
+    wdir = _wdir(git_repo)
+    _init_state(wdir, task_id=task_id, state=WorkflowState.AWAITING_ARCHITECT_ACCEPT)
+
+    plans_dir = git_repo / "docs" / "process" / "senior-plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    (plans_dir / f"{task_id}.md").write_text(
+        "---\ntask_id: SYNTH-002.5\nadr: [ADR-098, ADR-099]\n---\n\n# Synth Plan\n",
+        encoding="utf-8",
+    )
+
+    decisions_dir = git_repo / "docs" / "decisions"
+    decisions_dir.mkdir(parents=True, exist_ok=True)
+    adr098 = decisions_dir / "ADR-098-foo.md"
+    adr099 = decisions_dir / "ADR-099-bar.md"
+
+    # Both Proposed → state stays
+    adr098.write_text("# ADR-098\n\nStatus: Proposed\n", encoding="utf-8")
+    adr099.write_text("# ADR-099\n\nStatus: Proposed\n", encoding="utf-8")
+
+    with (
+        patch("orchestrator.workflow.cli._is_pr_merged", return_value=False),
+        patch("orchestrator.workflow.cli.evaluate_merge_clean", return_value=True),
+        patch("orchestrator.workflow.cli._has_commit_since", return_value=False),
+    ):
+        rc = _advance(git_repo, task_id)
+    assert rc == 0
+    assert read_state(wdir / f"{task_id}.yaml").state == WorkflowState.AWAITING_ARCHITECT_ACCEPT
+
+    # Both Accepted → state advances
+    adr098.write_text("# ADR-098\n\nStatus: Accepted\n", encoding="utf-8")
+    adr099.write_text("# ADR-099\n\nStatus: Accepted\n", encoding="utf-8")
+
+    with (
+        patch("orchestrator.workflow.cli._is_pr_merged", return_value=False),
+        patch("orchestrator.workflow.cli.evaluate_merge_clean", return_value=True),
+        patch("orchestrator.workflow.cli._has_commit_since", return_value=False),
+    ):
+        rc = _advance(git_repo, task_id)
+    assert rc == 0
+    s = read_state(wdir / f"{task_id}.yaml")
+    assert s.state == WorkflowState.AWAITING_JUNIOR_IMPL
+    assert s.task_id == task_id  # source ≠ sink: task_id ≠ 'ADR-098-foo.md' / 'ADR-099-bar.md'
+
+
+# ---------------------------------------------------------------------------
 # §3 atomic write: partial write never lands
 # ---------------------------------------------------------------------------
 

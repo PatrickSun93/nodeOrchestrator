@@ -394,21 +394,70 @@ def test_read_adr_status_via_plan_frontmatter_adr_not_found(tmp_path: Path) -> N
     assert _read_adr_status("SYNTH-001", tmp_path) == "none"
 
 
-def test_read_adr_status_multi_adr_list_raises(tmp_path: Path) -> None:
-    """adr: [ADR-099, ADR-100] → WorkflowError (W-003 scope). §5 boundary."""
-    p = _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-099, ADR-100]\n---\n# Plan\n")
+def test_read_adr_status_list_single_element_accepted(tmp_path: Path) -> None:
+    """adr: [ADR-098] degenerate 1-element list → 'accepted'. §5 boundary (len=1)."""
+    _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098]\n---\n# Plan\n")
+    _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
+    assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
+
+
+def test_read_adr_status_list_both_accepted(tmp_path: Path) -> None:
+    """adr: [ADR-098, ADR-099] both Accepted → 'accepted'. §5 boundary (len=2)."""
+    _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-099]\n---\n# Plan\n")
+    _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
+    _write_adr(tmp_path, "ADR-099-bar.md", "Accepted")
+    assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
+
+
+def test_read_adr_status_list_one_proposed(tmp_path: Path) -> None:
+    """adr: [ADR-098, ADR-099] one Proposed → 'proposed' (all-or-nothing)."""
+    _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-099]\n---\n# Plan\n")
+    _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
+    _write_adr(tmp_path, "ADR-099-bar.md", "Proposed")
+    assert _read_adr_status("SYNTH-001", tmp_path) == "proposed"
+
+
+def test_read_adr_status_list_one_missing(tmp_path: Path) -> None:
+    """adr: [ADR-098, ADR-099] one missing → 'none' (all-or-nothing)."""
+    _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-099]\n---\n# Plan\n")
+    _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
+    # ADR-099-*.md not written → zero matches → element contributes "none"
+    assert _read_adr_status("SYNTH-001", tmp_path) == "none"
+
+
+def test_read_adr_status_list_three_all_accepted(tmp_path: Path) -> None:
+    """adr: [ADR-098, ADR-099, ADR-100] all Accepted → 'accepted'. §5 multi-position (len=3)."""
+    _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-099, ADR-100]\n---\n# Plan\n")
+    _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
+    _write_adr(tmp_path, "ADR-099-bar.md", "Accepted")
+    _write_adr(tmp_path, "ADR-100-baz.md", "Accepted")
+    assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
+
+
+def test_read_adr_status_empty_list_raises(tmp_path: Path) -> None:
+    """adr: [] raises WorkflowError with path populated. §4 exception payload."""
+    p = _write_plan(tmp_path, "SYNTH-001", "---\nadr: []\n---\n# Plan\n")
     with pytest.raises(WorkflowError) as exc_info:
         _read_adr_status("SYNTH-001", tmp_path)
     assert exc_info.value.path == p
-    assert "W-003" in str(exc_info.value)
+    assert "empty" in str(exc_info.value).lower()
 
 
-def test_read_adr_status_multi_adr_single_element_list_raises(tmp_path: Path) -> None:
-    """adr: [ADR-099] (one-element list) still raises — list shape forbidden. §5."""
-    p = _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-099]\n---\n# Plan\n")
+def test_read_adr_status_list_non_string_element_raises(tmp_path: Path) -> None:
+    """adr: [ADR-098, 42] non-string element raises with path + element index. §4."""
+    p = _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, 42]\n---\n# Plan\n")
     with pytest.raises(WorkflowError) as exc_info:
         _read_adr_status("SYNTH-001", tmp_path)
     assert exc_info.value.path == p
+    assert "1" in str(exc_info.value)  # element index 1
+
+
+def test_read_adr_status_list_duplicate_element(tmp_path: Path) -> None:
+    """adr: [ADR-098, ADR-098] duplicate — not a raise; both elements resolve same file."""
+    _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-098]\n---\n# Plan\n")
+    _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
+    # Both elements resolve to ADR-098-foo.md → both "accepted" → aggregate "accepted"
+    assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
 def test_read_adr_status_multi_glob_match_raises(tmp_path: Path) -> None:

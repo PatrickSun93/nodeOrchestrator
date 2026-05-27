@@ -63,36 +63,79 @@ def _parse_adr_status(content: str) -> Literal["proposed", "accepted", "none"]:
     return "none"
 
 
+def _normalize_adr_refs(adr_val: list[object], plan_path: Path) -> list[str]:
+    """Validate and normalize a list-form `adr` frontmatter value to plain strings.
+
+    Raises WorkflowError if the list is empty or any element is not a non-empty string.
+    """
+    if not adr_val:
+        raise WorkflowError(
+            f"{plan_path}: empty `adr` list in frontmatter — "
+            "declared multi-ADR but specified zero ADRs",
+            path=plan_path,
+        )
+    refs: list[str] = []
+    for i, elem in enumerate(adr_val):
+        if not isinstance(elem, str):
+            raise WorkflowError(
+                f"{plan_path}: `adr` list element {i} must be a string, "
+                f"got {type(elem).__name__} ({elem!r})",
+                path=plan_path,
+            )
+        if not elem.strip():
+            raise WorkflowError(
+                f"{plan_path}: `adr` list element {i} is an empty string",
+                path=plan_path,
+            )
+        refs.append(elem.strip())
+    return refs
+
+
 def _read_adr_status(task_id: str, repo_root: Path) -> Literal["proposed", "accepted", "none"]:
     """Check ADR status via plan frontmatter (path β) or direct file lookup (fallback).
 
-    Plan-frontmatter path (W-002): reads senior-plans/{task_id}.md frontmatter for
-    an `adr: ADR-NNN` key, globs docs/decisions/ADR-NNN-*.md, and returns its status.
+    Plan-frontmatter path (W-002/W-002.5): reads senior-plans/{task_id}.md frontmatter
+    for an `adr: ADR-NNN` string or `adr: [ADR-NNN, ...]` list, globs each ADR file,
+    and returns aggregated status (all-or-nothing for lists: all Accepted → "accepted";
+    any Proposed → "proposed"; any missing → "none").
 
     Fallback: if the plan has no frontmatter or no `adr` key, reads
     docs/decisions/ADR-{task_id}.md directly (pre-W-002 backwards compat).
 
-    Raises WorkflowError if `adr` is a list (W-003 scope) or if multiple ADR
-    files match the NNN-slug prefix (authoring error).
+    Raises WorkflowError if `adr` is a non-string/non-list type; list is empty or
+    contains non-string elements; multiple ADR files match a single NNN-slug prefix.
     """
     plan_path = repo_root / "docs" / "process" / "senior-plans" / f"{task_id}.md"
     fm = _read_plan_frontmatter(plan_path)
 
     if fm is not None and "adr" in fm:
         adr_val = fm["adr"]
+        decisions_dir = repo_root / "docs" / "decisions"
         if isinstance(adr_val, list):
-            raise WorkflowError(
-                f"{plan_path}: multi-ADR-per-task not yet supported (W-003 scope); "
-                f"found `adr: {adr_val!r}`",
-                path=plan_path,
-            )
+            refs = _normalize_adr_refs(adr_val, plan_path)
+            statuses: list[Literal["proposed", "accepted", "none"]] = []
+            for ref in refs:
+                matches = sorted(decisions_dir.glob(f"{ref}-*.md"))
+                if not matches:
+                    statuses.append("none")
+                elif len(matches) > 1:
+                    raise WorkflowError(
+                        f"Multiple ADR files match {ref!r}: {[str(m) for m in matches]}",
+                        path=decisions_dir,
+                    )
+                else:
+                    statuses.append(_parse_adr_status(matches[0].read_text(encoding="utf-8")))
+            if "none" in statuses:
+                return "none"
+            if "proposed" in statuses:
+                return "proposed"
+            return "accepted"
         if not isinstance(adr_val, str):
             raise WorkflowError(
                 f"{plan_path}: `adr` field must be a string like 'ADR-099', "
                 f"got {type(adr_val).__name__}",
                 path=plan_path,
             )
-        decisions_dir = repo_root / "docs" / "decisions"
         matches = sorted(decisions_dir.glob(f"{adr_val.strip()}-*.md"))
         if not matches:
             return "none"
