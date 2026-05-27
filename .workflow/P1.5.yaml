@@ -1,6 +1,6 @@
 task_id: P1.5
-state: awaiting_architect_accept
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-05-27T16:57:19.065349Z'
+last_transition_at: '2026-05-27T17:05:19.997803Z'
 override_history: []
 requires_cross_family_review: false
