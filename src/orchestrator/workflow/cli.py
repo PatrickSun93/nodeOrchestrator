@@ -19,8 +19,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import yaml
+
 from orchestrator.workflow.exceptions import WorkflowError
-from orchestrator.workflow.io import _read_plan_frontmatter, read_state, write_state
+from orchestrator.workflow.io import _git_show, _read_plan_frontmatter, read_state, write_state
 from orchestrator.workflow.schema import OverrideEntry, TaskState, WorkflowState
 from orchestrator.workflow.transitions import (
     ArtifactSnapshot,
@@ -489,7 +491,52 @@ def cmd_verify_workspace(args: argparse.Namespace) -> int:
             + result.stdout.rstrip(),
             file=sys.stderr,
         )
+
+    # W-003-3: state-file divergence detection.
+    # For each local .workflow/*.yaml, compare content to origin/main.
+    # If file is not on origin/main (new local task) → skip silently.
+    # If content differs → warn naming the task + diverged state field.
+    wdir = Path(args.workflow_dir)
+    diverged: list[str] = []
+    if wdir.is_dir():
+        for state_file in sorted(wdir.glob("*.yaml")):
+            task_id = state_file.stem
+            origin_content = _git_show(f".workflow/{task_id}.yaml")
+            if origin_content is None:
+                continue  # new local task; not on origin/main
+            local_content = state_file.read_text(encoding="utf-8")
+            if local_content == origin_content:
+                continue
+            # Summarise: extract 'state' field from each for a brief diff hint.
+            local_state = _extract_state_field(local_content)
+            origin_state = _extract_state_field(origin_content)
+            if local_state != origin_state:
+                diverged.append(
+                    f"  {task_id}: state local={local_state!r} vs origin/main={origin_state!r}"
+                )
+            else:
+                diverged.append(f"  {task_id}: content differs from origin/main")
+
+    if diverged:
+        print(
+            "WARNING: state-file divergence detected:\n" + "\n".join(diverged),
+            file=sys.stderr,
+        )
     return 0
+
+
+def _extract_state_field(yaml_text: str) -> str:
+    """Extract the 'state' field value from a .workflow yaml string.
+
+    Returns the raw string value, or '<unknown>' if not parseable.
+    """
+    try:
+        data = yaml.safe_load(yaml_text)
+        if isinstance(data, dict):
+            return str(data.get("state", "<unknown>"))
+    except Exception:
+        pass
+    return "<unknown>"
 
 
 # ---------------------------------------------------------------------------

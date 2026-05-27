@@ -309,26 +309,32 @@ def test_override_missing_task_returns_nonzero(
 # ---------------------------------------------------------------------------
 
 
-def test_verify_workspace_clean_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
+def test_verify_workspace_clean_returns_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     fetch_result = MagicMock()
     fetch_result.returncode = 0
     status_result = MagicMock()
     status_result.stdout = ""
 
+    # tmp_path is empty — no .yaml files → divergence loop does nothing
     with patch("subprocess.run", side_effect=[fetch_result, status_result]):
-        rc = cmd_verify_workspace(_args())
+        rc = cmd_verify_workspace(_args(workflow_dir=str(tmp_path)))
     assert rc == 0
     assert capsys.readouterr().err == ""
 
 
-def test_verify_workspace_dirty_warns_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+def test_verify_workspace_dirty_warns_to_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     fetch_result = MagicMock()
     fetch_result.returncode = 0
     status_result = MagicMock()
     status_result.stdout = " M src/foo.py\n?? notes/scratch.md\n"
 
+    # tmp_path is empty — no .yaml files → divergence loop does nothing
     with patch("subprocess.run", side_effect=[fetch_result, status_result]):
-        rc = cmd_verify_workspace(_args())
+        rc = cmd_verify_workspace(_args(workflow_dir=str(tmp_path)))
     assert rc == 0
     err = capsys.readouterr().err
     assert "WARNING" in err
@@ -643,6 +649,102 @@ def test_verify_merge_readiness_malformed_frontmatter(
     err = capsys.readouterr().err
     assert "WARNING" in err
     assert "plan-vs-impl.md" in err
+
+
+# ---------------------------------------------------------------------------
+# verify-workspace state-file divergence detection (W-003-3)
+# ---------------------------------------------------------------------------
+
+_FETCH_OK = MagicMock(returncode=0)
+_STATUS_CLEAN = MagicMock(stdout="")
+
+
+def _patch_subprocess_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "subprocess.run",
+        MagicMock(side_effect=[_FETCH_OK, _STATUS_CLEAN]),
+    )
+
+
+def _make_state_yaml(state: str) -> str:
+    return f"task_id: SYNTH\nstate: {state}\ncycle: 1\n"
+
+
+def test_verify_workspace_state_file_matching_origin_no_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """State file matches origin/main exactly → no divergence warning."""
+    wdir = tmp_path / ".workflow"
+    wdir.mkdir()
+    content = _make_state_yaml("awaiting_junior_impl")
+    (wdir / "SYNTH.yaml").write_text(content, encoding="utf-8")
+    monkeypatch.setattr("orchestrator.workflow.cli._git_show", lambda rel, **_: content)
+    _patch_subprocess_clean(monkeypatch)
+    rc = cmd_verify_workspace(_args(workflow_dir=str(wdir)))
+    assert rc == 0
+    assert "divergence" not in capsys.readouterr().err
+
+
+def test_verify_workspace_state_file_diverged_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local state differs from origin/main → WARNING naming task + state fields."""
+    wdir = tmp_path / ".workflow"
+    wdir.mkdir()
+    local_content = _make_state_yaml("awaiting_junior_impl")
+    origin_content = _make_state_yaml("awaiting_senior_plan_vs_impl")
+    (wdir / "SYNTH.yaml").write_text(local_content, encoding="utf-8")
+    monkeypatch.setattr("orchestrator.workflow.cli._git_show", lambda rel, **_: origin_content)
+    _patch_subprocess_clean(monkeypatch)
+    rc = cmd_verify_workspace(_args(workflow_dir=str(wdir)))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "SYNTH" in err
+    assert "awaiting_junior_impl" in err
+    assert "awaiting_senior_plan_vs_impl" in err
+
+
+def test_verify_workspace_new_local_task_silent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """New local state file not yet on origin/main → skipped silently."""
+    wdir = tmp_path / ".workflow"
+    wdir.mkdir()
+    (wdir / "NEW-001.yaml").write_text(_make_state_yaml("awaiting_brief"), encoding="utf-8")
+    monkeypatch.setattr("orchestrator.workflow.cli._git_show", lambda rel, **_: None)
+    _patch_subprocess_clean(monkeypatch)
+    rc = cmd_verify_workspace(_args(workflow_dir=str(wdir)))
+    assert rc == 0
+    assert "divergence" not in capsys.readouterr().err
+
+
+def test_verify_workspace_mixed_clean_and_diverged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One matching + one diverged file → only the diverged one warned."""
+    wdir = tmp_path / ".workflow"
+    wdir.mkdir()
+    clean_content = _make_state_yaml("closed")
+    dirty_local = _make_state_yaml("awaiting_junior_impl")
+    dirty_origin = _make_state_yaml("awaiting_senior_plan_vs_impl")
+    (wdir / "CLEAN.yaml").write_text(clean_content, encoding="utf-8")
+    (wdir / "DIRTY.yaml").write_text(dirty_local, encoding="utf-8")
+
+    def fake_git_show(rel: str, **_: object) -> str | None:
+        if "CLEAN" in rel:
+            return clean_content
+        if "DIRTY" in rel:
+            return dirty_origin
+        return None
+
+    monkeypatch.setattr("orchestrator.workflow.cli._git_show", fake_git_show)
+    _patch_subprocess_clean(monkeypatch)
+    rc = cmd_verify_workspace(_args(workflow_dir=str(wdir)))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "DIRTY" in err
+    assert "CLEAN" not in err
 
 
 # ---------------------------------------------------------------------------
