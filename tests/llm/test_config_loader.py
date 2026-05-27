@@ -448,26 +448,26 @@ class TestExampleConfigs:
         agents_dir = EXAMPLES_DIR / "agents"
         agent_configs = {
             yaml_path.stem: load_agent_llm_config(yaml_path, models)
-            for yaml_path in sorted(agents_dir.glob("*.yaml.example"))
+            for yaml_path in sorted(agents_dir.glob("*.yaml"))
         }
         assert set(agent_configs.keys()) == {
-            "prober.yaml",
-            "skeptic.yaml",
-            "divergence_mapper.yaml",
-            "logger.yaml",
-            "operator.yaml",
+            "prober",
+            "skeptic",
+            "divergence_mapper",
+            "logger",
+            "operator",
         }
 
     def test_validate_full_example_config(self) -> None:
         """End-to-end: providers + models + 5 agent configs all load
         and pass validate_full_config. Catches doc-spec drift between
-        examples and validation rules."""
+        canonical agent yamls and validation rules."""
         providers = load_providers(EXAMPLES_DIR / "llm_providers.yaml.example")
         models = load_models(EXAMPLES_DIR / "llm_models.yaml.example", providers)
         agents_dir = EXAMPLES_DIR / "agents"
         agent_configs = {
             yaml_path.stem: load_agent_llm_config(yaml_path, models)
-            for yaml_path in sorted(agents_dir.glob("*.yaml.example"))
+            for yaml_path in sorted(agents_dir.glob("*.yaml"))
         }
         validate_full_config(providers, models, agent_configs)  # no raise
 
@@ -477,7 +477,7 @@ class TestExampleConfigs:
         can_use_orchestrator_tools()=True)."""
         providers = load_providers(EXAMPLES_DIR / "llm_providers.yaml.example")
         models = load_models(EXAMPLES_DIR / "llm_models.yaml.example", providers)
-        operator = load_agent_llm_config(EXAMPLES_DIR / "agents" / "operator.yaml.example", models)
+        operator = load_agent_llm_config(EXAMPLES_DIR / "agents" / "operator.yaml", models)
         default_profile = models.get(operator.default_model)
         assert default_profile is not None
         assert Capability.TOOLS in default_profile.capabilities
