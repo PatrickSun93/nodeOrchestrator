@@ -573,9 +573,9 @@ class TestLoadToolsConfig:
         assert renamed.exists()
         assert not path.exists()
 
-    def test_load_example_tools_yaml(self) -> None:
-        """Load the project's real tools.yaml.example — catches doc-spec drift."""
-        result = load_tools_config(EXAMPLES_DIR / "tools.yaml.example")
+    def test_load_canonical_tools_yaml(self) -> None:
+        """Load the project's real tools.yaml — catches doc-spec drift."""
+        result = load_tools_config(EXAMPLES_DIR / "tools.yaml")
         assert len(result) > 0
         for tool_id, meta in result.items():
             assert isinstance(meta, ToolMeta), f"tool {tool_id!r}: expected ToolMeta"

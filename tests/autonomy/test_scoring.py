@@ -184,9 +184,9 @@ def test_git_push_with_user_intent_lands_on_countdown_not_hard() -> None:
     The intuition "user said push to main + irreversible action → strict
     prompt" is wrong: user_intent reduces the threshold band by design.
     Hard Guards (P1.3) is the destructive-action refusal layer, not the
-    scorer's HARD_CONFIRM tier (see ADR-005 §5, ADR-006, config/tools.yaml.example:49).
+    scorer's HARD_CONFIRM tier (see ADR-005 §5, ADR-006, config/tools.yaml:49).
     """
-    git_push_rev = 1  # config/tools.yaml.example:50
+    git_push_rev = 1  # config/tools.yaml:50
     result = decide_tier(
         git_push_rev,
         _OPERATOR,
