@@ -1,6 +1,6 @@
 # ADR-013: Operator tool-dispatch contract
 
-**Status:** Proposed — 2026-05-27
+**Status:** Accepted — 2026-05-27
 **Scope:** Locks the runtime contract for converting LLM-emitted tool-call blocks into autonomy-gated event-stream entries. Governs operator-style agents (any agent with `required_capabilities: [tools]`); does not govern tool execution itself (P1.6+).
 
 ## Context
