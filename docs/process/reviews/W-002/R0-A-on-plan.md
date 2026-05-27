@@ -1,14 +1,41 @@
 ---
 task_id: W-002
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 5
+  yellow: 0
+  green: 7
+verdict_history:
+  - verdict: needs_architect
+    at_commit: e8dbfac
+    findings_count: { red: 0, yellow: 2, green: 5 }
+  - verdict: clean
+    at_commit: 818f17e
+    findings_count: { red: 0, yellow: 0, green: 7 }
+    note: Both 🟡 absorbed into senior revision per architect-routing ack-all-leans.
 ---
 
 # W-002 R0-A on plan (architect-dispatched pre-impl review)
+
+> **Verdict bump 2026-05-27 (W-001-impl RC-10 precedent — frontmatter as live signal):**
+> Original verdict `needs_architect` reflected 2 🟡 findings requiring
+> architect routing. Architect acked-all-leans
+> (`docs/process/reviews/W-002/architect-routing.md`, commit `5ae24d4`).
+> Senior revised the plan (commit `818f17e`) absorbing both Y1 (ADR-008
+> amendment shape → β: move to senior-plans/README cross-link) and Y2
+> (state-machine no-ADR routing → β: include as W-002-2b atomic). Both
+> 🟡 resolved in-revision; verdict bumps to `clean`. Both former 🟡 are
+> reclassified as 🟢 in the post-bump count (G6 + G7) to reflect the
+> absorbed-resolution. Original finding bodies preserved below for audit;
+> original verdict preserved in git history at commit `e8dbfac` per the
+> W-001-impl RC-10 (option-i) shape.
+>
+> Second project use of the frontmatter-as-live-signal pattern after
+> W-001-impl R0-A (commit `96c1469`). P1.3 retro §4 RC-10 inherited as
+> watch; this is the second data point. If P1.4's revision cycle
+> exercises the pattern as a third clean-absorption, RC-10 graduates
+> for codification in `docs/process/reviews/README.md`.
 
 | Field | Value |
 |---|---|
@@ -121,6 +148,14 @@ W-002-4 acceptance enumerates each of the 5 surfaces with concrete file paths + 
 
 The RC-1 grep on ADR-008 is explicit: "confirm no other text in ADR-008 still says 'no `task_id → adr_id` mapping' (none should — that phrasing lives in the P1.3 candidates file as historical record, not in ADR-008)." **Tight discipline; matches the W-001-impl-8 scan precedent.**
 
+### 🟢 G6 — Y1 absorbed cleanly into senior revision (added 2026-05-27 in verdict bump)
+
+**Where (post-revision):** plan W-002-1 acceptance now reads "Modify: `docs/process/senior-plans/README.md` ... **Cross-link FROM senior-plans/README TO ADR-008 Decision 1** (one-direction reference; ADR-008 body stays untouched per architect-routing Y1→β; 'ADRs as audit snapshots' semantic preserved)." The ADR-008 inline-clarification edit is removed from W-002-1 `Where:` block; §4 5-surface-scan §3 ADRs entry reads "none touched in W-002"; W-002-4 §3 ADRs acceptance reads "none touched." **Three coordinated edits, all consistent.** Sets the project's first precedent for post-Accept ADR-amendment discipline: amendments go in companion docs (senior-plans/README) with one-direction cross-links into the ADR, not inline-edits into the ADR body.
+
+### 🟢 G7 — Y2 absorbed cleanly into senior revision (added 2026-05-27 in verdict bump)
+
+**Where (post-revision):** new W-002-2b atomic added to plan §2 with full Where/Why/Acceptance/Out-of-scope/Number sections; §3 execution order updated to W-002-1 → -2 → -2b → -3 → -4 with dependency note (W-002-2b sequential on W-002-1's parser availability + extract-to-`workflow/io.py` if inline-in-cli.py); §5 push-back #3 disposition flipped from "defer + override" to "INCLUDED IN SCOPE (W-002-2b)" with senior reflection on the lean correction (honest "my conservative deferral was wrong; the fix is cheap enough to fit"); test count delta updated +3 for W-002-2b's discriminator-test cases. **Five coordinated edits, all consistent.** Plus: W-002 plan itself now carries YAML frontmatter with no `adr` key — first plan to use the post-W-002 frontmatter contract, dogfooding the convention W-002-1 establishes.
+
 ---
 
 ## Push-back disposition table (architect-decision view)
@@ -154,6 +189,8 @@ The RC-1 grep on ADR-008 is explicit: "confirm no other text in ADR-008 still sa
 
 ## Net assessment
 
+### Original (commit `e8dbfac`, 2026-05-27 morning)
+
 **Recommendation: needs_architect.** Two 🟡 findings, both routing decisions architect should make explicitly:
 
 - Y1 (ADR-008 amendment shape) — convention-level pick; 1-2 sentence resolution either way.
@@ -164,6 +201,17 @@ The RC-1 grep on ADR-008 is explicit: "confirm no other text in ADR-008 still sa
 **The plan is revisable to clean status in one revision pass** absorbing Y1 (architect picks amendment convention; senior adjusts W-002-1 acceptance text accordingly) + Y2 (architect picks α/β/γ; senior adjusts §5 push-back #3 + possibly adds W-002-2b atomic).
 
 **Sequencing note for architect:** Y2 routing decision intersects the broader W-002 → P1.4 sequencing pressure (P1.3 retro §8 rec #4: W-002 must land before P1.4 ADR Accept). Option (β) extends W-002 scope slightly but the extension is bounded; (α) and (γ) keep W-002 narrow but cost an override per W-002.yaml that the harness's own dogfood will then need to perform. If the architect-partner is willing to perform W-002.yaml's override at land-time (precedent: cfbf087 for P1.3), (α) costs nothing immediate. If the override-frequency signal is becoming concerning, (β) is the closing move.
+
+### Post-absorption (commit `818f17e`, 2026-05-27 afternoon)
+
+**Recommendation: clean.** Both 🟡 findings were absorbed into the senior revision pass per architect-routing ack-all-leans:
+
+- **Y1 → β routing** absorbed: ADR-008 stays untouched; clarification moved to `senior-plans/README.md` with one-direction cross-link FROM there TO ADR-008. G6 above documents the three coordinated edits.
+- **Y2 → β routing** absorbed: W-002-2b atomic added; §3 execution order updated to W-002-1 → -2 → -2b → -3 → -4; §5 push-back #3 disposition flipped from "defer + override" to "INCLUDED IN SCOPE" with senior lean-correction reflection. G7 above documents the five coordinated edits.
+
+**Seven 🟢 findings total** (five original + G6 + G7 from absorption). Plan is ready for architect merge; no further plan-stage review pass required. PR #8 carries the merge surface.
+
+**Forward sequencing reminder:** post-merge, W-002 state file advances `awaiting_senior_plan → awaiting_architect_accept` per current installed code (W-002-2b fix lands during impl, not at plan-publish). Architect override on `.workflow/W-002.yaml` to `awaiting_junior_impl` is the **second non-trivial override in project history** (after P1.3 `cfbf087`); this is the LAST such override for the no-ADR routing class of bug, because W-002-2b impl closes the loop for future no-ADR tasks.
 
 **No 🔴 findings.** Plan is structurally sound; no impl-detail ship-bugs surfaced from architect-partner lens (consistent with W-002 being a mechanical bug-fix plan with no novel design surface).
 
