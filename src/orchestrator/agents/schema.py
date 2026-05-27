@@ -148,15 +148,19 @@ class SpeechDecision(BaseModel):
 class AgentMatchRecord(BaseModel):
     """Audit record for one agent considered during ``decide_agents_for_room``.
 
-    ``reason`` field is NOT in P1.4 — per R0-A Y1 routing (2026-05-27).
-    In P1.4 every agent has ``loaded=True``; no variance to record.
-    P1.5+ adds back additively when ``agent.applies_to`` filtering
-    surfaces real reason variance.
+    P1.5 extension (ADR-012 D4):
+    - ``applies_to_match``: whether ``agent.applies_to.room_types`` matched
+      the room type (``["*"]`` always matches; concrete list checked by value).
+    - ``reason``: load-time reason code for why ``loaded`` is True or False.
+      Reintroduced from P1.4-4 routing now that ``applies_to`` filtering
+      surfaces real reason variance.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     agent_id: str
     loaded: bool
+    applies_to_match: bool
+    reason: Literal["room_type_match", "room_type_mismatch"]
 
 
 class AgentSelectionTrace(BaseModel):

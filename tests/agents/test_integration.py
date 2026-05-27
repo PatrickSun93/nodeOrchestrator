@@ -161,7 +161,7 @@ def test_integration_full_pipeline_hypothesis_event() -> None:
     )
     store.append(hypothesis)
 
-    selection = decide_agents_for_room(available_agents=agents)
+    selection = decide_agents_for_room(RoomType.RESEARCH, "open", available_agents=agents)
     loaded_agents = {a.id: a for a in selection.loaded}
     # prober < skeptic alphabetically
     assert selection.loaded[0].id == "prober"

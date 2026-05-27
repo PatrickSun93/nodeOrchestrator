@@ -286,22 +286,50 @@ def test_speech_decision_extra_forbid() -> None:
 
 
 # ===========================================================================
-# AgentMatchRecord — §6  (regression: no `reason` field per R0-A Y1)
+# AgentMatchRecord — §6  (P1.5: applies_to_match + reason reintroduced)
 # ===========================================================================
 
 
 def test_agent_match_record_accepts_valid() -> None:
-    r = AgentMatchRecord(agent_id="skeptic", loaded=True)
+    r = AgentMatchRecord(
+        agent_id="skeptic",
+        loaded=True,
+        applies_to_match=True,
+        reason="room_type_match",
+    )
     assert r.loaded is True
+    assert r.applies_to_match is True
+    assert r.reason == "room_type_match"
 
 
-def test_agent_match_record_extra_forbid_rejects_reason() -> None:
+def test_agent_match_record_accepts_mismatch_reason() -> None:
+    r = AgentMatchRecord(
+        agent_id="skeptic",
+        loaded=False,
+        applies_to_match=False,
+        reason="room_type_mismatch",
+    )
+    assert r.loaded is False
+    assert r.reason == "room_type_mismatch"
+
+
+def test_agent_match_record_invalid_reason_raises() -> None:
     with pytest.raises(ValidationError):
-        AgentMatchRecord(agent_id="x", loaded=True, reason="some_reason")  # type: ignore[call-arg]
+        AgentMatchRecord(
+            agent_id="x",
+            loaded=True,
+            applies_to_match=True,
+            reason="some_invalid_reason",  # type: ignore[arg-type]
+        )
 
 
 def test_agent_match_record_frozen() -> None:
-    r = AgentMatchRecord(agent_id="x", loaded=True)
+    r = AgentMatchRecord(
+        agent_id="x",
+        loaded=True,
+        applies_to_match=True,
+        reason="room_type_match",
+    )
     with pytest.raises((ValidationError, TypeError)):
         r.loaded = False
 
@@ -313,7 +341,14 @@ def test_agent_match_record_frozen() -> None:
 
 def test_agent_selection_trace_accepts_valid() -> None:
     t = AgentSelectionTrace(
-        considered=[AgentMatchRecord(agent_id="x", loaded=True)],
+        considered=[
+            AgentMatchRecord(
+                agent_id="x",
+                loaded=True,
+                applies_to_match=True,
+                reason="room_type_match",
+            )
+        ],
         loaded_count=1,
     )
     assert t.loaded_count == 1
@@ -339,7 +374,14 @@ def test_agent_selection_accepts_valid() -> None:
     sel = AgentSelection(
         loaded=[_MIN_AGENT],
         trace=AgentSelectionTrace(
-            considered=[AgentMatchRecord(agent_id=_MIN_AGENT.id, loaded=True)],
+            considered=[
+                AgentMatchRecord(
+                    agent_id=_MIN_AGENT.id,
+                    loaded=True,
+                    applies_to_match=True,
+                    reason="room_type_match",
+                )
+            ],
             loaded_count=1,
         ),
     )
