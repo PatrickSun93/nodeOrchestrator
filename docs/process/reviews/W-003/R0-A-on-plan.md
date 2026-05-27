@@ -1,14 +1,50 @@
 ---
 task_id: W-003
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 8
+  yellow: 0
+  green: 10
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 0f44533
+    findings_count: { red: 0, yellow: 2, green: 8 }
+    note: Y1 (_has_commit_since investigation deferred) + Y2 (_git_show helper deferred) — both "decision deferred to junior at impl-time" pattern.
+  - verdict: clean
+    at_commit: ae56db1
+    findings_count: { red: 0, yellow: 0, green: 10 }
+    note: Y1 + Y2 absorbed per architect routing (both → α). 7th project use of RC-10 verdict-bump protocol (1st under codified `reviews/README.md` section).
 ---
 
 # W-003 R0-A on plan (architect-dispatched pre-impl review)
+
+> **Verdict bump 2026-05-27 (RC-10 codified protocol, 7th project use):**
+> Senior absorbed architect routing at `ae56db1` (Y1 → α; Y2 → α per
+> `architect-routing.md` at `5e6658a`). Spot-check verified:
+>
+> - **Y1 absorbed**: senior investigated `_has_commit_since` in cli.py
+>   lines ~340-355. Verdict: **correct-by-design; intentional asymmetry**
+>   between plan-content (publish event = origin/main) vs impl-activity
+>   (work event = local commits). Documented in W-003-1 acceptance as
+>   deliberate design choice; no fix; no W-003-1b atomic.
+> - **Y2 absorbed**: `_git_show(rel_path, ref="origin/main") -> str | None`
+>   helper pinned in `workflow/io.py`. Centralizes subprocess error
+>   handling (timeout + non-zero + missing-file return-None). W-003-1
+>   `_read_plan_frontmatter` calls `_git_show(rel_path)` instead of
+>   inlining subprocess. W-003-3 `verify-workspace` divergence detection
+>   also consumes per routing. Tests use `monkeypatch.setattr` on
+>   `_git_show` for callers; helper has its own subprocess-level tests.
+>
+> Y1 + Y2 reclassified as 🟢 G9 + G10 (the absorption itself is the
+> proof; deferred-to-impl pattern closed at plan-revision boundary).
+> Verdict bumps `needs_architect → clean` (0🔴 / 0🟡 / 10🟢; 8 prior 🟢
+> + 2 new 🟢 from Y1+Y2 absorption).
+>
+> **7th project use of frontmatter-as-live-signal pattern**; **first
+> under the codified protocol** (`reviews/README.md` post-`6365cce`).
+> The codification at `6365cce` lands on main post-PR-merge of this
+> branch (clean 3-way merge per R0-A G7).
 
 | Field | Value |
 |---|---|
