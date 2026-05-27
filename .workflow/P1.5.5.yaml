@@ -1,6 +1,14 @@
 task_id: P1.5.5
-state: awaiting_senior_plan_vs_impl
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-05-27T22:25:36.628509Z'
-override_history: []
+last_transition_at: '2026-05-27T22:27:41.005609Z'
+override_history:
+- timestamp: '2026-05-27T22:27:41.005609Z'
+  actor: architect
+  from_state: awaiting_senior_plan_vs_impl
+  to_state: awaiting_junior_impl
+  reason: 'RC-19: _has_commit_since tripped by unrelated RC-18 fix merge (40ea1f9)
+    post-architect-accept; junior dispatch not yet performed; awaiting_senior_plan_vs_impl
+    was incorrect. Restore to true awaiting_junior_impl. Architect approves 2026-05-27;
+    RC-19 queued for W-004 brief.'
 requires_cross_family_review: false
