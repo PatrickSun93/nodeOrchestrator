@@ -173,9 +173,25 @@ Validation parallels `Skill.applies_to.agents`: non-empty list;
 `room_states` accepts any non-empty string (cross-RoomType validation
 is too much coupling — see Considered Alternative D).
 
-Existing skeptic.yaml + prober.yaml gain default
-`applies_to: {room_types: ["*"], room_states: ["*"]}` — backwards
-compat; both continue to load.
+**`AgentAppliesTo` has a class-level `default_factory` producing
+`{room_types: ["*"], room_states: ["*"]}`** (architect routing
+2026-05-27, R0-A Y1 → β; brief lean restored after senior's
+over-disciplined "required no default" choice). Existing
+skeptic.yaml + prober.yaml omit the field; the default applies.
+New agent yamls declaring specific filters override the default.
+Backwards compat: every agent yaml that predated this ADR continues
+to load unchanged.
+
+```python
+class Agent(BaseModel):
+    ...
+    applies_to: AgentAppliesTo = Field(
+        default_factory=lambda: AgentAppliesTo(
+            room_types=["*"],
+            room_states=["*"],
+        )
+    )
+```
 
 ### 4. Two-layer filtering — `room_types` load-time, `room_states` dispatch-time
 
@@ -422,7 +438,7 @@ replay can't reconstruct room state at any point in history.
 |---|---|
 | 1. Per-RoomType code-driven state machines | **Expensive** — replacing with LLM-driven requires re-litigating Principle 3.1 grounding and breaking event-stream replay determinism. Pick this once. |
 | 2. Per-RoomType Literal state sets | **Low** — adding states to a Literal is additive (existing events stay valid; new transitions add new Literal values). Removing a state would break replay of historical events using it. |
-| 3. `applies_to` with `["*"]` sentinel | **Medium** — switching to separate `Optional[list]` fields with `None`-means-all is a Pydantic shape change + agent yaml migration across the MVP set (~5 yamls). |
+| 3. `applies_to` with `["*"]` sentinel + `default_factory` | **Medium** — switching to required (no default) is a Pydantic shape change + agent yaml migration across all extant agent yamls (5 in MVP set). Switching to separate `Optional[list]` fields with `None`-means-all is similarly Medium (Pydantic shape change + yaml migration). |
 | 4. Two-layer filtering (room_types + room_states) | **Low** — collapsing to one layer is a function-body change; agent yamls unchanged (existing `["*"]` defaults stay valid). |
 | 5. Separate `RoomRuntime` orchestrator | **Low** — inlining into `dispatch_turn` is a refactor; the call sites are P1.5.5+ scope so no migration cost in P1.5. |
 | 6. `StateTransitionMeta` extension with `prior_state` | **Low** — already extending P1.4 surface; reverting to `new_state`-only would require migration of any existing events (none yet, since P1.5 is the first producer). |
