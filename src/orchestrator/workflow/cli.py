@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from orchestrator.workflow.exceptions import WorkflowError
-from orchestrator.workflow.io import read_state, write_state
+from orchestrator.workflow.io import _read_plan_frontmatter, read_state, write_state
 from orchestrator.workflow.schema import OverrideEntry, TaskState, WorkflowState
 from orchestrator.workflow.transitions import (
     ArtifactSnapshot,
@@ -54,17 +54,60 @@ def _safe_load_verdict(
     return parse_verdict(path)
 
 
+def _parse_adr_status(content: str) -> Literal["proposed", "accepted", "none"]:
+    lowered = content.lower()
+    if "status: accepted" in lowered or "**status:** accepted" in lowered:
+        return "accepted"
+    if "status: proposed" in lowered or "**status:** proposed" in lowered:
+        return "proposed"
+    return "none"
+
+
 def _read_adr_status(task_id: str, repo_root: Path) -> Literal["proposed", "accepted", "none"]:
-    """Check docs/decisions/ADR-{task-id}.md for a Status line."""
+    """Check ADR status via plan frontmatter (path β) or direct file lookup (fallback).
+
+    Plan-frontmatter path (W-002): reads senior-plans/{task_id}.md frontmatter for
+    an `adr: ADR-NNN` key, globs docs/decisions/ADR-NNN-*.md, and returns its status.
+
+    Fallback: if the plan has no frontmatter or no `adr` key, reads
+    docs/decisions/ADR-{task_id}.md directly (pre-W-002 backwards compat).
+
+    Raises WorkflowError if `adr` is a list (W-003 scope) or if multiple ADR
+    files match the NNN-slug prefix (authoring error).
+    """
+    plan_path = repo_root / "docs" / "process" / "senior-plans" / f"{task_id}.md"
+    fm = _read_plan_frontmatter(plan_path)
+
+    if fm is not None and "adr" in fm:
+        adr_val = fm["adr"]
+        if isinstance(adr_val, list):
+            raise WorkflowError(
+                f"{plan_path}: multi-ADR-per-task not yet supported (W-003 scope); "
+                f"found `adr: {adr_val!r}`",
+                path=plan_path,
+            )
+        if not isinstance(adr_val, str):
+            raise WorkflowError(
+                f"{plan_path}: `adr` field must be a string like 'ADR-099', "
+                f"got {type(adr_val).__name__}",
+                path=plan_path,
+            )
+        decisions_dir = repo_root / "docs" / "decisions"
+        matches = sorted(decisions_dir.glob(f"{adr_val.strip()}-*.md"))
+        if not matches:
+            return "none"
+        if len(matches) > 1:
+            raise WorkflowError(
+                f"Multiple ADR files match {adr_val!r}: {[str(m) for m in matches]}",
+                path=decisions_dir,
+            )
+        return _parse_adr_status(matches[0].read_text(encoding="utf-8"))
+
+    # Fallback: direct ADR-{task_id}.md lookup (pre-W-002 backwards compat)
     adr_path = repo_root / "docs" / "decisions" / f"ADR-{task_id}.md"
     if not adr_path.exists():
         return "none"
-    content = adr_path.read_text(encoding="utf-8").lower()
-    if "status: accepted" in content or "**status:** accepted" in content:
-        return "accepted"
-    if "status: proposed" in content or "**status:** proposed" in content:
-        return "proposed"
-    return "none"
+    return _parse_adr_status(adr_path.read_text(encoding="utf-8"))
 
 
 def _has_commit_since(since: datetime, repo_root: Path) -> bool:
@@ -130,14 +173,21 @@ def build_artifact_snapshot(
     reviews_dir = repo_root / "docs" / "process" / "reviews" / task_id
 
     brief_exists = (repo_root / "docs" / "process" / "architect-briefs" / f"{task_id}.md").exists()
-    senior_plan_exists = (
-        repo_root / "docs" / "process" / "senior-plans" / f"{task_id}.md"
-    ).exists()
+    senior_plan_path = repo_root / "docs" / "process" / "senior-plans" / f"{task_id}.md"
+    senior_plan_exists = senior_plan_path.exists()
     adr_status = _read_adr_status(task_id, repo_root)
     junior_impl_commit_present = _has_commit_since(state.last_transition_at, repo_root)
     plan_vs_impl_verdict = _safe_load_verdict(reviews_dir / "plan-vs-impl.md")
     r0_a_verdict = _safe_load_verdict(reviews_dir / "R0-A.md")
     pr_merged = _is_pr_merged(repo_root)
+
+    # Compute plan_has_adr for W-002-2b no-ADR routing in next_state.
+    # None = no frontmatter (legacy); False = frontmatter without adr key; True = has adr.
+    plan_fm = _read_plan_frontmatter(senior_plan_path)
+    if plan_fm is None:
+        plan_has_adr: bool | None = None
+    else:
+        plan_has_adr = "adr" in plan_fm
 
     return ArtifactSnapshot(
         brief_exists=brief_exists,
@@ -147,6 +197,7 @@ def build_artifact_snapshot(
         plan_vs_impl_verdict=plan_vs_impl_verdict,
         r0_a_verdict=r0_a_verdict,
         pr_merged=pr_merged,
+        plan_has_adr=plan_has_adr,
     )
 
 

@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from orchestrator.workflow.cli import (
+    _read_adr_status,
     build_parser,
     cmd_advance,
     cmd_init,
@@ -27,6 +28,7 @@ from orchestrator.workflow.cli import (
     cmd_status,
     cmd_verify_workspace,
 )
+from orchestrator.workflow.exceptions import WorkflowError
 from orchestrator.workflow.io import write_state
 from orchestrator.workflow.schema import TaskState, WorkflowState
 
@@ -348,6 +350,98 @@ def test_verify_workspace_fetch_oserror_warns_and_returns_zero(
         rc = cmd_verify_workspace(_args())
     assert rc == 0
     assert "WARNING" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# _read_adr_status — W-002-1 plan-frontmatter ADR resolution (§4 payload, §5 boundary)
+# ---------------------------------------------------------------------------
+
+
+def _write_plan(repo_root: Path, task_id: str, content: str) -> Path:
+    d = repo_root / "docs" / "process" / "senior-plans"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"{task_id}.md"
+    p.write_text(content, encoding="utf-8")
+    return p
+
+
+def _write_adr(repo_root: Path, filename: str, status: str) -> Path:
+    d = repo_root / "docs" / "decisions"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / filename
+    p.write_text(f"# ADR\n\nStatus: {status}\n", encoding="utf-8")
+    return p
+
+
+def test_read_adr_status_via_plan_frontmatter_accepted(tmp_path: Path) -> None:
+    """frontmatter adr: ADR-099, ADR-099-synth.md Accepted → 'accepted'."""
+    _write_plan(tmp_path, "SYNTH-001", "---\ntask_id: SYNTH-001\nadr: ADR-099\n---\n# Plan\n")
+    _write_adr(tmp_path, "ADR-099-synth.md", "Accepted")
+    assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
+
+
+def test_read_adr_status_via_plan_frontmatter_proposed(tmp_path: Path) -> None:
+    """frontmatter adr: ADR-099, ADR-099-synth.md Proposed → 'proposed'."""
+    _write_plan(tmp_path, "SYNTH-001", "---\ntask_id: SYNTH-001\nadr: ADR-099\n---\n# Plan\n")
+    _write_adr(tmp_path, "ADR-099-synth.md", "Proposed")
+    assert _read_adr_status("SYNTH-001", tmp_path) == "proposed"
+
+
+def test_read_adr_status_via_plan_frontmatter_adr_not_found(tmp_path: Path) -> None:
+    """frontmatter adr: ADR-099, no matching file → 'none'."""
+    _write_plan(tmp_path, "SYNTH-001", "---\ntask_id: SYNTH-001\nadr: ADR-099\n---\n# Plan\n")
+    # No ADR-099-*.md written → zero matches
+    assert _read_adr_status("SYNTH-001", tmp_path) == "none"
+
+
+def test_read_adr_status_multi_adr_list_raises(tmp_path: Path) -> None:
+    """adr: [ADR-099, ADR-100] → WorkflowError (W-003 scope). §5 boundary."""
+    p = _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-099, ADR-100]\n---\n# Plan\n")
+    with pytest.raises(WorkflowError) as exc_info:
+        _read_adr_status("SYNTH-001", tmp_path)
+    assert exc_info.value.path == p
+    assert "W-003" in str(exc_info.value)
+
+
+def test_read_adr_status_multi_adr_single_element_list_raises(tmp_path: Path) -> None:
+    """adr: [ADR-099] (one-element list) still raises — list shape forbidden. §5."""
+    p = _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-099]\n---\n# Plan\n")
+    with pytest.raises(WorkflowError) as exc_info:
+        _read_adr_status("SYNTH-001", tmp_path)
+    assert exc_info.value.path == p
+
+
+def test_read_adr_status_multi_glob_match_raises(tmp_path: Path) -> None:
+    """Two files matching ADR-099-*.md → WorkflowError (authoring error). §4 payload."""
+    _write_plan(tmp_path, "SYNTH-001", "---\nadr: ADR-099\n---\n# Plan\n")
+    d = tmp_path / "docs" / "decisions"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "ADR-099-alpha.md").write_text("Status: Accepted\n", encoding="utf-8")
+    (d / "ADR-099-beta.md").write_text("Status: Proposed\n", encoding="utf-8")
+    with pytest.raises(WorkflowError) as exc_info:
+        _read_adr_status("SYNTH-001", tmp_path)
+    assert exc_info.value.path == d
+
+
+def test_read_adr_status_fallback_no_frontmatter(tmp_path: Path) -> None:
+    """No frontmatter in plan → falls back to direct ADR-{task_id}.md lookup."""
+    _write_plan(tmp_path, "SYNTH-001", "# Plan\n\nNo frontmatter here.\n")
+    _write_adr(tmp_path, "ADR-SYNTH-001.md", "Accepted")
+    assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
+
+
+def test_read_adr_status_fallback_no_adr_file(tmp_path: Path) -> None:
+    """No frontmatter and no direct ADR file → 'none'."""
+    _write_plan(tmp_path, "SYNTH-001", "# Plan\n\nNo frontmatter here.\n")
+    assert _read_adr_status("SYNTH-001", tmp_path) == "none"
+
+
+def test_read_adr_status_frontmatter_no_adr_key_falls_back(tmp_path: Path) -> None:
+    """Frontmatter present but no `adr` key → falls back to direct ADR lookup."""
+    _write_plan(tmp_path, "SYNTH-001", "---\ntask_id: SYNTH-001\n---\n# Plan\n")
+    # Direct ADR-SYNTH-001.md exists with Accepted status
+    _write_adr(tmp_path, "ADR-SYNTH-001.md", "Accepted")
+    assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
 # ---------------------------------------------------------------------------

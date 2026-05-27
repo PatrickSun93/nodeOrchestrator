@@ -10,6 +10,7 @@ writes to the config/skills/ directory during loading (no locking).
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -19,21 +20,31 @@ from pydantic import ValidationError
 from orchestrator.skills.exceptions import SkillError
 from orchestrator.skills.schema import Skill
 
+logger = logging.getLogger(__name__)
 
-def _parse_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
+
+class _NotASkillFile:
+    """Sentinel returned by _parse_frontmatter for non-skill markdown files."""
+
+
+_NOT_A_SKILL = _NotASkillFile()
+
+
+def _parse_frontmatter(path: Path) -> tuple[dict[str, Any] | _NotASkillFile, str]:
     """Split a SKILL.md file into (frontmatter_dict, body_str).
 
-    Raises SkillError on: missing opening fence, unclosed fence, non-dict
-    frontmatter (R0-A-on-plan-5 pattern — mirrors llm/config_loader._read_yaml).
+    Returns `(_NOT_A_SKILL, "")` for files with no opening '---' fence or
+    non-dict YAML frontmatter — these are non-skill markdown files (e.g.
+    README.md) and should be skipped by the caller.
+
+    Raises SkillError on unclosed frontmatter fence (file opened '---' but
+    never closed — malformed, not absent) and on YAML parse errors.
     """
     content = path.read_text(encoding="utf-8")
     lines = content.splitlines(keepends=True)
 
     if not lines or lines[0].rstrip() != "---":
-        raise SkillError(
-            f"{path}: missing YAML frontmatter opening fence '---'",
-            path=path,
-        )
+        return _NOT_A_SKILL, ""
 
     close_idx: int | None = None
     for i, line in enumerate(lines[1:], start=1):
@@ -59,10 +70,7 @@ def _parse_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
         ) from exc
 
     if not isinstance(raw, dict):
-        raise SkillError(
-            f"{path}: frontmatter must be a mapping, got {type(raw).__name__}",
-            path=path,
-        )
+        return _NOT_A_SKILL, ""
 
     return raw, body
 
@@ -83,8 +91,12 @@ def load_skills(directory: Path) -> dict[str, Skill]:
     skills: dict[str, Skill] = {}
 
     for md_path in sorted(directory.rglob("*.md")):
-        frontmatter, body = _parse_frontmatter(md_path)
+        result, body = _parse_frontmatter(md_path)
+        if isinstance(result, _NotASkillFile):
+            logger.debug("skipping non-skill file: %s", md_path)
+            continue
 
+        frontmatter = result
         frontmatter["body"] = body
 
         try:

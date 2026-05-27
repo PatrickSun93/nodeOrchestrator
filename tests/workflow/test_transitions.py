@@ -48,6 +48,7 @@ def _snap(
     plan_vs_impl_verdict: Literal["clean", "blocking", "needs_architect", "absent"] = "absent",
     r0_a_verdict: Literal["clean", "blocking", "needs_architect", "absent"] = "absent",
     pr_merged: bool = False,
+    plan_has_adr: bool | None = None,
 ) -> ArtifactSnapshot:
     return ArtifactSnapshot(
         brief_exists=brief_exists,
@@ -57,6 +58,7 @@ def _snap(
         plan_vs_impl_verdict=plan_vs_impl_verdict,
         r0_a_verdict=r0_a_verdict,
         pr_merged=pr_merged,
+        plan_has_adr=plan_has_adr,
     )
 
 
@@ -138,6 +140,41 @@ def test_next_state_awaiting_senior_plan_no_plan_returns_none() -> None:
 def test_next_state_awaiting_senior_plan_plan_exists_advances() -> None:
     result = next_state(
         WorkflowState.AWAITING_SENIOR_PLAN, _snap(senior_plan_exists=True), _gates()
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_ACCEPT
+
+
+# ---------------------------------------------------------------------------
+# next_state — W-002-2b no-ADR routing (plan_has_adr discriminator)
+# ---------------------------------------------------------------------------
+
+
+def test_next_state_skips_accept_when_no_adr_key_in_frontmatter() -> None:
+    """plan_has_adr=False (frontmatter present, no adr key) → skip accept gate."""
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN,
+        _snap(senior_plan_exists=True, plan_has_adr=False),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_JUNIOR_IMPL
+
+
+def test_next_state_routes_through_accept_when_adr_key_present() -> None:
+    """plan_has_adr=True (frontmatter with adr key) → route through accept gate."""
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN,
+        _snap(senior_plan_exists=True, plan_has_adr=True),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_ACCEPT
+
+
+def test_next_state_legacy_no_frontmatter_routes_through_accept() -> None:
+    """plan_has_adr=None (legacy: no frontmatter) → preserve today's behavior."""
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_PLAN,
+        _snap(senior_plan_exists=True, plan_has_adr=None),
+        _gates(),
     )
     assert result == WorkflowState.AWAITING_ARCHITECT_ACCEPT
 
@@ -311,6 +348,72 @@ def test_record_override_non_rework_does_not_change_cycle() -> None:
     )
     result = record_override(original, override)
     assert result.cycle == 2
+
+
+def test_record_override_to_junior_impl_from_accept_does_not_increment_cycle() -> None:
+    """P1.3-case regression: from=awaiting_architect_accept, to=awaiting_junior_impl
+    must NOT increment cycle (rework requires from=awaiting_architect_decision).
+    """
+    original = _state(state=WorkflowState.AWAITING_ARCHITECT_ACCEPT, cycle=1)
+    override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_ARCHITECT_ACCEPT,
+        to_state=WorkflowState.AWAITING_JUNIOR_IMPL,
+        reason="ADR accepted out-of-band; unblocking P1.3",
+    )
+    result = record_override(original, override)
+    assert result.cycle == 1
+    assert result.state == WorkflowState.AWAITING_JUNIOR_IMPL
+    assert len(result.override_history) == 1
+    assert result.last_transition_at == _NOW
+
+
+def test_record_override_to_junior_impl_from_brief_does_not_increment_cycle() -> None:
+    """Defense-in-depth: any from-state != AWAITING_ARCHITECT_DECISION is non-rework."""
+    original = _state(state=WorkflowState.AWAITING_BRIEF, cycle=1)
+    override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_BRIEF,
+        to_state=WorkflowState.AWAITING_JUNIOR_IMPL,
+        reason="emergency skip",
+    )
+    result = record_override(original, override)
+    assert result.cycle == 1
+
+
+def test_record_override_cycle_warning_fires_only_on_rework_reaching_threshold(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """cycle ≥ 4 warning emits only when from=AWAITING_ARCHITECT_DECISION."""
+    # Rework path reaching cycle 4 → warning
+    rework_state = _state(state=WorkflowState.AWAITING_ARCHITECT_DECISION, cycle=3)
+    rework_override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_ARCHITECT_DECISION,
+        to_state=WorkflowState.AWAITING_JUNIOR_IMPL,
+        reason="rework: third attempt",
+    )
+    result = record_override(rework_state, rework_override)
+    assert result.cycle == 4
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert "cycle 4" in captured.err
+
+    # Non-rework from accept → same initial cycle=3, to=JUNIOR_IMPL → no warning
+    accept_state = _state(state=WorkflowState.AWAITING_ARCHITECT_ACCEPT, cycle=3)
+    accept_override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_ARCHITECT_ACCEPT,
+        to_state=WorkflowState.AWAITING_JUNIOR_IMPL,
+        reason="unblock",
+    )
+    result2 = record_override(accept_state, accept_override)
+    assert result2.cycle == 3
+    assert capsys.readouterr().err == ""
 
 
 # ---------------------------------------------------------------------------

@@ -118,12 +118,13 @@ def test_missing_directory_raises(tmp_path: Path) -> None:
     assert exc_info.value.path == missing
 
 
-def test_missing_frontmatter_raises_with_path(tmp_path: Path) -> None:
-    p = _write_skill(tmp_path, "no-frontmatter", "# Just a markdown file\n\nNo YAML here.")
-    with pytest.raises(SkillError) as exc_info:
-        load_skills(tmp_path)
-    assert exc_info.value.path == p
-    assert "missing" in str(exc_info.value).lower() or "fence" in str(exc_info.value).lower()
+def test_missing_frontmatter_file_skipped(tmp_path: Path) -> None:
+    """W-002-3: file without opening '---' fence is a non-skill file; loader skips it."""
+    _write_skill(tmp_path, "valid-skill", _VALID_FRONTMATTER.format(id="valid-skill"))
+    _write_skill(tmp_path, "no-frontmatter", "# Just a markdown file\n\nNo YAML here.")
+    result = load_skills(tmp_path)
+    assert "valid-skill" in result
+    assert "no-frontmatter" not in result
 
 
 def test_unclosed_frontmatter_raises(tmp_path: Path) -> None:
@@ -135,14 +136,52 @@ def test_unclosed_frontmatter_raises(tmp_path: Path) -> None:
     assert "unclosed" in str(exc_info.value).lower()
 
 
-def test_scalar_yaml_frontmatter_raises_with_path(tmp_path: Path) -> None:
-    """R0-A-on-plan-5: frontmatter that parses to a non-dict scalar raises SkillError."""
-    content = "---\nfoo\n---\n\nBody."
-    p = _write_skill(tmp_path, "scalar-fm", content)
+def test_scalar_yaml_frontmatter_skipped(tmp_path: Path) -> None:
+    """W-002-3: frontmatter that parses to a non-dict scalar is a non-skill file; skipped."""
+    _write_skill(tmp_path, "valid-skill", _VALID_FRONTMATTER.format(id="valid-skill"))
+    _write_skill(tmp_path, "scalar-fm", "---\nfoo\n---\n\nBody.")
+    result = load_skills(tmp_path)
+    assert "valid-skill" in result
+    assert "scalar-fm" not in result
+
+
+# ---------------------------------------------------------------------------
+# W-002-3 skip behaviors: debug log + schema-error-still-raises regression
+# ---------------------------------------------------------------------------
+
+
+def test_skip_emits_debug_log(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Skipped non-skill files emit a debug-level log (W-002-3 acceptance §debug)."""
+    import logging
+
+    _write_skill(tmp_path, "valid-skill", _VALID_FRONTMATTER.format(id="valid-skill"))
+    _write_skill(tmp_path, "readme", "# README\n\nNot a skill.\n")
+
+    with caplog.at_level(logging.DEBUG, logger="orchestrator.skills.loader"):
+        result = load_skills(tmp_path)
+
+    assert "valid-skill" in result
+    assert any("readme" in record.message.lower() for record in caplog.records)
+
+
+def test_schema_validation_failure_still_raises(tmp_path: Path) -> None:
+    """W-002-3 regression: frontmatter that parses to a dict but fails schema still raises."""
+    content = dedent("""\
+        ---
+        id: bad-priority
+        category: general
+        applies_to:
+          agents: [prober]
+          room_types: [research]
+        priority: 999
+        ---
+
+        Body.
+    """)
+    p = _write_skill(tmp_path, "bad-priority", content)
     with pytest.raises(SkillError) as exc_info:
         load_skills(tmp_path)
     assert exc_info.value.path == p
-    assert "must be a mapping" in str(exc_info.value)
 
 
 def test_filename_id_mismatch_raises(tmp_path: Path) -> None:
@@ -197,16 +236,16 @@ def test_schema_validation_failure_raises_with_path(tmp_path: Path) -> None:
 def test_mid_iteration_raise_does_not_prevent_second_file_from_being_attempted(
     tmp_path: Path,
 ) -> None:
-    """One valid file + one malformed file: loader raises on the malformed file.
+    """One valid file + one unclosed-fence file: loader raises on the malformed file.
+    Unclosed frontmatter still raises (W-002-3: only no-fence and non-dict skip).
     If file handles leaked, the tmp_path cleanup at end of test would fail.
     pathlib.Path.read_text() is context-managed — handles are freed on return
-    or exception. This test verifies the loader raises (not swallows) the error
-    from the second file.
+    or exception. This test verifies the loader raises (not swallows) the error.
     """
     subdir = tmp_path
     # Sort order: "aaa-valid.md" < "zzz-malformed.md" — valid loads first
     _write_skill(subdir, "aaa-valid", _VALID_FRONTMATTER.format(id="aaa-valid"))
-    p_bad = _write_skill(subdir, "zzz-malformed", "no frontmatter")
+    p_bad = _write_skill(subdir, "zzz-malformed", "---\nid: test\n# no closing fence")
 
     with pytest.raises(SkillError) as exc_info:
         load_skills(tmp_path)

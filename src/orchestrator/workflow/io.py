@@ -8,11 +8,45 @@ locking is implemented. (test-coverage-standard.md §2 N/A rationale.)
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from orchestrator.workflow.exceptions import WorkflowError
 from orchestrator.workflow.schema import TaskState
+
+
+def _read_plan_frontmatter(path: Path) -> dict[str, Any] | None:
+    """Parse the YAML frontmatter of a senior-plan markdown file.
+
+    Returns the parsed frontmatter dict if the file exists, starts with
+    '---', has a closing '---' fence, and parses as a mapping.
+
+    Returns None if: file does not exist, has no opening '---' fence,
+    or the YAML content parses to a non-dict value.
+
+    Raises WorkflowError if the opening fence is present but no closing
+    fence is found (malformed file, not an absent one).
+    """
+    if not path.exists():
+        return None
+    content = path.read_text(encoding="utf-8")
+    if not content.startswith("---"):
+        return None
+    end = content.find("\n---", 3)
+    if end == -1:
+        raise WorkflowError(
+            f"{path}: unclosed YAML frontmatter block",
+            path=path,
+        )
+    frontmatter_text = content[3:end]
+    try:
+        raw = yaml.safe_load(frontmatter_text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return raw
 
 
 def read_state(path: Path) -> TaskState:

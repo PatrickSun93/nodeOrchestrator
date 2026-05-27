@@ -340,6 +340,50 @@ def test_side_channel_file_does_not_reach_parse_verdict(git_repo: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# §1 cross-module: path-β task with plan-frontmatter ADR reference (W-002-1)
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_path_beta_task_with_adr_advances(git_repo: Path) -> None:
+    """§1 cross-module: SYNTH-002 plan declares `adr: ADR-099` in frontmatter.
+    ADR-099-synth.md exists and is Accepted. State starts at
+    awaiting_architect_accept; advance fires to awaiting_junior_impl.
+    Source ≠ sink: task_id='SYNTH-002'; ADR filename='ADR-099-synth.md'.
+    """
+    task_id = "SYNTH-002"
+    wdir = _wdir(git_repo)
+    _init_state(wdir, task_id=task_id, state=WorkflowState.AWAITING_ARCHITECT_ACCEPT)
+
+    # Write plan with adr frontmatter
+    plans_dir = git_repo / "docs" / "process" / "senior-plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    (plans_dir / f"{task_id}.md").write_text(
+        "---\ntask_id: SYNTH-002\nadr: ADR-099\n---\n\n# Synth Plan\n",
+        encoding="utf-8",
+    )
+
+    # Write ADR-099-synth.md — filename differs from task_id (source ≠ sink)
+    decisions_dir = git_repo / "docs" / "decisions"
+    decisions_dir.mkdir(parents=True, exist_ok=True)
+    (decisions_dir / "ADR-099-synth.md").write_text(
+        "# ADR-099 Synth\n\nStatus: Accepted\n",
+        encoding="utf-8",
+    )
+
+    with (
+        patch("orchestrator.workflow.cli._is_pr_merged", return_value=False),
+        patch("orchestrator.workflow.cli.evaluate_merge_clean", return_value=True),
+        patch("orchestrator.workflow.cli._has_commit_since", return_value=False),
+    ):
+        rc = _advance(git_repo, task_id)
+    assert rc == 0
+
+    s = read_state(wdir / f"{task_id}.yaml")
+    assert s.state == WorkflowState.AWAITING_JUNIOR_IMPL
+    assert s.task_id == task_id  # task_id differs from ADR filename 'ADR-099-synth.md'
+
+
+# ---------------------------------------------------------------------------
 # §3 atomic write: partial write never lands
 # ---------------------------------------------------------------------------
 
