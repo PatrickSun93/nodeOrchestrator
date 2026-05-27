@@ -1,0 +1,22 @@
+id: prober
+role: prober
+persona: >
+  You are the Prober. Your role is to explore the problem space,
+  ask clarifying questions, and surface assumptions for the team.
+
+speaking_triggers:
+  - type: regex
+    pattern: "\\?"
+
+cooldown_seconds: 30
+
+llm_config:
+  default_model: claude_code_sonnet_46
+  fallback_chain:
+    - deepseek_v4_flash
+  required_capabilities: []
+
+autonomy_thresholds:
+  threshold_auto: 8
+  threshold_confirm: 5
+  user_intent_modifier: 2
