@@ -373,15 +373,41 @@ def _write_adr(repo_root: Path, filename: str, status: str) -> Path:
     return p
 
 
-def test_read_adr_status_via_plan_frontmatter_accepted(tmp_path: Path) -> None:
+def _patch_git_show_from_disk(monkeypatch: pytest.MonkeyPatch, repo_root: Path) -> None:
+    """Redirect _git_show and cwd so _read_plan_frontmatter reads from repo_root on disk.
+
+    Tests write plan files to tmp_path (outside cwd); _read_plan_frontmatter
+    now reads via _git_show (git show origin/main:...) instead of disk. This
+    helper restores disk-read behavior for tests that pre-date the refactor by:
+      1. chdir to repo_root so path.relative_to(Path.cwd()) resolves correctly.
+      2. Replacing _git_show to read from repo_root on disk instead of git.
+    """
+    monkeypatch.chdir(repo_root)
+
+    def _fake_git_show(rel_path: str, ref: str = "origin/main") -> str | None:
+        p = repo_root / rel_path
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+        return None
+
+    monkeypatch.setattr("orchestrator.workflow.io._git_show", _fake_git_show)
+
+
+def test_read_adr_status_via_plan_frontmatter_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """frontmatter adr: ADR-099, ADR-099-synth.md Accepted → 'accepted'."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\ntask_id: SYNTH-001\nadr: ADR-099\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-099-synth.md", "Accepted")
     assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
-def test_read_adr_status_via_plan_frontmatter_proposed(tmp_path: Path) -> None:
+def test_read_adr_status_via_plan_frontmatter_proposed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """frontmatter adr: ADR-099, ADR-099-synth.md Proposed → 'proposed'."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\ntask_id: SYNTH-001\nadr: ADR-099\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-099-synth.md", "Proposed")
     assert _read_adr_status("SYNTH-001", tmp_path) == "proposed"
@@ -394,23 +420,30 @@ def test_read_adr_status_via_plan_frontmatter_adr_not_found(tmp_path: Path) -> N
     assert _read_adr_status("SYNTH-001", tmp_path) == "none"
 
 
-def test_read_adr_status_list_single_element_accepted(tmp_path: Path) -> None:
+def test_read_adr_status_list_single_element_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adr: [ADR-098] degenerate 1-element list → 'accepted'. §5 boundary (len=1)."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098]\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
     assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
-def test_read_adr_status_list_both_accepted(tmp_path: Path) -> None:
+def test_read_adr_status_list_both_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adr: [ADR-098, ADR-099] both Accepted → 'accepted'. §5 boundary (len=2)."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-099]\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
     _write_adr(tmp_path, "ADR-099-bar.md", "Accepted")
     assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
-def test_read_adr_status_list_one_proposed(tmp_path: Path) -> None:
+def test_read_adr_status_list_one_proposed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """adr: [ADR-098, ADR-099] one Proposed → 'proposed' (all-or-nothing)."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-099]\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
     _write_adr(tmp_path, "ADR-099-bar.md", "Proposed")
@@ -425,8 +458,11 @@ def test_read_adr_status_list_one_missing(tmp_path: Path) -> None:
     assert _read_adr_status("SYNTH-001", tmp_path) == "none"
 
 
-def test_read_adr_status_list_three_all_accepted(tmp_path: Path) -> None:
+def test_read_adr_status_list_three_all_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adr: [ADR-098, ADR-099, ADR-100] all Accepted → 'accepted'. §5 multi-position (len=3)."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-099, ADR-100]\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
     _write_adr(tmp_path, "ADR-099-bar.md", "Accepted")
@@ -434,8 +470,9 @@ def test_read_adr_status_list_three_all_accepted(tmp_path: Path) -> None:
     assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
-def test_read_adr_status_empty_list_raises(tmp_path: Path) -> None:
+def test_read_adr_status_empty_list_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """adr: [] raises WorkflowError with path populated. §4 exception payload."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     p = _write_plan(tmp_path, "SYNTH-001", "---\nadr: []\n---\n# Plan\n")
     with pytest.raises(WorkflowError) as exc_info:
         _read_adr_status("SYNTH-001", tmp_path)
@@ -443,8 +480,11 @@ def test_read_adr_status_empty_list_raises(tmp_path: Path) -> None:
     assert "empty" in str(exc_info.value).lower()
 
 
-def test_read_adr_status_list_non_string_element_raises(tmp_path: Path) -> None:
+def test_read_adr_status_list_non_string_element_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adr: [ADR-098, 42] non-string element raises with path + element index. §4."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     p = _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, 42]\n---\n# Plan\n")
     with pytest.raises(WorkflowError) as exc_info:
         _read_adr_status("SYNTH-001", tmp_path)
@@ -452,16 +492,22 @@ def test_read_adr_status_list_non_string_element_raises(tmp_path: Path) -> None:
     assert "1" in str(exc_info.value)  # element index 1
 
 
-def test_read_adr_status_list_duplicate_element(tmp_path: Path) -> None:
+def test_read_adr_status_list_duplicate_element(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adr: [ADR-098, ADR-098] duplicate — not a raise; both elements resolve same file."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-098]\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
     # Both elements resolve to ADR-098-foo.md → both "accepted" → aggregate "accepted"
     assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
-def test_read_adr_status_multi_glob_match_raises(tmp_path: Path) -> None:
+def test_read_adr_status_multi_glob_match_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Two files matching ADR-099-*.md → WorkflowError (authoring error). §4 payload."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: ADR-099\n---\n# Plan\n")
     d = tmp_path / "docs" / "decisions"
     d.mkdir(parents=True, exist_ok=True)
