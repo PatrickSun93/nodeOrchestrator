@@ -1157,7 +1157,16 @@ to `awaiting_architect_decision` (ADR-008 Decision 8).
 
 **Overrides**: `workflow override --task-id TASK --to-state STATE --reason TEXT --actor architect`
 records an `OverrideEntry` in `override_history` with timestamp and actor.
-Override to `awaiting_junior_impl` increments `cycle`.
+Override from `awaiting_architect_decision` → `awaiting_junior_impl` increments `cycle`
+(rework path per ADR-008 Decision 11). Other overrides to `awaiting_junior_impl` do NOT
+increment `cycle` (W-002-2 fix; P1.3 bug where `cycle: 2` was recorded for a single-cycle task).
+
+**Plan-frontmatter convention (post-W-002)**: senior plans may carry `---`-fenced YAML
+frontmatter. Plans with frontmatter and no `adr` key advance directly
+`awaiting_senior_plan → awaiting_junior_impl` (no ADR; skip accept gate). Plans with
+`adr: ADR-NNN` glob-resolve to `docs/decisions/ADR-NNN-*.md` for Accept detection.
+Legacy plans (no frontmatter) preserve today's behavior. See
+`docs/process/senior-plans/README.md` for the full contract.
 
 **Bootstrapping**: existing closed P1.x work has no retroactive state files
 (ADR-008 Decision 12). `.workflow/W-001-impl.yaml` is the first real state file.
