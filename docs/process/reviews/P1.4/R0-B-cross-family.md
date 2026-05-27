@@ -1,14 +1,85 @@
 ---
 task_id: P1.4
 round: R0-B-cross-family
-verdict: needs_architect
+verdict: clean
 findings_count:
-  red: 2
-  yellow: 5
-  green: 3
+  red: 0
+  yellow: 0
+  green: 10
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 466e98d
+    findings_count: { red: 2, yellow: 5, green: 3 }
+  - verdict: clean
+    at_commit: 33977db
+    findings_count: { red: 0, yellow: 0, green: 10 }
+    note: All 2 🔴 + 5 🟡 absorbed into senior revision per architect-routing ack-all-leans (7 findings → 7 new 🟢).
 ---
 
 # P1.4 R0-B cross-family review (proxy lens — see Caveat below)
+
+> **Verdict bump 2026-05-27 (W-001-impl RC-10 precedent — frontmatter as live signal):**
+> Original verdict `needs_architect` reflected 2 🔴 (load-bearing ship-
+> bugs) + 5 🟡 (scope-discipline cluster). Architect acked-all-leans
+> (`docs/process/reviews/P1.4/architect-routing.md`, commit `2b92e34`).
+> Senior revised ADR-010 + ADR-011 + plan (commit `33977db`) absorbing
+> all seven findings:
+>
+> - **🔴#1 (cooldown unit ms vs s)** → lean (a): ADR-010 D2 inscribes
+>   `elapsed_s = (current.timestamp - last.timestamp) / 1000.0`
+>   conversion site explicitly. Yaml stays seconds; event-stream stays
+>   ms; `cooldown_remaining_s: float` semantics matched. P1.4-7
+>   acceptance gets the regression test for the bug
+>   (`cooldown_seconds=60` with 30_000ms-ago utterance blocks; with
+>   90_000ms-ago doesn't).
+> - **🔴#2 (StateChangeTrigger metadata gap)** → land schema in P1.4:
+>   `StateTransitionMeta(new_state: str)` added to `core/event.py`
+>   `TYPED_METADATA` (P1.4-4 scope grew ~30 LoC + 2 §6 tests). ADR-010
+>   D1 references the typed schema. StateChangeTrigger evaluation
+>   reads `current_event.metadata.new_state` (typed field access).
+>   Preserves all-three-trigger-types-ship per brief Decision 4.
+> - **🟡#3 (Agent.priority over-engineering)** → drop. ADR-011 D3
+>   revised: conflict resolution is alphabetical-id ascending only.
+>   `Agent.priority` lands additively in P1.5+ when real conflict
+>   surfaces.
+> - **🟡#4 (async dispatch_turn maintainability trap)** → drop async.
+>   ADR-011 D1 revised: `def dispatch_turn(...)` sync. P1.5+
+>   concurrent upgrade re-shapes both signature and body in one
+>   commit (zero callers in P1.4 to migrate).
+> - **🟡#5 (build_agent_context premature factoring)** → keep +
+>   honest. ADR-011 D4 rewritten: drops oversold "testable in
+>   isolation" + "reusable for future preview UI"; honest about
+>   future-callsite hook framing. Combined with 🟡#6 drop of
+>   `snapshot_excerpt`, the function is small but defensible.
+> - **🟡#6 (AgentContext.snapshot_excerpt placeholder)** → drop. Field
+>   removed from `AgentContext` in P1.4 schema. P1.5+ adds back when
+>   a concrete consumer drives the shape.
+> - **🟡#7 (snapshot-per-turn challenged)** → defend with honest
+>   latency cost. ADR-011 D2 Consequences "Harder" section gained the
+>   user-facing-latency paragraph (cross-agent reaction delayed by
+>   one turn; trade-off named).
+>
+> Sibling review R0-A-on-plan also bumped in companion commit. All 7
+> non-green findings reclassified as 🟢 (post-bump count: 0 🔴 / 0 🟡 /
+> 10 🟢; 3 original 🟢 + 7 new 🟢 from absorption). Original finding
+> bodies preserved below for audit; original verdict preserved in git
+> history at commit `466e98d`.
+>
+> Third project use of the frontmatter-as-live-signal pattern. P1.3
+> retro §4 RC-10 graduates after this instance (see sibling R0-A-on-
+> plan verdict bump for details). **First R0-B-cross-family use of
+> the pattern** (W-001-impl + W-002 + P1.4 R0-A-on-plan covered
+> in-family lens; this is the first cross-family-lens bump).
+>
+> Caveat from original review unchanged: this review was produced by
+> a Claude subagent with deliberately outside-Claude lens, not a true
+> non-Claude model. The 🔴 findings (cooldown unit; StateChangeTrigger
+> metadata gap) were correctly load-bearing despite the proxy-lens
+> limitation; the verdict bump confirms the architect routing
+> resolved both. A true cross-family R0-B remains a separate optional
+> action the architect may take.
+
+
 
 **Reviewer:** Claude subagent prompted with deliberately outside-Claude lens
 (see Caveat). Not a true cross-family review.

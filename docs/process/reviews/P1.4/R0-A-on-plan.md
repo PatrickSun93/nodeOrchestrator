@@ -1,14 +1,65 @@
 ---
 task_id: P1.4
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 5
-  green: 7
+  yellow: 0
+  green: 12
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 53ea2dd
+    findings_count: { red: 0, yellow: 5, green: 7 }
+  - verdict: clean
+    at_commit: 33977db
+    findings_count: { red: 0, yellow: 0, green: 12 }
+    note: All 5 🟡 absorbed into senior revision per architect-routing ack-all-leans (5 🟡 → 5 new 🟢).
 ---
 
 # P1.4 R0-A on plan (architect-dispatched pre-impl review)
+
+> **Verdict bump 2026-05-27 (W-001-impl RC-10 precedent — frontmatter as live signal):**
+> Original verdict `needs_architect` reflected 5 🟡 findings requiring
+> architect routing. Architect acked-all-leans
+> (`docs/process/reviews/P1.4/architect-routing.md`, commit `2b92e34`).
+> Senior revised ADR-010 + ADR-011 + plan (commit `33977db`) absorbing
+> all five 🟡 findings:
+>
+> - **Y1 (AgentMatchRecord dead Literal)** → lean (b): field dropped
+>   entirely from `AgentMatchRecord` + `AgentSelectionTrace.considered`
+>   in P1.4-4 schema. P1.5+ adds back additively when filtering variance
+>   surfaces.
+> - **Y2 (LLM-exception policy hidden)** → lean (b): ADR-011 grew
+>   new Decision 7 inscribing log+skip+continue with Considered
+>   Alternatives + Reversibility row; P1.4-8 cross-references D7;
+>   logger spec named explicitly.
+> - **Y3 (ADR-010 D6 regex-cache ambiguous)** → lean (a): separate
+>   loader-level registry picked explicitly; `regex_registry`
+>   parameter threaded through `dispatch_turn` → `should_agent_speak`;
+>   frozen-model semantic preserved.
+> - **Y4 (plan §1 R0-B-as-gate misleading)** → lean (a): one-sentence
+>   clarification — "architect-process-gated (not state-machine-
+>   enforced); architect holds the Accept until R0-B revisions
+>   absorbed."
+> - **Y5 (P1.4-8 logger spec missing)** → lean (a): explicit
+>   `logging.getLogger('orchestrator.agents.dispatch').warning(...)`;
+>   no `print`; no stdout. Honors P1.3-R0-A-1 + W-002-3 precedent.
+>
+> Sibling review R0-B-cross-family also bumped in companion commit.
+> All five former 🟡 reclassified as 🟢 (post-bump count: 0 🔴 / 0 🟡 /
+> 12 🟢, with five new 🟢 documenting clean absorption). Original
+> finding bodies preserved below for audit; original verdict preserved
+> in git history at commit `53ea2dd`.
+>
+> Third project use of the frontmatter-as-live-signal pattern after
+> W-001-impl R0-A (commit `96c1469`) + W-002 R0-A-on-plan (commit
+> `440ab3b`). **P1.3 retro §4 RC-10 graduates to codification** after
+> this instance — three clean-absorption cycles is the threshold for
+> a post-resolution-frontmatter-update protocol section in
+> `docs/process/reviews/README.md`. Defer codification to W-003 or
+> earlier per architect call.
+
+
 
 | Field | Value |
 |---|---|
