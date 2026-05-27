@@ -30,6 +30,7 @@ from orchestrator.core.event_store import EventStore
 from orchestrator.core.room import Room, RoomType
 from orchestrator.llm.router import ModelRegistry
 from orchestrator.llm.types import (
+    Capability,
     LLMResponse,
     ModelId,
     ModelProfile,
@@ -47,12 +48,22 @@ _CONFIG_DIR = Path(__file__).parent.parent.parent / "config" / "agents"
 _PROVIDER = ProviderId("test_provider")
 
 
+_CAPS_BY_MODEL: dict[str, list[Capability]] = {
+    "deepseek_v4_flash": [Capability.TOOLS],
+    "qwen_mlx_30b": [Capability.TOOLS],
+    "claude_code_opus_47": [Capability.EFFORT],
+    "claude_code_sonnet_46": [Capability.EFFORT],
+    "claude_code_haiku_45": [],
+    "deepseek_v4_pro": [],
+}
+
+
 def _make_model(mid: str) -> ModelProfile:
     return ModelProfile(
         id=ModelId(mid),
         provider=_PROVIDER,
         provider_model_id=mid,
-        capabilities=[],
+        capabilities=_CAPS_BY_MODEL.get(mid, []),
         context_window=8192,
     )
 
@@ -88,12 +99,14 @@ def _llm_response(content: str) -> LLMResponse:
 
 
 def _models_for_config() -> ModelRegistry:
-    """Minimal registry covering all model ids used in skeptic.yaml + prober.yaml."""
+    """Minimal registry covering all model ids used by the 5 canonical agents."""
     return _make_registry(
         "claude_code_opus_47",
         "claude_code_sonnet_46",
         "deepseek_v4_pro",
         "deepseek_v4_flash",
+        "claude_code_haiku_45",
+        "qwen_mlx_30b",
     )
 
 
@@ -163,9 +176,11 @@ def test_integration_full_pipeline_hypothesis_event() -> None:
 
     selection = decide_agents_for_room(RoomType.RESEARCH, "open", available_agents=agents)
     loaded_agents = {a.id: a for a in selection.loaded}
-    # prober < skeptic alphabetically
-    assert selection.loaded[0].id == "prober"
-    assert selection.loaded[1].id == "skeptic"
+    loaded_ids = [a.id for a in selection.loaded]
+    # All 5 canonical agents apply to research; alphabetical order
+    assert "prober" in loaded_ids
+    assert "skeptic" in loaded_ids
+    assert loaded_ids.index("prober") < loaded_ids.index("skeptic")
 
     router = MagicMock(spec=LLMRouterProtocol)
     router.call.return_value = _llm_response("skeptic challenges this hypothesis")
