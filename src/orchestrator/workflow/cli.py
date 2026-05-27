@@ -3,7 +3,8 @@
 `verify-workspace` exists because two W-001-cycle instances of
 stale-workspace-as-truth (RC-7) surfaced the failure mode.
 
-Subcommands: status, init, advance, override, verify-workspace.
+Subcommands: status, init, advance, override, verify-workspace,
+verify-merge-readiness.
 Framework-agnostic primitive; the Claude Code SessionStart hook
 (impl-5) shells out to this CLI. No logic lives in the hook beyond
 the invocation.
@@ -409,6 +410,47 @@ def cmd_override(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify_merge_readiness(args: argparse.Namespace) -> int:
+    """RC-13 forcing function: check impl branch has clean reviews before merge.
+
+    Checks docs/process/reviews/<TASK_ID>/plan-vs-impl.md and R0-A.md
+    for presence + verdict: clean. Warn-don't-block; always exits 0.
+    """
+    task_id: str = args.task_id
+    reviews_dir = Path("docs") / "process" / "reviews" / task_id
+    required = ["plan-vs-impl.md", "R0-A.md"]
+    all_ready = True
+
+    for filename in required:
+        path = reviews_dir / filename
+        if not path.exists():
+            print(
+                f"WARNING: {task_id} — {filename} missing; merge not ready.",
+                file=sys.stderr,
+            )
+            all_ready = False
+            continue
+        try:
+            verdict = parse_verdict(path)
+        except WorkflowError:
+            print(
+                f"WARNING: {task_id} — could not parse verdict from {filename}; merge not ready.",
+                file=sys.stderr,
+            )
+            all_ready = False
+            continue
+        if verdict != "clean":
+            print(
+                f"WARNING: {task_id} — {filename} verdict={verdict!r}; merge not ready.",
+                file=sys.stderr,
+            )
+            all_ready = False
+
+    if all_ready:
+        print(f"✓ {task_id} merge-ready (plan-vs-impl + R0-A both clean).")
+    return 0
+
+
 def cmd_verify_workspace(args: argparse.Namespace) -> int:
     """RC-7 mitigation: fetch origin then report any local divergence to stderr.
 
@@ -515,6 +557,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fetch origin and warn on local divergence (RC-7 mitigation).",
     )
     p_verify.set_defaults(func=cmd_verify_workspace)
+
+    # verify-merge-readiness
+    p_vmr = sub.add_parser(
+        "verify-merge-readiness",
+        help="Check plan-vs-impl + R0-A reviews are clean before merging (RC-13).",
+    )
+    p_vmr.add_argument("--task-id", required=True, metavar="TASK")
+    p_vmr.set_defaults(func=cmd_verify_merge_readiness)
 
     return parser
 

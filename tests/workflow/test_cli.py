@@ -3,10 +3,13 @@
 Covers: status (single task, all tasks, missing dir), init (create,
 refuse-dup, force-overwrite, invalid state), advance (stub — reads
 state file, errors on missing file), override (valid, invalid to-state),
-verify-workspace (clean, dirty, fetch-failure).
+verify-workspace (clean, dirty, fetch-failure),
+verify-merge-readiness (both clean, missing file, non-clean verdict,
+malformed frontmatter).
 
 §3 cleanup: subprocess.run mocked for verify-workspace.
 §4 exception payloads: CLI failures exit non-zero + write to stderr.
+§4 exception payload (light): malformed frontmatter → graceful warning.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from orchestrator.workflow.cli import (
     cmd_init,
     cmd_override,
     cmd_status,
+    cmd_verify_merge_readiness,
     cmd_verify_workspace,
 )
 from orchestrator.workflow.exceptions import WorkflowError
@@ -540,13 +544,120 @@ def test_read_adr_status_frontmatter_no_adr_key_falls_back(tmp_path: Path) -> No
 
 
 # ---------------------------------------------------------------------------
+# verify-merge-readiness — RC-13 forcing function (§4 exception payload light)
+# ---------------------------------------------------------------------------
+
+
+def _write_review(reviews_dir: Path, filename: str, verdict: str) -> Path:
+    reviews_dir.mkdir(parents=True, exist_ok=True)
+    content = f"---\nverdict: {verdict}\n---\n# Review\n"
+    p = reviews_dir / filename
+    p.write_text(content, encoding="utf-8")
+    return p
+
+
+def test_verify_merge_readiness_both_clean(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both reviews present + clean → exit 0 + merge-ready message."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    _write_review(reviews_dir, "plan-vs-impl.md", "clean")
+    _write_review(reviews_dir, "R0-A.md", "clean")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    out, err = capsys.readouterr()
+    assert "merge-ready" in out
+    assert err == ""
+
+
+def test_verify_merge_readiness_missing_plan_vs_impl(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plan-vs-impl.md missing → exit 0 + warning naming missing file."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    _write_review(reviews_dir, "R0-A.md", "clean")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "plan-vs-impl.md" in err
+
+
+def test_verify_merge_readiness_missing_r0a(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R0-A.md missing → exit 0 + warning naming missing file."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    _write_review(reviews_dir, "plan-vs-impl.md", "clean")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "R0-A.md" in err
+
+
+def test_verify_merge_readiness_non_clean_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plan-vs-impl.md has verdict: blocking → exit 0 + warning with verdict value."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    _write_review(reviews_dir, "plan-vs-impl.md", "blocking")
+    _write_review(reviews_dir, "R0-A.md", "clean")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "blocking" in err
+
+
+def test_verify_merge_readiness_r0a_needs_architect(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R0-A.md has verdict: needs_architect → exit 0 + warning naming verdict."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    _write_review(reviews_dir, "plan-vs-impl.md", "clean")
+    _write_review(reviews_dir, "R0-A.md", "needs_architect")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "needs_architect" in err
+
+
+def test_verify_merge_readiness_malformed_frontmatter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§4 light: malformed frontmatter → graceful warning + merge not ready; exit 0."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    reviews_dir.mkdir(parents=True, exist_ok=True)
+    (reviews_dir / "plan-vs-impl.md").write_text("no frontmatter at all", encoding="utf-8")
+    _write_review(reviews_dir, "R0-A.md", "clean")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "plan-vs-impl.md" in err
+
+
+# ---------------------------------------------------------------------------
 # build_parser smoke test
 # ---------------------------------------------------------------------------
 
 
 def test_build_parser_subcommands_registered() -> None:
     parser = build_parser()
-    # Verify all five subcommands exist by parsing minimal valid args
+    # Verify all subcommands exist by parsing minimal valid args
     # (using --workflow-dir to avoid touching real fs)
     ns = parser.parse_args(["--workflow-dir", "/tmp", "verify-workspace"])
     assert ns.command == "verify-workspace"
+    ns2 = parser.parse_args(
+        ["--workflow-dir", "/tmp", "verify-merge-readiness", "--task-id", "W-003"]
+    )
+    assert ns2.command == "verify-merge-readiness"
+    assert ns2.task_id == "W-003"
