@@ -1,0 +1,6 @@
+task_id: W-002.5
+state: awaiting_senior_plan
+cycle: 1
+last_transition_at: '2026-05-27T04:21:26.080615Z'
+override_history: []
+requires_cross_family_review: false
