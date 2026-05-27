@@ -1,6 +1,6 @@
 task_id: P1.5
-state: awaiting_PR_merge
+state: closed
 cycle: 1
-last_transition_at: '2026-05-27T18:12:35.567400Z'
+last_transition_at: '2026-05-27T18:36:36.229002Z'
 override_history: []
 requires_cross_family_review: false
