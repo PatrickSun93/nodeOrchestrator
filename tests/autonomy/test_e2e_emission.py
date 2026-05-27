@@ -2,7 +2,7 @@
 
 Exercises the full chain: load_tools_config (yaml → ToolMeta dict) →
 emit_gate_decision (gate + event emission) → EventStore (SQLite append).
-Uses the project's real tools.yaml.example so doc-spec drift fails here.
+Uses the project's real tools.yaml so doc-spec drift fails here.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from orchestrator.core.event_store import EventStore
 from orchestrator.llm.config_loader import load_tools_config
 
 _EXAMPLES_DIR = Path(__file__).resolve().parent.parent.parent / "config"
-_TOOLS_YAML = _EXAMPLES_DIR / "tools.yaml.example"
+_TOOLS_YAML = _EXAMPLES_DIR / "tools.yaml"
 
 _OPERATOR = ThresholdConfig(threshold_auto=6, threshold_confirm=3, user_intent_modifier=3)
 

@@ -158,7 +158,7 @@ def _read_adr_status(task_id: str, repo_root: Path) -> Literal["proposed", "acce
 
 def _has_commit_since(since: datetime, repo_root: Path) -> bool:
     """Return True if any git commit was authored after `since`."""
-    since_str = since.strftime("%Y-%m-%dT%H:%M:%S")
+    since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")  # Z = UTC; prevents local-tz misparse
     try:
         result = subprocess.run(
             ["git", "log", "--oneline", f"--after={since_str}"],

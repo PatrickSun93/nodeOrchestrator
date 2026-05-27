@@ -30,6 +30,7 @@ import re
 from orchestrator.agents.dispatch import LLMRouterProtocol, dispatch_turn
 from orchestrator.agents.schema import Agent, TurnResult
 from orchestrator.agents.selection import decide_agents_for_room
+from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.core.event import (
     Event,
     EventType,
@@ -52,6 +53,7 @@ def run_turn(
     event_store: EventStore,
     llm_router: LLMRouterProtocol,
     regex_registry: dict[tuple[str, int], re.Pattern[str]],
+    tools: dict[str, ToolMeta],
 ) -> TurnResult:
     """Orchestrate one turn: state machine → agent filtering → dispatch.
 
@@ -121,4 +123,5 @@ def run_turn(
         llm_router=llm_router,
         available_skills=available_skills,
         regex_registry=regex_registry,
+        tools=tools,
     )

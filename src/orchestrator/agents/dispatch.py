@@ -20,6 +20,8 @@ from typing import Protocol
 from orchestrator.agents.schema import Agent, TurnResult
 from orchestrator.agents.selection import build_agent_context
 from orchestrator.agents.speaking import should_agent_speak
+from orchestrator.agents.tool_dispatch import process_tool_calls
+from orchestrator.autonomy.scoring import ThresholdConfig, ToolMeta
 from orchestrator.core.event import (
     Event,
     EventType,
@@ -55,6 +57,7 @@ def dispatch_turn(
     llm_router: LLMRouterProtocol,
     available_skills: dict[str, Skill],
     regex_registry: dict[tuple[str, int], re.Pattern[str]],
+    tools: dict[str, ToolMeta],
 ) -> TurnResult:
     """Dispatch one turn to all eligible agents, sequentially.
 
@@ -125,6 +128,27 @@ def dispatch_turn(
         )
         event_store.append(utterance)  # propagates unwrapped per ADR-011 D7-b
         utterances.append(utterance)
+
+        if response.tool_calls:
+            tool_result = process_tool_calls(
+                response.tool_calls,
+                agent_id=agent.id,
+                room_id=room.id,
+                current_event=current_event,
+                event_store=event_store,
+                tools=tools,
+                thresholds=ThresholdConfig(
+                    threshold_auto=agent.llm_config.autonomy_thresholds.threshold_auto,
+                    threshold_confirm=agent.llm_config.autonomy_thresholds.threshold_confirm,
+                    user_intent_modifier=agent.llm_config.autonomy_thresholds.user_intent_modifier,
+                ),
+            )
+            _log.info(
+                "agent %s tool-call dispatch: %d calls, tiers=%s",
+                agent.id,
+                len(tool_result.decisions),
+                [str(d.tier) for d in tool_result.decisions],
+            )
 
     return TurnResult(
         utterances=utterances,

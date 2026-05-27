@@ -306,3 +306,44 @@ def test_model_not_in_registry_raises(tmp_path: Path) -> None:
     _write(tmp_path, "x")
     with pytest.raises(AgentLoadError):
         load_agents(tmp_path, models=no_models)
+
+
+# ---------------------------------------------------------------------------
+# Integration: all 5 canonical agents load
+# ---------------------------------------------------------------------------
+
+_CANONICAL_DIR = Path(__file__).parent.parent.parent / "config" / "agents"
+
+
+_FULL_REGISTRY_CAPS: dict[str, list[Capability]] = {
+    "deepseek_v4_flash": [Capability.TOOLS],
+    "qwen_mlx_30b": [Capability.TOOLS],
+    "claude_code_opus_47": [Capability.EFFORT],
+    "claude_code_sonnet_46": [Capability.EFFORT],
+    "claude_code_haiku_45": [],
+    "deepseek_v4_pro": [],
+}
+
+
+def _make_full_registry() -> ModelRegistry:
+    """Registry covering all model IDs used by the 5 canonical agents."""
+    profiles = {
+        ModelId(mid): ModelProfile(
+            id=ModelId(mid),
+            provider=_PROVIDER,
+            provider_model_id=mid,
+            capabilities=_FULL_REGISTRY_CAPS.get(mid, []),
+            context_window=8192,
+        )
+        for mid in _FULL_REGISTRY_CAPS
+    }
+    return ModelRegistry(profiles)
+
+
+def test_all_five_canonical_agents_load() -> None:
+    """All 5 canonical agents load without error; count == 5."""
+    registry = _make_full_registry()
+    agents, _reg = load_agents(_CANONICAL_DIR, models=registry)
+    assert len(agents) == 5, f"expected 5 canonical agents, got {len(agents)}: {sorted(agents)}"
+    expected = {"divergence_mapper", "logger", "operator", "prober", "skeptic"}
+    assert set(agents) == expected

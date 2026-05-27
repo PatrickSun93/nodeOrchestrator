@@ -223,13 +223,13 @@ agent:
 - 实现位置: `src/orchestrator/agents/` (schema, loader, selection, speaking, dispatch, exceptions)
 - 加载 API: `orchestrator.agents.loader.load_agents(directory, *, models) -> (agents_dict, regex_registry)`
 - 发言权 API: `orchestrator.agents.speaking.should_agent_speak(agent, snapshot, *, current_event, regex_registry) -> SpeechDecision`
-- 调度 API: `orchestrator.agents.dispatch.dispatch_turn(agents, room, event, *, event_store, llm_router, available_skills, regex_registry) -> TurnResult`
+- 调度 API: `orchestrator.agents.dispatch.dispatch_turn(agents, room, event, *, event_store, llm_router, available_skills, regex_registry, tools) -> TurnResult`
 - `StateTransitionMeta` + `build_author` 加入 `orchestrator.core.event`(ADR-010 D1/D2)
 - 发言触发器三种: `RegexTrigger` / `EventTypeTrigger` / `StateChangeTrigger`(ADR-010 D1)
 - Cooldown: `cooldown_seconds` × 1000.0 ms→s 转换,单点在 `speaking.py`(ADR-010 D2)
 - Dispatch order: alphabetical by `agent.id`(ADR-011 D3 revised; no priority field in P1.4)
 - LLM exception: log + skip + continue; event_store exception: propagates unwrapped(ADR-011 D7/D7-b)
-- Agent YAML: `config/agents/skeptic.yaml`, `config/agents/prober.yaml`
+- Agent YAML: `config/agents/skeptic.yaml`, `config/agents/prober.yaml`, `config/agents/operator.yaml`, `config/agents/divergence_mapper.yaml`, `config/agents/logger.yaml`
 - 召唤决策(summon)推迟到 P1.5+
 
 ### 4.5 跨房间记忆
@@ -476,13 +476,13 @@ models:
 每个 agent 的 yaml 文件包含 `llm_config`:
 
 ```yaml
-# config/agents/prober.yaml.example
+# config/agents/prober.yaml
 llm_config:
   default_model: claude_code_sonnet_46
   fallback_chain: [deepseek_v4_flash]   # default 不重复列入(ADR-002 §3)
   temperature: 0.5
 
-# config/agents/skeptic.yaml.example
+# config/agents/skeptic.yaml
 llm_config:
   default_model: claude_code_opus_47    # Opus 4.7 给最难的角色
   fallback_chain: 
@@ -490,18 +490,18 @@ llm_config:
     - deepseek_v4_pro
   temperature: 0.3                       # 稳定输出
 
-# config/agents/divergence_mapper.yaml.example
+# config/agents/divergence_mapper.yaml
 llm_config:
   default_model: claude_code_sonnet_46
   fallback_chain: [deepseek_v4_flash]
 
-# config/agents/logger.yaml.example
+# config/agents/logger.yaml
 llm_config:
   default_model: claude_code_haiku_45    # 浓缩日志,要快
   fallback_chain: [deepseek_v4_flash]
   temperature: 0.2
 
-# config/agents/operator.yaml.example
+# config/agents/operator.yaml
 llm_config:
   default_model: deepseek_v4_flash       # 必须 API,Claude Code 不能调 orchestrator tools
   fallback_chain: [qwen_mlx_30b]
