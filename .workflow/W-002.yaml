@@ -1,6 +1,17 @@
 task_id: W-002
-state: awaiting_senior_plan
-cycle: 1
-last_transition_at: '2026-05-26T23:35:05.760671Z'
-override_history: []
+state: awaiting_junior_impl
+cycle: 2
+last_transition_at: '2026-05-27T03:08:28.472863Z'
+override_history:
+- timestamp: '2026-05-27T03:08:28.472863Z'
+  actor: architect-partner
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: W-002 is a no-ADR cycle per path-β. Current state-machine routes through
+    awaiting_architect_accept unconditionally on plan publish, but no ADR exists to
+    Accept; would stall indefinitely. W-002-2b atomic (this same cycle's impl) fixes
+    next_state to skip awaiting_architect_accept when plan frontmatter has no 'adr'
+    key — but the fix lands during junior impl, not at plan-publish time. This override
+    is the LAST no-ADR override in project history (after P1.3 cfbf087 first); W-002-2b
+    impl closes the loop for W-003+ no-ADR tasks.
 requires_cross_family_review: false
