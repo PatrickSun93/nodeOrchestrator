@@ -145,7 +145,12 @@ per ADR cross-reference.
 **Mechanics (in order):**
 
 1. Find the most recent event in the snapshot where `author ==
-   f"agent:{agent.id}"` and `type == EventType.UTTERANCE`.
+   build_author(agent.id)` and `type == EventType.UTTERANCE`.
+   Use the `build_author(agent_id: str) -> str` helper from
+   `core/event.py` rather than an inline f-string (added 2026-05-27
+   per DeepSeek R0-B 🟡#6 routing) — single point of format truth,
+   defense-in-depth against silent cooldown-bypass on malformed
+   author strings.
 2. Compute `elapsed_s = (current_event.timestamp - last_utterance.timestamp) / 1000.0`.
 3. If `elapsed_s < agent.cooldown_seconds`, the agent is in cooldown;
    `should_agent_speak` returns `SpeechDecision(speak=False,

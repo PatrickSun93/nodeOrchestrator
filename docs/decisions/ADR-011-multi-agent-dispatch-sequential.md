@@ -80,10 +80,15 @@ begins. Total parallelism per turn: one LLM call in flight at a
 time. The dispatch primitive is a regular **`def`** (not `async
 def`); no `asyncio` surface introduced in P1.4.
 
-**Signature:** `def dispatch_turn(agents, room, current_event, *,
-event_store, llm_router, available_skills, regex_registry) ->
-list[Event]`. Synchronous; returns the list of appended utterance
-events.
+**Signature (revised 2026-05-27 per DeepSeek R0-B 🔴#2 routing):**
+`def dispatch_turn(agents, room, current_event, *, event_store,
+llm_router, available_skills, regex_registry) -> TurnResult`.
+Synchronous; returns a `TurnResult` (`utterances: list[Event]`,
+`failed_agents: list[str]`, `total_asked: int`) so callers can
+programmatically distinguish "nothing wanted to speak" from
+"everything broke" — the prior `list[Event]` return collapsed
+both cases to `[]` and made the all-agents-fail path silent. See
+`TurnResult` in P1.4-4 schema.
 
 **`async def` rejected for P1.4 (2026-05-27 revision per R0-B 🟡#4
 routing).** Original draft kept the signature `async def` as a
@@ -338,6 +343,70 @@ utterance is not in cooldown per ADR-010 D2).
 "agent %s LLM call failed; skipping turn (continuing): %s",
 agent.id, exc)`. **No `print`. No stdout.** Honors the
 P1.3-R0-A-1 + W-002-3 logging convention precedent.
+
+**TurnResult tracking** (added 2026-05-27 per DeepSeek R0-B 🔴#2
+routing). When `LLMRouter.call` raises and this skip path fires,
+the failing agent's `id` is appended to the returned
+`TurnResult.failed_agents` list — making the failure programmatically
+detectable by the caller (room runtime, P1.5+) without log-watching.
+`total_asked` (also on `TurnResult`) counts every agent for which
+`should_agent_speak` returned `speak=True`. Three observable cases
+distinguish:
+
+- *Nothing to say*: `total_asked=0`, `utterances=[]`, `failed_agents=[]`.
+- *N succeeded*: `total_asked=N`, `utterances=N`, `failed_agents=[]`.
+- *N all failed*: `total_asked=N`, `utterances=[]`, `failed_agents=N ids`.
+
+The log message stays the surface for human operators; the
+TurnResult fields are the surface for programmatic callers.
+
+### 7-b. Event-store append failure aborts the turn (added 2026-05-27 per DeepSeek R0-B 🔴#1 routing)
+
+When `EventStore.append(...)` raises during `dispatch_turn` (e.g.,
+`sqlite3.OperationalError` on a locked DB or disk I/O failure,
+`RoomNotFoundError`, `InvalidParentError`, `MetadataValidationError`),
+the dispatch primitive **raises the exception unwrapped — the turn
+aborts**. Surviving agents' LLM calls are NOT made. This is
+asymmetric from the per-agent LLM-failure semantic in Decision 7
+(which continues to the next agent).
+
+**Rationale for the asymmetry.** LLM-call failure is *per-agent*:
+agent A's failure does not affect agent B's ability to think and
+respond, and per Principle 6 we don't drop surviving agents on
+sibling failures. Event-store append failure is *per-turn*: the
+single source of truth (event stream) is unavailable, so continuing
+to dispatch more agents would burn LLM budget on responses that
+also cannot be persisted. The system has nowhere to write the
+results; the honest action is to stop, surface the failure, and let
+the caller decide whether to retry the turn against a healed event
+store.
+
+**Considered alternatives:**
+
+- **Silent skip + log only.** Treat event-store failure like
+  LLM-failure: log + skip + continue. Rejected — event store IS
+  the truth (Principle 11); silence on its failure is dishonest,
+  and continuing produces responses that vanish.
+- **Per-turn retry with backoff.** Retry the append once, then
+  abort if still failing. Rejected for P1.4: the project has no
+  retry infrastructure (subprocess timeouts in `workflow/cli.py`
+  are the closest precedent; not transferable). Defer to P1.5+
+  when production usage surfaces the need; until then the abort-on-
+  first-failure default is honest and conservative.
+
+**Test coverage (P1.4-8 acceptance).** §3 cleanup variant: mock
+`event_store.append` to raise `sqlite3.OperationalError` on agent
+A's utterance; assert the exception propagates (does not continue
+to agent B); assert no further `llm_router.call` invocations are
+made (verifiable via the mock's call count); assert agent A's prior
+LLM response is NOT discarded by retry (the LLM cost is sunk; only
+the persistence path is broken).
+
+**TurnResult relationship.** When the abort path fires, the
+`TurnResult` is never constructed (the function raises before
+returning). Callers (room runtime, P1.5+) handle the exception path
+distinctly from the `TurnResult.failed_agents` path; they are
+categorically different failure modes.
 
 **Test coverage (P1.4-8 acceptance).** §3 cleanup test: mock
 `LLMRouter.call` to raise on agent A; assert no event for A is
