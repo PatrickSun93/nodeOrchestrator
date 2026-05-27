@@ -52,8 +52,13 @@ def _read_plan_frontmatter(path: Path) -> dict[str, Any] | None:
     Raises WorkflowError if the opening fence is present but no closing
     fence is found (malformed file, not an absent one).
     """
+    # Resolve both sides so relative inputs (e.g. `./docs/...` when the
+    # CLI runs with `--workflow-dir .workflow`) reduce to the same
+    # absolute-rooted form as cwd; otherwise `relative_to` raises
+    # ValueError on a relative-vs-absolute comparison and the silent
+    # None return masks an Accepted ADR as `none`.
     try:
-        rel_path_str = path.relative_to(Path.cwd()).as_posix()
+        rel_path_str = path.resolve().relative_to(Path.cwd().resolve()).as_posix()
     except ValueError:
         return None
     content = _git_show(rel_path_str)
