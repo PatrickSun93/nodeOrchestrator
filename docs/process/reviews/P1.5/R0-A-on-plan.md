@@ -1,14 +1,57 @@
 ---
 task_id: P1.5
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 7
+  yellow: 0
+  green: 8
+verdict_history:
+  - verdict: needs_architect
+    at_commit: e74afd1
+    findings_count: { red: 0, yellow: 1, green: 7 }
+  - verdict: clean
+    at_commit: fe3dd82
+    findings_count: { red: 0, yellow: 0, green: 8 }
+    note: Y1 absorbed per architect routing (Y1 → β; default_factory restored; brief lean honored). 5th project use of frontmatter-as-live-signal pattern.
 ---
 
 # P1.5 R0-A on plan (architect-dispatched pre-impl review)
+
+> **Verdict bump 2026-05-27 (RC-10 protocol — 5th project use):**
+> Senior absorbed architect routing at `fe3dd82` (Y1 → β; cross-family
+> R0-B skip per `architect-routing.md` at `c3ab2ec`). Spot-check verified:
+>
+> - **ADR-012 D3 prose** updated to "`AgentAppliesTo` has a class-level
+>   `default_factory` producing `{room_types: ["*"], room_states: ["*"]}`"
+>   per Y1 → β routing.
+> - **ADR-012 D3 Pydantic snippet** updated:
+>   `applies_to: AgentAppliesTo = Field(default_factory=lambda: ...)`.
+> - **ADR-012 Reversibility D3 row** updated to reflect default_factory.
+> - **Plan P1.5-3 acceptance** drops "required (no default)" language;
+>   default_factory is the architectural choice (not alternative).
+>   "skeptic.yaml + prober.yaml are NOT updated" explicit.
+> - **Plan P1.5-3 backwards-compat** "P1.4 e2e tests continue to work
+>   unchanged" — no fixture updates needed.
+>
+> Y1 reclassified as 🟢 G8 (the absorption itself is the proof; brief
+> lean restored; senior over-discipline reversed). Verdict bumps
+> `needs_architect → clean` (0🔴 / 0🟡 / 8🟢; 7 prior 🟢 + 1 new 🟢 from
+> Y1 absorption).
+>
+> Cross-family R0-B skip honored — no proxy, no true external dispatch.
+> Plan §5 push-back #8 / closer updated per routing artifact.
+>
+> **Fifth project use of the frontmatter-as-live-signal pattern** (RC-10):
+> 1. W-001-impl R0-A (`96c1469`) — post-fix bump
+> 2. W-002 R0-A-on-plan (`440ab3b`) — post-revision bump
+> 3. P1.4 R0-A + R0-B proxy (`047daa4`) — dual-review bump
+> 4. P1.4 R0-B DeepSeek (`e8a1ee8`) — dual-routing-on-same-file bump
+> 5. **This bump (commit pending)** — single-routing absorption bump
+>
+> Pattern is stable across 5 uses; codification target remains
+> `docs/process/reviews/README.md` "Post-resolution verdict-bump
+> protocol" section. Defer to W-003 brief authorship.
 
 | Field | Value |
 |---|---|
