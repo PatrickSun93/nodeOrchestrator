@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from orchestrator.core.event import Event, EventType
 from orchestrator.llm.types import AgentLLMConfig
@@ -61,6 +61,33 @@ Pydantic dispatches on the ``type`` field; an unknown value raises
 """
 
 # ---------------------------------------------------------------------------
+# Room filtering (ADR-012 Decision 3)
+# ---------------------------------------------------------------------------
+
+
+class AgentAppliesTo(BaseModel):
+    """Room-type and room-state scope for an agent.
+
+    Both fields use the ``["*"]`` sentinel (third project use, after
+    ADR-009 D3 + W-002.5). ``["*"]`` alone matches every value;
+    concrete values restrict the match. ADR-012 D3.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    room_types: list[str] = Field(min_length=1)
+    room_states: list[str] = Field(min_length=1)
+
+    @field_validator("room_types", "room_states")
+    @classmethod
+    def _reject_mixed_star(cls, v: list[str]) -> list[str]:
+        if "*" in v and len(v) > 1:
+            raise ValueError(
+                '"*" cannot be mixed with concrete values; use ["*"] alone or list specific values'
+            )
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Agent (handoff §4.4)
 # ---------------------------------------------------------------------------
 
@@ -84,6 +111,12 @@ class Agent(BaseModel):
     speaking_triggers: list[SpeakingTrigger] = Field(default_factory=list)
     cooldown_seconds: int = Field(default=0, ge=0)
     llm_config: AgentLLMConfig
+    applies_to: AgentAppliesTo = Field(
+        default_factory=lambda: AgentAppliesTo(
+            room_types=["*"],
+            room_states=["*"],
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

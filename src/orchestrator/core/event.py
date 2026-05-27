@@ -259,12 +259,14 @@ class AutonomyRefusalMetadata(_BaseMeta):
 class StateTransitionMeta(_BaseMeta):
     """Metadata for ``state_transition`` events.
 
-    Carries the target state name after a room state-machine transition.
-    Required by ``StateChangeTrigger`` evaluation in
-    ``should_agent_speak`` (ADR-010 D1, ADR-011 D5 R0-B 🔴#2).
+    Carries both endpoints of the state-machine arc. ``prior_state``
+    was added in P1.5 — the first real producer of ``state_transition``
+    events (ADR-012 D6). Required by ``StateChangeTrigger`` evaluation
+    in ``should_agent_speak`` (ADR-010 D1, ADR-011 D5 R0-B 🔴#2).
     """
 
     new_state: str = Field(min_length=1)
+    prior_state: str = Field(min_length=1)
 
 
 TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {

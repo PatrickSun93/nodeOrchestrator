@@ -288,7 +288,7 @@ def test_state_change_trigger_matches_typed_metadata() -> None:
     current = _make_event(
         type=EventType.STATE_TRANSITION,
         content="",
-        metadata={"new_state": "research"},
+        metadata={"new_state": "research", "prior_state": "setup"},
     )
     result = should_agent_speak(agent, [], current_event=current, regex_registry={})
     assert result.speak is True
@@ -300,7 +300,7 @@ def test_state_change_trigger_wrong_state() -> None:
     current = _make_event(
         type=EventType.STATE_TRANSITION,
         content="",
-        metadata={"new_state": "bug_fix"},
+        metadata={"new_state": "bug_fix", "prior_state": "setup"},
     )
     result = should_agent_speak(agent, [], current_event=current, regex_registry={})
     assert result.speak is False
@@ -367,7 +367,7 @@ def test_all_three_trigger_types_cross_trigger() -> None:
     current = _make_event(
         type=EventType.STATE_TRANSITION,
         content="",
-        metadata={"new_state": "research"},
+        metadata={"new_state": "research", "prior_state": "setup"},
     )
     result = should_agent_speak(
         agent, [], current_event=current, regex_registry=_registry(("a", 0, "xyz"))
