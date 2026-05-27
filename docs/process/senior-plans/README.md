@@ -39,11 +39,15 @@ honored as-is; the workflow harness falls back to a direct
 
 | Key | Shape | Semantics |
 |-----|-------|-----------|
-| `adr` | `ADR-NNN` string | The ADR drafted alongside this plan. The harness resolves `docs/decisions/ADR-NNN-*.md` via glob. One match → read its Status. Zero matches → treat as "not yet drafted" (blocks at `awaiting_architect_accept`). Multiple matches → harness error (authoring bug: two files share the same NNN prefix). |
+| `adr` | `ADR-NNN` string **or** `[ADR-NNN, ...]` list | The ADR(s) drafted alongside this plan. The harness resolves each `docs/decisions/ADR-NNN-*.md` via glob. For a string: one match → read its Status. For a list: all-or-nothing aggregation (see below). Zero matches for any element → treat as "not yet drafted" (blocks at `awaiting_architect_accept`). Multiple files for a single NNN prefix → harness error (authoring bug). |
 
-**`adr` as a list** (e.g. `adr: [ADR-099, ADR-100]`) is not yet
-supported and raises a WorkflowError. Multi-ADR-per-task design is
-deferred to W-003.
+**`adr` as a list** (e.g. `adr: [ADR-010, ADR-011]`) is supported
+(W-002.5). The harness uses all-or-nothing aggregation: all ADRs
+Accepted → state advances to `awaiting_junior_impl`; any ADR Proposed
+or missing → state stays at `awaiting_architect_accept`. Empty list
+(`adr: []`) is an authoring error and raises a WorkflowError.
+See [W-002.5 plan](W-002.5.md) and
+[ADR-008](../../decisions/ADR-008-workflow-state-machine.md) Decision 1.
 
 ### W-002-2b semantics: frontmatter present but no `adr` key
 
