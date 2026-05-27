@@ -99,3 +99,32 @@ def test_read_plan_frontmatter_file_not_on_origin_main(
     result = _read_plan_frontmatter(plan_path)
 
     assert result is None
+
+
+def test_read_plan_frontmatter_relative_path_resolves_against_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression — `workflow advance --workflow-dir .workflow` passes a
+    relative senior-plan path. Prior to the resolve fix, the path's
+    `relative_to(Path.cwd())` raised ValueError (relative-vs-absolute),
+    the silent None return masked an Accepted ADR as `none`, and
+    `awaiting_architect_accept → awaiting_junior_impl` failed to fire.
+
+    Surfaced 2026-05-27 during P1.5.5 ADR-Accept advance; this test pins
+    the W-003 RC-16 fix-completion gap closed.
+    """
+    captured: dict[str, str] = {}
+
+    def fake_git_show(rel_path: str, ref: str = "origin/main") -> str:
+        captured["rel_path"] = rel_path
+        return "---\ntask_id: SYNTH\nadr: ADR-099\n---\n# body"
+
+    monkeypatch.setattr("orchestrator.workflow.io._git_show", fake_git_show)
+    # Relative path that resolves to under cwd — the exact shape build_artifact_snapshot
+    # produces when wdir is Path(".workflow") and repo_root is wdir.parent.
+    plan_path = Path("docs") / "process" / "senior-plans" / "SYNTH.md"
+
+    result = _read_plan_frontmatter(plan_path)
+
+    assert result == {"task_id": "SYNTH", "adr": "ADR-099"}
+    assert captured["rel_path"] == "docs/process/senior-plans/SYNTH.md"
