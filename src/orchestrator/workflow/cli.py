@@ -3,7 +3,8 @@
 `verify-workspace` exists because two W-001-cycle instances of
 stale-workspace-as-truth (RC-7) surfaced the failure mode.
 
-Subcommands: status, init, advance, override, verify-workspace.
+Subcommands: status, init, advance, override, verify-workspace,
+verify-merge-readiness.
 Framework-agnostic primitive; the Claude Code SessionStart hook
 (impl-5) shells out to this CLI. No logic lives in the hook beyond
 the invocation.
@@ -18,8 +19,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import yaml
+
 from orchestrator.workflow.exceptions import WorkflowError
-from orchestrator.workflow.io import _read_plan_frontmatter, read_state, write_state
+from orchestrator.workflow.io import _git_show, _read_plan_frontmatter, read_state, write_state
 from orchestrator.workflow.schema import OverrideEntry, TaskState, WorkflowState
 from orchestrator.workflow.transitions import (
     ArtifactSnapshot,
@@ -409,6 +412,47 @@ def cmd_override(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify_merge_readiness(args: argparse.Namespace) -> int:
+    """RC-13 forcing function: check impl branch has clean reviews before merge.
+
+    Checks docs/process/reviews/<TASK_ID>/plan-vs-impl.md and R0-A.md
+    for presence + verdict: clean. Warn-don't-block; always exits 0.
+    """
+    task_id: str = args.task_id
+    reviews_dir = Path("docs") / "process" / "reviews" / task_id
+    required = ["plan-vs-impl.md", "R0-A.md"]
+    all_ready = True
+
+    for filename in required:
+        path = reviews_dir / filename
+        if not path.exists():
+            print(
+                f"WARNING: {task_id} — {filename} missing; merge not ready.",
+                file=sys.stderr,
+            )
+            all_ready = False
+            continue
+        try:
+            verdict = parse_verdict(path)
+        except WorkflowError:
+            print(
+                f"WARNING: {task_id} — could not parse verdict from {filename}; merge not ready.",
+                file=sys.stderr,
+            )
+            all_ready = False
+            continue
+        if verdict != "clean":
+            print(
+                f"WARNING: {task_id} — {filename} verdict={verdict!r}; merge not ready.",
+                file=sys.stderr,
+            )
+            all_ready = False
+
+    if all_ready:
+        print(f"✓ {task_id} merge-ready (plan-vs-impl + R0-A both clean).")
+    return 0
+
+
 def cmd_verify_workspace(args: argparse.Namespace) -> int:
     """RC-7 mitigation: fetch origin then report any local divergence to stderr.
 
@@ -447,7 +491,52 @@ def cmd_verify_workspace(args: argparse.Namespace) -> int:
             + result.stdout.rstrip(),
             file=sys.stderr,
         )
+
+    # W-003-3: state-file divergence detection.
+    # For each local .workflow/*.yaml, compare content to origin/main.
+    # If file is not on origin/main (new local task) → skip silently.
+    # If content differs → warn naming the task + diverged state field.
+    wdir = Path(args.workflow_dir)
+    diverged: list[str] = []
+    if wdir.is_dir():
+        for state_file in sorted(wdir.glob("*.yaml")):
+            task_id = state_file.stem
+            origin_content = _git_show(f".workflow/{task_id}.yaml")
+            if origin_content is None:
+                continue  # new local task; not on origin/main
+            local_content = state_file.read_text(encoding="utf-8")
+            if local_content == origin_content:
+                continue
+            # Summarise: extract 'state' field from each for a brief diff hint.
+            local_state = _extract_state_field(local_content)
+            origin_state = _extract_state_field(origin_content)
+            if local_state != origin_state:
+                diverged.append(
+                    f"  {task_id}: state local={local_state!r} vs origin/main={origin_state!r}"
+                )
+            else:
+                diverged.append(f"  {task_id}: content differs from origin/main")
+
+    if diverged:
+        print(
+            "WARNING: state-file divergence detected:\n" + "\n".join(diverged),
+            file=sys.stderr,
+        )
     return 0
+
+
+def _extract_state_field(yaml_text: str) -> str:
+    """Extract the 'state' field value from a .workflow yaml string.
+
+    Returns the raw string value, or '<unknown>' if not parseable.
+    """
+    try:
+        data = yaml.safe_load(yaml_text)
+        if isinstance(data, dict):
+            return str(data.get("state", "<unknown>"))
+    except Exception:
+        pass
+    return "<unknown>"
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +604,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fetch origin and warn on local divergence (RC-7 mitigation).",
     )
     p_verify.set_defaults(func=cmd_verify_workspace)
+
+    # verify-merge-readiness
+    p_vmr = sub.add_parser(
+        "verify-merge-readiness",
+        help="Check plan-vs-impl + R0-A reviews are clean before merging (RC-13).",
+    )
+    p_vmr.add_argument("--task-id", required=True, metavar="TASK")
+    p_vmr.set_defaults(func=cmd_verify_merge_readiness)
 
     return parser
 

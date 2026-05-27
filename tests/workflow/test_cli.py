@@ -3,10 +3,13 @@
 Covers: status (single task, all tasks, missing dir), init (create,
 refuse-dup, force-overwrite, invalid state), advance (stub — reads
 state file, errors on missing file), override (valid, invalid to-state),
-verify-workspace (clean, dirty, fetch-failure).
+verify-workspace (clean, dirty, fetch-failure),
+verify-merge-readiness (both clean, missing file, non-clean verdict,
+malformed frontmatter).
 
 §3 cleanup: subprocess.run mocked for verify-workspace.
 §4 exception payloads: CLI failures exit non-zero + write to stderr.
+§4 exception payload (light): malformed frontmatter → graceful warning.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from orchestrator.workflow.cli import (
     cmd_init,
     cmd_override,
     cmd_status,
+    cmd_verify_merge_readiness,
     cmd_verify_workspace,
 )
 from orchestrator.workflow.exceptions import WorkflowError
@@ -305,26 +309,32 @@ def test_override_missing_task_returns_nonzero(
 # ---------------------------------------------------------------------------
 
 
-def test_verify_workspace_clean_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
+def test_verify_workspace_clean_returns_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     fetch_result = MagicMock()
     fetch_result.returncode = 0
     status_result = MagicMock()
     status_result.stdout = ""
 
+    # tmp_path is empty — no .yaml files → divergence loop does nothing
     with patch("subprocess.run", side_effect=[fetch_result, status_result]):
-        rc = cmd_verify_workspace(_args())
+        rc = cmd_verify_workspace(_args(workflow_dir=str(tmp_path)))
     assert rc == 0
     assert capsys.readouterr().err == ""
 
 
-def test_verify_workspace_dirty_warns_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+def test_verify_workspace_dirty_warns_to_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     fetch_result = MagicMock()
     fetch_result.returncode = 0
     status_result = MagicMock()
     status_result.stdout = " M src/foo.py\n?? notes/scratch.md\n"
 
+    # tmp_path is empty — no .yaml files → divergence loop does nothing
     with patch("subprocess.run", side_effect=[fetch_result, status_result]):
-        rc = cmd_verify_workspace(_args())
+        rc = cmd_verify_workspace(_args(workflow_dir=str(tmp_path)))
     assert rc == 0
     err = capsys.readouterr().err
     assert "WARNING" in err
@@ -373,15 +383,41 @@ def _write_adr(repo_root: Path, filename: str, status: str) -> Path:
     return p
 
 
-def test_read_adr_status_via_plan_frontmatter_accepted(tmp_path: Path) -> None:
+def _patch_git_show_from_disk(monkeypatch: pytest.MonkeyPatch, repo_root: Path) -> None:
+    """Redirect _git_show and cwd so _read_plan_frontmatter reads from repo_root on disk.
+
+    Tests write plan files to tmp_path (outside cwd); _read_plan_frontmatter
+    now reads via _git_show (git show origin/main:...) instead of disk. This
+    helper restores disk-read behavior for tests that pre-date the refactor by:
+      1. chdir to repo_root so path.relative_to(Path.cwd()) resolves correctly.
+      2. Replacing _git_show to read from repo_root on disk instead of git.
+    """
+    monkeypatch.chdir(repo_root)
+
+    def _fake_git_show(rel_path: str, ref: str = "origin/main") -> str | None:
+        p = repo_root / rel_path
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+        return None
+
+    monkeypatch.setattr("orchestrator.workflow.io._git_show", _fake_git_show)
+
+
+def test_read_adr_status_via_plan_frontmatter_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """frontmatter adr: ADR-099, ADR-099-synth.md Accepted → 'accepted'."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\ntask_id: SYNTH-001\nadr: ADR-099\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-099-synth.md", "Accepted")
     assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
-def test_read_adr_status_via_plan_frontmatter_proposed(tmp_path: Path) -> None:
+def test_read_adr_status_via_plan_frontmatter_proposed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """frontmatter adr: ADR-099, ADR-099-synth.md Proposed → 'proposed'."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\ntask_id: SYNTH-001\nadr: ADR-099\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-099-synth.md", "Proposed")
     assert _read_adr_status("SYNTH-001", tmp_path) == "proposed"
@@ -394,23 +430,30 @@ def test_read_adr_status_via_plan_frontmatter_adr_not_found(tmp_path: Path) -> N
     assert _read_adr_status("SYNTH-001", tmp_path) == "none"
 
 
-def test_read_adr_status_list_single_element_accepted(tmp_path: Path) -> None:
+def test_read_adr_status_list_single_element_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adr: [ADR-098] degenerate 1-element list → 'accepted'. §5 boundary (len=1)."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098]\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
     assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
-def test_read_adr_status_list_both_accepted(tmp_path: Path) -> None:
+def test_read_adr_status_list_both_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adr: [ADR-098, ADR-099] both Accepted → 'accepted'. §5 boundary (len=2)."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-099]\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
     _write_adr(tmp_path, "ADR-099-bar.md", "Accepted")
     assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
-def test_read_adr_status_list_one_proposed(tmp_path: Path) -> None:
+def test_read_adr_status_list_one_proposed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """adr: [ADR-098, ADR-099] one Proposed → 'proposed' (all-or-nothing)."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-099]\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
     _write_adr(tmp_path, "ADR-099-bar.md", "Proposed")
@@ -425,8 +468,11 @@ def test_read_adr_status_list_one_missing(tmp_path: Path) -> None:
     assert _read_adr_status("SYNTH-001", tmp_path) == "none"
 
 
-def test_read_adr_status_list_three_all_accepted(tmp_path: Path) -> None:
+def test_read_adr_status_list_three_all_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adr: [ADR-098, ADR-099, ADR-100] all Accepted → 'accepted'. §5 multi-position (len=3)."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-099, ADR-100]\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
     _write_adr(tmp_path, "ADR-099-bar.md", "Accepted")
@@ -434,8 +480,9 @@ def test_read_adr_status_list_three_all_accepted(tmp_path: Path) -> None:
     assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
-def test_read_adr_status_empty_list_raises(tmp_path: Path) -> None:
+def test_read_adr_status_empty_list_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """adr: [] raises WorkflowError with path populated. §4 exception payload."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     p = _write_plan(tmp_path, "SYNTH-001", "---\nadr: []\n---\n# Plan\n")
     with pytest.raises(WorkflowError) as exc_info:
         _read_adr_status("SYNTH-001", tmp_path)
@@ -443,8 +490,11 @@ def test_read_adr_status_empty_list_raises(tmp_path: Path) -> None:
     assert "empty" in str(exc_info.value).lower()
 
 
-def test_read_adr_status_list_non_string_element_raises(tmp_path: Path) -> None:
+def test_read_adr_status_list_non_string_element_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adr: [ADR-098, 42] non-string element raises with path + element index. §4."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     p = _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, 42]\n---\n# Plan\n")
     with pytest.raises(WorkflowError) as exc_info:
         _read_adr_status("SYNTH-001", tmp_path)
@@ -452,16 +502,22 @@ def test_read_adr_status_list_non_string_element_raises(tmp_path: Path) -> None:
     assert "1" in str(exc_info.value)  # element index 1
 
 
-def test_read_adr_status_list_duplicate_element(tmp_path: Path) -> None:
+def test_read_adr_status_list_duplicate_element(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """adr: [ADR-098, ADR-098] duplicate — not a raise; both elements resolve same file."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: [ADR-098, ADR-098]\n---\n# Plan\n")
     _write_adr(tmp_path, "ADR-098-foo.md", "Accepted")
     # Both elements resolve to ADR-098-foo.md → both "accepted" → aggregate "accepted"
     assert _read_adr_status("SYNTH-001", tmp_path) == "accepted"
 
 
-def test_read_adr_status_multi_glob_match_raises(tmp_path: Path) -> None:
+def test_read_adr_status_multi_glob_match_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Two files matching ADR-099-*.md → WorkflowError (authoring error). §4 payload."""
+    _patch_git_show_from_disk(monkeypatch, tmp_path)
     _write_plan(tmp_path, "SYNTH-001", "---\nadr: ADR-099\n---\n# Plan\n")
     d = tmp_path / "docs" / "decisions"
     d.mkdir(parents=True, exist_ok=True)
@@ -494,13 +550,216 @@ def test_read_adr_status_frontmatter_no_adr_key_falls_back(tmp_path: Path) -> No
 
 
 # ---------------------------------------------------------------------------
+# verify-merge-readiness — RC-13 forcing function (§4 exception payload light)
+# ---------------------------------------------------------------------------
+
+
+def _write_review(reviews_dir: Path, filename: str, verdict: str) -> Path:
+    reviews_dir.mkdir(parents=True, exist_ok=True)
+    content = f"---\nverdict: {verdict}\n---\n# Review\n"
+    p = reviews_dir / filename
+    p.write_text(content, encoding="utf-8")
+    return p
+
+
+def test_verify_merge_readiness_both_clean(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both reviews present + clean → exit 0 + merge-ready message."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    _write_review(reviews_dir, "plan-vs-impl.md", "clean")
+    _write_review(reviews_dir, "R0-A.md", "clean")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    out, err = capsys.readouterr()
+    assert "merge-ready" in out
+    assert err == ""
+
+
+def test_verify_merge_readiness_missing_plan_vs_impl(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plan-vs-impl.md missing → exit 0 + warning naming missing file."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    _write_review(reviews_dir, "R0-A.md", "clean")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "plan-vs-impl.md" in err
+
+
+def test_verify_merge_readiness_missing_r0a(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R0-A.md missing → exit 0 + warning naming missing file."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    _write_review(reviews_dir, "plan-vs-impl.md", "clean")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "R0-A.md" in err
+
+
+def test_verify_merge_readiness_non_clean_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plan-vs-impl.md has verdict: blocking → exit 0 + warning with verdict value."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    _write_review(reviews_dir, "plan-vs-impl.md", "blocking")
+    _write_review(reviews_dir, "R0-A.md", "clean")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "blocking" in err
+
+
+def test_verify_merge_readiness_r0a_needs_architect(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R0-A.md has verdict: needs_architect → exit 0 + warning naming verdict."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    _write_review(reviews_dir, "plan-vs-impl.md", "clean")
+    _write_review(reviews_dir, "R0-A.md", "needs_architect")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "needs_architect" in err
+
+
+def test_verify_merge_readiness_malformed_frontmatter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§4 light: malformed frontmatter → graceful warning + merge not ready; exit 0."""
+    monkeypatch.chdir(tmp_path)
+    reviews_dir = tmp_path / "docs" / "process" / "reviews" / "SYNTH-001"
+    reviews_dir.mkdir(parents=True, exist_ok=True)
+    (reviews_dir / "plan-vs-impl.md").write_text("no frontmatter at all", encoding="utf-8")
+    _write_review(reviews_dir, "R0-A.md", "clean")
+    rc = cmd_verify_merge_readiness(_args(task_id="SYNTH-001"))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "plan-vs-impl.md" in err
+
+
+# ---------------------------------------------------------------------------
+# verify-workspace state-file divergence detection (W-003-3)
+# ---------------------------------------------------------------------------
+
+_FETCH_OK = MagicMock(returncode=0)
+_STATUS_CLEAN = MagicMock(stdout="")
+
+
+def _patch_subprocess_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "subprocess.run",
+        MagicMock(side_effect=[_FETCH_OK, _STATUS_CLEAN]),
+    )
+
+
+def _make_state_yaml(state: str) -> str:
+    return f"task_id: SYNTH\nstate: {state}\ncycle: 1\n"
+
+
+def test_verify_workspace_state_file_matching_origin_no_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """State file matches origin/main exactly → no divergence warning."""
+    wdir = tmp_path / ".workflow"
+    wdir.mkdir()
+    content = _make_state_yaml("awaiting_junior_impl")
+    (wdir / "SYNTH.yaml").write_text(content, encoding="utf-8")
+    monkeypatch.setattr("orchestrator.workflow.cli._git_show", lambda rel, **_: content)
+    _patch_subprocess_clean(monkeypatch)
+    rc = cmd_verify_workspace(_args(workflow_dir=str(wdir)))
+    assert rc == 0
+    assert "divergence" not in capsys.readouterr().err
+
+
+def test_verify_workspace_state_file_diverged_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local state differs from origin/main → WARNING naming task + state fields."""
+    wdir = tmp_path / ".workflow"
+    wdir.mkdir()
+    local_content = _make_state_yaml("awaiting_junior_impl")
+    origin_content = _make_state_yaml("awaiting_senior_plan_vs_impl")
+    (wdir / "SYNTH.yaml").write_text(local_content, encoding="utf-8")
+    monkeypatch.setattr("orchestrator.workflow.cli._git_show", lambda rel, **_: origin_content)
+    _patch_subprocess_clean(monkeypatch)
+    rc = cmd_verify_workspace(_args(workflow_dir=str(wdir)))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "SYNTH" in err
+    assert "awaiting_junior_impl" in err
+    assert "awaiting_senior_plan_vs_impl" in err
+
+
+def test_verify_workspace_new_local_task_silent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """New local state file not yet on origin/main → skipped silently."""
+    wdir = tmp_path / ".workflow"
+    wdir.mkdir()
+    (wdir / "NEW-001.yaml").write_text(_make_state_yaml("awaiting_brief"), encoding="utf-8")
+    monkeypatch.setattr("orchestrator.workflow.cli._git_show", lambda rel, **_: None)
+    _patch_subprocess_clean(monkeypatch)
+    rc = cmd_verify_workspace(_args(workflow_dir=str(wdir)))
+    assert rc == 0
+    assert "divergence" not in capsys.readouterr().err
+
+
+def test_verify_workspace_mixed_clean_and_diverged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One matching + one diverged file → only the diverged one warned."""
+    wdir = tmp_path / ".workflow"
+    wdir.mkdir()
+    clean_content = _make_state_yaml("closed")
+    dirty_local = _make_state_yaml("awaiting_junior_impl")
+    dirty_origin = _make_state_yaml("awaiting_senior_plan_vs_impl")
+    (wdir / "CLEAN.yaml").write_text(clean_content, encoding="utf-8")
+    (wdir / "DIRTY.yaml").write_text(dirty_local, encoding="utf-8")
+
+    def fake_git_show(rel: str, **_: object) -> str | None:
+        if "CLEAN" in rel:
+            return clean_content
+        if "DIRTY" in rel:
+            return dirty_origin
+        return None
+
+    monkeypatch.setattr("orchestrator.workflow.cli._git_show", fake_git_show)
+    _patch_subprocess_clean(monkeypatch)
+    rc = cmd_verify_workspace(_args(workflow_dir=str(wdir)))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "DIRTY" in err
+    assert "CLEAN" not in err
+
+
+# ---------------------------------------------------------------------------
 # build_parser smoke test
 # ---------------------------------------------------------------------------
 
 
 def test_build_parser_subcommands_registered() -> None:
     parser = build_parser()
-    # Verify all five subcommands exist by parsing minimal valid args
+    # Verify all subcommands exist by parsing minimal valid args
     # (using --workflow-dir to avoid touching real fs)
     ns = parser.parse_args(["--workflow-dir", "/tmp", "verify-workspace"])
     assert ns.command == "verify-workspace"
+    ns2 = parser.parse_args(
+        ["--workflow-dir", "/tmp", "verify-merge-readiness", "--task-id", "W-003"]
+    )
+    assert ns2.command == "verify-merge-readiness"
+    assert ns2.task_id == "W-003"

@@ -344,7 +344,9 @@ def test_side_channel_file_does_not_reach_parse_verdict(git_repo: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_e2e_path_beta_task_with_adr_advances(git_repo: Path) -> None:
+def test_e2e_path_beta_task_with_adr_advances(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """§1 cross-module: SYNTH-002 plan declares `adr: ADR-099` in frontmatter.
     ADR-099-synth.md exists and is Accepted. State starts at
     awaiting_architect_accept; advance fires to awaiting_junior_impl.
@@ -370,6 +372,16 @@ def test_e2e_path_beta_task_with_adr_advances(git_repo: Path) -> None:
         encoding="utf-8",
     )
 
+    # _read_plan_frontmatter reads via _git_show (origin/main); mock to read from disk.
+    # chdir so path.relative_to(Path.cwd()) resolves against git_repo root.
+    monkeypatch.chdir(git_repo)
+
+    def _fake_git_show(rel_path: str, ref: str = "origin/main") -> str | None:
+        p = git_repo / rel_path
+        return p.read_text(encoding="utf-8") if p.exists() else None
+
+    monkeypatch.setattr("orchestrator.workflow.io._git_show", _fake_git_show)
+
     with (
         patch("orchestrator.workflow.cli._is_pr_merged", return_value=False),
         patch("orchestrator.workflow.cli.evaluate_merge_clean", return_value=True),
@@ -388,7 +400,9 @@ def test_e2e_path_beta_task_with_adr_advances(git_repo: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_e2e_multi_adr_plan_advances_when_all_accepted(git_repo: Path) -> None:
+def test_e2e_multi_adr_plan_advances_when_all_accepted(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """§1 cross-module: SYNTH-002.5 plan declares `adr: [ADR-098, ADR-099]`.
     Both Proposed → state stays at awaiting_architect_accept.
     Both Accepted → state advances to awaiting_junior_impl.
@@ -409,6 +423,16 @@ def test_e2e_multi_adr_plan_advances_when_all_accepted(git_repo: Path) -> None:
     decisions_dir.mkdir(parents=True, exist_ok=True)
     adr098 = decisions_dir / "ADR-098-foo.md"
     adr099 = decisions_dir / "ADR-099-bar.md"
+
+    # _read_plan_frontmatter reads via _git_show (origin/main); mock to read from disk.
+    # chdir so path.relative_to(Path.cwd()) resolves against git_repo root.
+    monkeypatch.chdir(git_repo)
+
+    def _fake_git_show(rel_path: str, ref: str = "origin/main") -> str | None:
+        p = git_repo / rel_path
+        return p.read_text(encoding="utf-8") if p.exists() else None
+
+    monkeypatch.setattr("orchestrator.workflow.io._git_show", _fake_git_show)
 
     # Both Proposed → state stays
     adr098.write_text("# ADR-098\n\nStatus: Proposed\n", encoding="utf-8")

@@ -23,6 +23,13 @@ SessionStart hook 已经报了 `.workflow/` 状态。每次你被 resume,
    `mypy --strict src tests` / `pytest`
 9. Push branch + 报告:branch name + commit count + gate status
 
+## Workflow verify-workspace pre-landing
+
+Before pushing any landing commit (5-surface scan committed), run
+`uv run workflow verify-workspace`. If output surfaces a warning,
+address it OR note in commit body explicitly. The CLI exits 0 always;
+the architect lens on warnings is the load-bearing check.
+
 **Boundary**:
 - NEVER amend 已 push 的 commits(audit trail 保留),除非 architect explicit dispatch
 - NEVER 写 plans / ADRs / reviews(senior / architect-partner 工作)

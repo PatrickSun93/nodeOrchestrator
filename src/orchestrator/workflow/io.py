@@ -7,6 +7,7 @@ locking is implemented. (test-coverage-standard.md §2 N/A rationale.)
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -16,21 +17,48 @@ from orchestrator.workflow.exceptions import WorkflowError
 from orchestrator.workflow.schema import TaskState
 
 
+def _git_show(rel_path: str, ref: str = "origin/main") -> str | None:
+    """Return file content from a git ref via subprocess. None if not found.
+
+    Centralizes subprocess error handling (timeout; non-zero exit;
+    missing-file return-None semantic) for git-show callers.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{ref}:{rel_path}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
 def _read_plan_frontmatter(path: Path) -> dict[str, Any] | None:
     """Parse the YAML frontmatter of a senior-plan markdown file.
 
-    Returns the parsed frontmatter dict if the file exists, starts with
-    '---', has a closing '---' fence, and parses as a mapping.
+    Reads the file content from origin/main via _git_show so that plan
+    detection reflects the published state rather than the local working tree.
 
-    Returns None if: file does not exist, has no opening '---' fence,
+    Returns the parsed frontmatter dict if the file is present on origin/main,
+    starts with '---', has a closing '---' fence, and parses as a mapping.
+
+    Returns None if: file is not on origin/main, has no opening '---' fence,
     or the YAML content parses to a non-dict value.
 
     Raises WorkflowError if the opening fence is present but no closing
     fence is found (malformed file, not an absent one).
     """
-    if not path.exists():
+    try:
+        rel_path_str = path.relative_to(Path.cwd()).as_posix()
+    except ValueError:
         return None
-    content = path.read_text(encoding="utf-8")
+    content = _git_show(rel_path_str)
+    if content is None:
+        return None
     if not content.startswith("---"):
         return None
     end = content.find("\n---", 3)
