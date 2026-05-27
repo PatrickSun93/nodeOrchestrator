@@ -1,6 +1,6 @@
 # ADR-011: Multi-Agent Dispatch — Sequential, Snapshot-Per-Turn
 
-**Status:** Proposed — 2026-05-26 (revised 2026-05-27 absorbing R0-A-on-plan + R0-B-cross-family architect-routing — see `docs/process/reviews/P1.4/architect-routing.md`)
+**Status:** Accepted — 2026-05-27 (revised 2026-05-27 absorbing R0-A-on-plan + R0-B-cross-family architect-routing — see `docs/process/reviews/P1.4/architect-routing.md`)
 **Scope:** Governs the per-turn primitive that decides which loaded
 agent(s) speak on a given event and how their LLM calls are
 dispatched. Inscribes the sequential-dispatch model for P1.4 (with
