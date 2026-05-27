@@ -154,6 +154,7 @@ def test_no_transition_no_state_event() -> None:
         event_store=store,
         llm_router=_mock_router(),
         regex_registry={},
+        tools={},
     )
 
     types = [e.type for e in store.get_room_events(room.id)]
@@ -179,6 +180,7 @@ def test_transition_fires_appends_state_transition_event() -> None:
         event_store=store,
         llm_router=_mock_router(),
         regex_registry={},
+        tools={},
     )
 
     events = store.get_room_events(room.id)
@@ -211,6 +213,7 @@ def test_state_transition_event_before_utterance() -> None:
         event_store=store,
         llm_router=_mock_router(),
         regex_registry={},
+        tools={},
     )
 
     events = store.get_room_events(room.id)
@@ -245,6 +248,7 @@ def test_room_state_not_mutated() -> None:
         event_store=store,
         llm_router=_mock_router(),
         regex_registry={},
+        tools={},
     )
 
     assert room.state == original_state  # frozen — not mutated by run_turn
@@ -283,6 +287,7 @@ def test_dispatch_time_filter_excludes_wrong_room_state() -> None:
         event_store=store,
         llm_router=llm,
         regex_registry={},
+        tools={},
     )
 
     llm.call.assert_not_called()
@@ -311,6 +316,7 @@ def test_wildcard_room_states_always_active() -> None:
         event_store=store,
         llm_router=_mock_router(),
         regex_registry={},
+        tools={},
     )
 
     assert result.total_asked == 1
@@ -341,6 +347,7 @@ def test_room_state_error_propagates() -> None:
             event_store=store,
             llm_router=_mock_router(),
             regex_registry={},
+            tools={},
         )
     assert exc_info.value.room_id == room.id
     assert exc_info.value.attempted_transition_rule == "test_rule"
@@ -365,6 +372,7 @@ def test_empty_agents_returns_nothing_to_say() -> None:
         event_store=store,
         llm_router=_mock_router(),
         regex_registry={},
+        tools={},
     )
 
     assert result.total_asked == 0
@@ -407,6 +415,7 @@ def test_integration_research_room_state_advance_and_agent_speaks() -> None:
         event_store=store,
         llm_router=_mock_router("a response"),
         regex_registry={},
+        tools={},
     )
 
     # State advanced setup → exploration
@@ -423,3 +432,56 @@ def test_integration_research_room_state_advance_and_agent_speaks() -> None:
     assert "agent:prober" in utterance_authors
     assert result.total_asked == 2
     assert len(result.utterances) == 2
+
+
+def test_run_turn_tools_param_threads_through() -> None:
+    """tools parameter passed to run_turn is threaded to dispatch_turn/process_tool_calls."""
+    from orchestrator.autonomy.scoring import ToolMeta
+    from orchestrator.llm.types import (
+        LLMResponse,
+        ModelId,
+        ProviderId,
+        ToolCall,
+        Usage,
+        generate_request_id,
+    )
+
+    store = _make_store()
+    room = _make_room(store, state="exploration")
+    agent = _agent("op", triggers=[EventTypeTrigger(event_type=EventType.USER_INPUT)])
+    evt = _make_event(room.id, event_type=EventType.USER_INPUT)
+    store.append(evt)
+
+    def _router_with_tool_calls(request: object) -> LLMResponse:
+        return LLMResponse(
+            request_id=generate_request_id(),
+            content="calling tool",
+            model_id_requested=ModelId("m1"),
+            model_id_used=ModelId("m1"),
+            provider_id_used=ProviderId("p1"),
+            usage=Usage(input_tokens=5, output_tokens=5),
+            latency_ms=10,
+            finish_reason="tool_use",
+            tool_calls=[ToolCall(id="tc_r", name="read_file", arguments={})],
+        )
+
+    router = MagicMock()
+    router.call.side_effect = _router_with_tool_calls
+
+    tools = {"read_file": ToolMeta(reversibility=10)}
+    result = run_turn(
+        room,
+        evt,
+        available_agents={"op": agent},
+        available_skills={},
+        event_store=store,
+        llm_router=router,
+        regex_registry={},
+        tools=tools,
+    )
+
+    assert result.total_asked == 1
+    events = store.get_room_events(room.id)
+    tool_call_events = [e for e in events if e.type == EventType.TOOL_CALL]
+    assert len(tool_call_events) == 1
+    assert tool_call_events[0].metadata["tool_name"] == "read_file"

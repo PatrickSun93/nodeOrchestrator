@@ -193,6 +193,7 @@ def test_integration_full_pipeline_hypothesis_event() -> None:
         llm_router=router,
         available_skills={},
         regex_registry=registry,
+        tools={},
     )
 
     # skeptic should speak (hypothesis event_type trigger); prober should NOT
@@ -247,6 +248,7 @@ def test_integration_alphabetical_dispatch_order() -> None:
         llm_router=router,
         available_skills={},
         regex_registry=registry,
+        tools={},
     )
 
     assert result.failed_agents == []
@@ -290,6 +292,7 @@ def test_integration_event_store_consistency() -> None:
         llm_router=router,
         available_skills={},
         regex_registry=registry,
+        tools={},
     )
 
     if result.utterances:

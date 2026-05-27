@@ -143,6 +143,7 @@ def test_dispatch_happy_path_one_agent_speaks() -> None:
         llm_router=router,
         available_skills={},
         regex_registry={},
+        tools={},
     )
 
     assert result.total_asked == 1
@@ -177,6 +178,7 @@ def test_dispatch_two_agents_alphabetical_order() -> None:
         llm_router=router,
         available_skills={},
         regex_registry={},
+        tools={},
     )
 
     assert result.total_asked == 2
@@ -210,6 +212,7 @@ def test_dispatch_no_agent_speaks() -> None:
         llm_router=router,
         available_skills={},
         regex_registry={},
+        tools={},
     )
 
     assert result.total_asked == 0
@@ -242,6 +245,7 @@ def test_dispatch_all_agents_fail_llm_exception() -> None:
         llm_router=router,
         available_skills={},
         regex_registry={},
+        tools={},
     )
 
     assert result.total_asked == 2
@@ -291,6 +295,7 @@ def test_dispatch_snapshot_frozen_at_turn_start() -> None:
             llm_router=router,
             available_skills={},
             regex_registry={},
+            tools={},
         )
 
     # Both agents received the same snapshot (taken before turn started)
@@ -320,6 +325,7 @@ def test_dispatch_subsequent_turn_sees_prior_utterance() -> None:
         llm_router=router,
         available_skills={},
         regex_registry={},
+        tools={},
     )
 
     # Second turn: the event_store now includes the utterance from turn 1
@@ -333,6 +339,7 @@ def test_dispatch_subsequent_turn_sees_prior_utterance() -> None:
         llm_router=router,
         available_skills={},
         regex_registry={},
+        tools={},
     )
 
     snapshot2 = store.get_room_events(room.id)
@@ -372,6 +379,7 @@ def test_dispatch_llm_exception_logs_and_continues(caplog: Any) -> None:
             llm_router=router,
             available_skills={},
             regex_registry={},
+            tools={},
         )
 
     assert result.total_asked == 2
@@ -412,6 +420,7 @@ def test_dispatch_event_store_abort_on_append_failure() -> None:
             llm_router=router,
             available_skills={},
             regex_registry={},
+            tools={},
         )
 
     # Only one LLM call was made (prober's); skeptic's was never reached
@@ -443,6 +452,7 @@ def test_dispatch_base_exception_propagates() -> None:
             llm_router=router,
             available_skills={},
             regex_registry={},
+            tools={},
         )
 
 
@@ -468,6 +478,7 @@ def test_dispatch_utterance_author_equals_build_author() -> None:
         llm_router=router,
         available_skills={},
         regex_registry={},
+        tools={},
     )
 
     assert result.utterances[0].author == build_author("my-agent")
@@ -498,6 +509,7 @@ def test_dispatch_turn_result_nothing_to_say() -> None:
         llm_router=_mock_router(),
         available_skills={},
         regex_registry={},
+        tools={},
     )
     assert result.total_asked == 0
     assert result.utterances == []
@@ -523,6 +535,7 @@ def test_dispatch_turn_result_n_success() -> None:
         llm_router=_mock_router("a reply", "b reply"),
         available_skills={},
         regex_registry={},
+        tools={},
     )
     assert result.total_asked == 2
     assert len(result.utterances) == 2
@@ -551,6 +564,7 @@ def test_dispatch_turn_result_n_all_fail() -> None:
         llm_router=router,
         available_skills={},
         regex_registry={},
+        tools={},
     )
     assert result.total_asked == 2
     assert result.utterances == []
@@ -587,6 +601,7 @@ def test_dispatch_llm_request_purpose_and_caller() -> None:
         llm_router=router,
         available_skills={},
         regex_registry={},
+        tools={},
     )
 
     assert len(captured_requests) == 1
@@ -594,3 +609,67 @@ def test_dispatch_llm_request_purpose_and_caller() -> None:
     assert req.purpose == LLMPurpose.AGENT_RESPONSE
     assert req.caller_agent_id == "alpha"
     assert len(req.messages) >= 1
+
+
+# ---------------------------------------------------------------------------
+# 12. §1 tool-call dispatch integration: LLM returns tool_calls → events in store
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_tool_calls_auto_execute_creates_events() -> None:
+    """§1 integration: operator LLM response with tool_call → tool_call event in store.
+
+    Source ≠ sink: tool_id flows operator LLM response.tool_calls[0].name →
+    process_tool_calls → ToolCallMeta.tool_name in stored event.
+    """
+    from orchestrator.autonomy.scoring import ToolMeta
+    from orchestrator.llm.types import ToolCall
+
+    store = _make_store()
+    room = _make_room(store)
+    # Agent with autonomy_thresholds that auto-executes a reversibility=10 tool
+    # threshold_auto=8, confirm=4; read_file has reversibility=10 → AUTO_EXECUTE
+    agent = _agent("operator", trigger_type=EventType.USER_INPUT)
+    current = _make_event(room.id, type=EventType.USER_INPUT, content="fetch something")
+    store.append(current)
+
+    # LLM response includes a tool call
+    def _router_with_tool_calls(request: object) -> LLMResponse:
+        return LLMResponse(
+            request_id=generate_request_id(),
+            content="I'll read that file",
+            model_id_requested=ModelId("m1"),
+            model_id_used=ModelId("m1"),
+            provider_id_used=_PROVIDER,
+            usage=Usage(input_tokens=10, output_tokens=20),
+            latency_ms=100,
+            finish_reason="tool_use",
+            tool_calls=[ToolCall(id="tc_001", name="read_file", arguments={"path": "foo.txt"})],
+        )
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = _router_with_tool_calls
+
+    tools = {"read_file": ToolMeta(reversibility=10)}
+    result = dispatch_turn(
+        {"operator": agent},
+        room,
+        current,
+        event_store=store,
+        llm_router=router,
+        available_skills={},
+        regex_registry={},
+        tools=tools,
+    )
+
+    assert result.total_asked == 1
+    assert len(result.utterances) == 1
+
+    events = store.get_room_events(room.id)
+    tool_call_events = [e for e in events if e.type == EventType.TOOL_CALL]
+    assert len(tool_call_events) == 1
+    assert tool_call_events[0].metadata["tool_name"] == "read_file"
+    assert tool_call_events[0].metadata["call_id"] == "tc_001"
+
+    autonomy_events = [e for e in events if e.type == EventType.AUTONOMY_DECISION]
+    assert len(autonomy_events) == 1
