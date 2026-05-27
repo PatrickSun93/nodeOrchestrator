@@ -186,8 +186,13 @@ def record_override(state: TaskState, override: OverrideEntry) -> TaskState:
     governs.
     """
     new_cycle = state.cycle
-    # Rework path: override to awaiting_junior_impl increments cycle
-    if override.to_state == WorkflowState.AWAITING_JUNIOR_IMPL:
+    # Rework path: awaiting_architect_decision → awaiting_junior_impl increments cycle.
+    # Both from_state AND to_state must match — the P1.3 bug was gating on to_state only
+    # (ADR-008 Decision 11: cycle increments only on rework transitions).
+    if (
+        override.from_state == WorkflowState.AWAITING_ARCHITECT_DECISION
+        and override.to_state == WorkflowState.AWAITING_JUNIOR_IMPL
+    ):
         new_cycle = state.cycle + 1
         if new_cycle >= 4:
             print(

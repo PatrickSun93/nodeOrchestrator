@@ -313,6 +313,72 @@ def test_record_override_non_rework_does_not_change_cycle() -> None:
     assert result.cycle == 2
 
 
+def test_record_override_to_junior_impl_from_accept_does_not_increment_cycle() -> None:
+    """P1.3-case regression: from=awaiting_architect_accept, to=awaiting_junior_impl
+    must NOT increment cycle (rework requires from=awaiting_architect_decision).
+    """
+    original = _state(state=WorkflowState.AWAITING_ARCHITECT_ACCEPT, cycle=1)
+    override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_ARCHITECT_ACCEPT,
+        to_state=WorkflowState.AWAITING_JUNIOR_IMPL,
+        reason="ADR accepted out-of-band; unblocking P1.3",
+    )
+    result = record_override(original, override)
+    assert result.cycle == 1
+    assert result.state == WorkflowState.AWAITING_JUNIOR_IMPL
+    assert len(result.override_history) == 1
+    assert result.last_transition_at == _NOW
+
+
+def test_record_override_to_junior_impl_from_brief_does_not_increment_cycle() -> None:
+    """Defense-in-depth: any from-state != AWAITING_ARCHITECT_DECISION is non-rework."""
+    original = _state(state=WorkflowState.AWAITING_BRIEF, cycle=1)
+    override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_BRIEF,
+        to_state=WorkflowState.AWAITING_JUNIOR_IMPL,
+        reason="emergency skip",
+    )
+    result = record_override(original, override)
+    assert result.cycle == 1
+
+
+def test_record_override_cycle_warning_fires_only_on_rework_reaching_threshold(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """cycle ≥ 4 warning emits only when from=AWAITING_ARCHITECT_DECISION."""
+    # Rework path reaching cycle 4 → warning
+    rework_state = _state(state=WorkflowState.AWAITING_ARCHITECT_DECISION, cycle=3)
+    rework_override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_ARCHITECT_DECISION,
+        to_state=WorkflowState.AWAITING_JUNIOR_IMPL,
+        reason="rework: third attempt",
+    )
+    result = record_override(rework_state, rework_override)
+    assert result.cycle == 4
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert "cycle 4" in captured.err
+
+    # Non-rework from accept → same initial cycle=3, to=JUNIOR_IMPL → no warning
+    accept_state = _state(state=WorkflowState.AWAITING_ARCHITECT_ACCEPT, cycle=3)
+    accept_override = OverrideEntry(
+        timestamp=_NOW,
+        actor="architect",
+        from_state=WorkflowState.AWAITING_ARCHITECT_ACCEPT,
+        to_state=WorkflowState.AWAITING_JUNIOR_IMPL,
+        reason="unblock",
+    )
+    result2 = record_override(accept_state, accept_override)
+    assert result2.cycle == 3
+    assert capsys.readouterr().err == ""
+
+
 # ---------------------------------------------------------------------------
 # parse_verdict — §4 exception payload + §5 boundary validators
 # ---------------------------------------------------------------------------
