@@ -1,0 +1,425 @@
+"""Tests for rooms/runtime.py — run_turn orchestrator.
+
+Covers:
+  §1  cross-module integration (Research room → state machine → dispatch)
+  §3  cleanup: event_store abort propagates (ADR-011 D7-b via dispatch_turn)
+  §4  exception payload: RoomStateError propagates from next_room_state
+  §6  schema invariants: StateTransitionMeta metadata in appended event
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from typing import cast
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from orchestrator.agents.schema import (
+    Agent,
+    AgentAppliesTo,
+    EventTypeTrigger,
+    RegexTrigger,
+    StateChangeTrigger,
+)
+from orchestrator.core.event import (
+    Event,
+    EventType,
+    RoomId,
+    StateTransitionMeta,
+    generate_event_id,
+    generate_room_id,
+    now_ms,
+)
+from orchestrator.core.event_store import EventStore
+from orchestrator.core.room import Room, RoomType
+from orchestrator.llm.types import (
+    AgentAutonomyThresholds,
+    AgentLLMConfig,
+    LLMResponse,
+    ModelId,
+    ProviderId,
+    Usage,
+    generate_request_id,
+)
+from orchestrator.rooms.exceptions import RoomStateError
+from orchestrator.rooms.runtime import run_turn
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_AUTONOMY = AgentAutonomyThresholds(
+    threshold_auto=8,
+    threshold_confirm=4,
+    user_intent_modifier=2,
+)
+_LLM = AgentLLMConfig(default_model=ModelId("m1"), autonomy_thresholds=_AUTONOMY)
+_PROVIDER = ProviderId("p1")
+
+
+def _make_store() -> EventStore:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    store = EventStore(conn)
+    store.init_schema()
+    return store
+
+
+def _make_room(
+    store: EventStore,
+    *,
+    room_type: RoomType = RoomType.RESEARCH,
+    state: str = "setup",
+) -> Room:
+    room = Room(id=generate_room_id(), type=room_type, state=state)
+    store.append_room(room)
+    return room
+
+
+def _make_event(
+    room_id: RoomId,
+    *,
+    event_type: EventType = EventType.UTTERANCE,
+    content: str = "hello",
+) -> Event:
+    return Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=event_type,
+        author="user",
+        timestamp=now_ms(),
+        content=content,
+    )
+
+
+def _llm_response(content: str = "agent response") -> LLMResponse:
+    return LLMResponse(
+        request_id=generate_request_id(),
+        content=content,
+        model_id_requested=ModelId("m1"),
+        model_id_used=ModelId("m1"),
+        provider_id_used=_PROVIDER,
+        usage=Usage(input_tokens=10, output_tokens=20),
+        latency_ms=100,
+        finish_reason="stop",
+    )
+
+
+def _mock_router(content: str = "agent response") -> MagicMock:
+    router = MagicMock()
+    router.call.return_value = _llm_response(content)
+    return router
+
+
+def _agent(
+    agent_id: str,
+    *,
+    triggers: list[EventTypeTrigger] | None = None,
+    room_types: list[str] | None = None,
+    room_states: list[str] | None = None,
+) -> Agent:
+    return Agent(
+        id=agent_id,
+        role="r",
+        persona=f"I am {agent_id}",
+        llm_config=_LLM,
+        speaking_triggers=cast(
+            list[RegexTrigger | EventTypeTrigger | StateChangeTrigger], triggers or []
+        ),
+        applies_to=AgentAppliesTo(
+            room_types=room_types or ["*"],
+            room_states=room_states or ["*"],
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 1. No transition → no state_transition event
+# ---------------------------------------------------------------------------
+
+
+def test_no_transition_no_state_event() -> None:
+    """No state_transition event appended when next_room_state returns None."""
+    store = _make_store()
+    # utterance in "exploration" state doesn't trigger any Research transition
+    room = _make_room(store, state="exploration")
+    evt = _make_event(room.id, event_type=EventType.UTTERANCE)
+
+    run_turn(
+        room,
+        evt,
+        available_agents={},
+        available_skills={},
+        event_store=store,
+        llm_router=_mock_router(),
+        regex_registry={},
+    )
+
+    types = [e.type for e in store.get_room_events(room.id)]
+    assert EventType.STATE_TRANSITION not in types
+
+
+# ---------------------------------------------------------------------------
+# 2. State transition fires → event appended to store
+# ---------------------------------------------------------------------------
+
+
+def test_transition_fires_appends_state_transition_event() -> None:
+    """setup → exploration: state_transition event appended with correct metadata."""
+    store = _make_store()
+    room = _make_room(store, state="setup")
+    evt = _make_event(room.id, event_type=EventType.UTTERANCE)
+
+    run_turn(
+        room,
+        evt,
+        available_agents={},
+        available_skills={},
+        event_store=store,
+        llm_router=_mock_router(),
+        regex_registry={},
+    )
+
+    events = store.get_room_events(room.id)
+    transition_events = [e for e in events if e.type == EventType.STATE_TRANSITION]
+    assert len(transition_events) == 1
+    meta = StateTransitionMeta.model_validate(transition_events[0].metadata)
+    assert meta.prior_state == "setup"
+    assert meta.new_state == "exploration"
+    assert transition_events[0].author == "system"
+
+
+# ---------------------------------------------------------------------------
+# 3. State transition event is appended BEFORE dispatch utterances
+# ---------------------------------------------------------------------------
+
+
+def test_state_transition_event_before_utterance() -> None:
+    """State transition event appears before agent utterance in event log."""
+    store = _make_store()
+    room = _make_room(store, state="setup")
+    agent = _agent("a", triggers=[EventTypeTrigger(event_type=EventType.UTTERANCE)])
+    evt = _make_event(room.id, event_type=EventType.UTTERANCE)
+
+    store.append(evt)
+    run_turn(
+        room,
+        evt,
+        available_agents={"a": agent},
+        available_skills={},
+        event_store=store,
+        llm_router=_mock_router(),
+        regex_registry={},
+    )
+
+    events = store.get_room_events(room.id)
+    types = [e.type for e in events]
+    assert EventType.STATE_TRANSITION in types
+    assert EventType.UTTERANCE in types
+    state_idx = types.index(EventType.STATE_TRANSITION)
+    # Two UTTERANCEs: trigger (appended before run_turn) + agent response.
+    # STATE_TRANSITION must precede the agent's utterance (last UTTERANCE).
+    utterance_indices = [i for i, t in enumerate(types) if t == EventType.UTTERANCE]
+    assert len(utterance_indices) >= 2
+    assert state_idx < utterance_indices[-1]
+
+
+# ---------------------------------------------------------------------------
+# 4. room.state not mutated (Room is frozen)
+# ---------------------------------------------------------------------------
+
+
+def test_room_state_not_mutated() -> None:
+    """run_turn does not mutate room.state; Room is a frozen Pydantic model."""
+    store = _make_store()
+    room = _make_room(store, state="setup")
+    original_state = room.state
+    evt = _make_event(room.id, event_type=EventType.UTTERANCE)
+
+    run_turn(
+        room,
+        evt,
+        available_agents={},
+        available_skills={},
+        event_store=store,
+        llm_router=_mock_router(),
+        regex_registry={},
+    )
+
+    assert room.state == original_state  # frozen — not mutated by run_turn
+    # New state is persisted in the event log
+    transition_events = [
+        e for e in store.get_room_events(room.id) if e.type == EventType.STATE_TRANSITION
+    ]
+    assert len(transition_events) == 1
+    meta = StateTransitionMeta.model_validate(transition_events[0].metadata)
+    assert meta.new_state == "exploration"
+
+
+# ---------------------------------------------------------------------------
+# 5. Dispatch-time room_state filter
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_time_filter_excludes_wrong_room_state() -> None:
+    """Agent with room_states=["exploration"] is excluded when room.state="setup"."""
+    store = _make_store()
+    room = _make_room(store, state="setup")
+    # USER_INPUT in "setup" does not trigger setup→exploration (only UTTERANCE does)
+    agent = _agent(
+        "a",
+        triggers=[EventTypeTrigger(event_type=EventType.USER_INPUT)],
+        room_states=["exploration"],  # won't match "setup"
+    )
+    evt = _make_event(room.id, event_type=EventType.USER_INPUT)
+
+    llm = _mock_router()
+    run_turn(
+        room,
+        evt,
+        available_agents={"a": agent},
+        available_skills={},
+        event_store=store,
+        llm_router=llm,
+        regex_registry={},
+    )
+
+    llm.call.assert_not_called()
+    utterances = [e for e in store.get_room_events(room.id) if e.type == EventType.UTTERANCE]
+    assert utterances == []
+
+
+def test_wildcard_room_states_always_active() -> None:
+    """Agent with applies_to.room_states=["*"] is active in any room state."""
+    store = _make_store()
+    room = _make_room(store, state="convergence")
+    agent = _agent(
+        "prober",
+        triggers=[EventTypeTrigger(event_type=EventType.UTTERANCE)],
+        room_states=["*"],  # matches any state
+    )
+    # UTTERANCE in convergence state: no typed metadata required, no state transition fires
+    evt = _make_event(room.id, event_type=EventType.UTTERANCE)
+
+    store.append(evt)
+    result = run_turn(
+        room,
+        evt,
+        available_agents={"prober": agent},
+        available_skills={},
+        event_store=store,
+        llm_router=_mock_router(),
+        regex_registry={},
+    )
+
+    assert result.total_asked == 1
+    assert len(result.utterances) == 1
+
+
+# ---------------------------------------------------------------------------
+# 6. RoomStateError propagates
+# ---------------------------------------------------------------------------
+
+
+def test_room_state_error_propagates() -> None:
+    """§4 exception payload: RoomStateError from next_room_state propagates unwrapped."""
+    store = _make_store()
+    room = _make_room(store, state="setup")
+    evt = _make_event(room.id, event_type=EventType.UTTERANCE)
+
+    err = RoomStateError(room.id, "setup", "test_rule")
+    with (
+        patch("orchestrator.rooms.runtime.next_room_state", side_effect=err),
+        pytest.raises(RoomStateError) as exc_info,
+    ):
+        run_turn(
+            room,
+            evt,
+            available_agents={},
+            available_skills={},
+            event_store=store,
+            llm_router=_mock_router(),
+            regex_registry={},
+        )
+    assert exc_info.value.room_id == room.id
+    assert exc_info.value.attempted_transition_rule == "test_rule"
+
+
+# ---------------------------------------------------------------------------
+# 7. Empty agents → nothing-to-say TurnResult
+# ---------------------------------------------------------------------------
+
+
+def test_empty_agents_returns_nothing_to_say() -> None:
+    """Empty available_agents → TurnResult(total_asked=0, utterances=[])."""
+    store = _make_store()
+    room = _make_room(store, state="exploration")
+    evt = _make_event(room.id, event_type=EventType.USER_INPUT)
+
+    result = run_turn(
+        room,
+        evt,
+        available_agents={},
+        available_skills={},
+        event_store=store,
+        llm_router=_mock_router(),
+        regex_registry={},
+    )
+
+    assert result.total_asked == 0
+    assert result.utterances == []
+    assert result.failed_agents == []
+
+
+# ---------------------------------------------------------------------------
+# 8. §1 cross-module integration test
+# ---------------------------------------------------------------------------
+
+
+def test_integration_research_room_state_advance_and_agent_speaks() -> None:
+    """§1 integration: Research room setup→exploration + agent utterance.
+
+    Source ≠ sink: skeptic.id flows through the full pipeline (load →
+    dispatch → utterance author); the utterance author is agent:skeptic,
+    not any default sentinel.
+    """
+    store = _make_store()
+    room = _make_room(store, state="setup")
+
+    skeptic = _agent(
+        "skeptic",
+        triggers=[EventTypeTrigger(event_type=EventType.UTTERANCE)],
+    )
+    prober = _agent(
+        "prober",
+        triggers=[EventTypeTrigger(event_type=EventType.UTTERANCE)],
+    )
+    agents = {"skeptic": skeptic, "prober": prober}
+    evt = _make_event(room.id, event_type=EventType.UTTERANCE)
+
+    store.append(evt)
+    result = run_turn(
+        room,
+        evt,
+        available_agents=agents,
+        available_skills={},
+        event_store=store,
+        llm_router=_mock_router("a response"),
+        regex_registry={},
+    )
+
+    # State advanced setup → exploration
+    events = store.get_room_events(room.id)
+    transition_events = [e for e in events if e.type == EventType.STATE_TRANSITION]
+    assert len(transition_events) == 1
+    meta = StateTransitionMeta.model_validate(transition_events[0].metadata)
+    assert meta.prior_state == "setup"
+    assert meta.new_state == "exploration"
+
+    # Both agents spoke — sources are the actual agent ids (not a sentinel)
+    utterance_authors = {e.author for e in events if e.type == EventType.UTTERANCE}
+    assert "agent:skeptic" in utterance_authors
+    assert "agent:prober" in utterance_authors
+    assert result.total_asked == 2
+    assert len(result.utterances) == 2

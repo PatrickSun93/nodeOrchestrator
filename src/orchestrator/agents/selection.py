@@ -1,8 +1,8 @@
 """Agent selector and per-agent context builder.
 
 Two pure functions:
-  - ``decide_agents_for_room``: returns all available agents in P1.4
-    (room-type filtering deferred to P1.5+).
+  - ``decide_agents_for_room``: load-time agent filtering by room type
+    (P1.5; room-state dispatch-time filtering deferred to P1.5-7 RoomRuntime).
   - ``build_agent_context``: assembles the per-turn context fed to one
     agent's LLM call.
 
@@ -10,6 +10,8 @@ Both are pure (no I/O, no LLM calls).  Concurrency: §2 N/A — stateless.
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from orchestrator.agents.schema import (
     Agent,
@@ -25,25 +27,49 @@ from orchestrator.skills.schema import Skill
 
 
 def decide_agents_for_room(
+    room_type: RoomType,
+    room_state: str,
     *,
     available_agents: dict[str, Agent],
 ) -> AgentSelection:
     """Return the agents to load into a room.
 
-    P1.4: returns ALL available agents — no room-type filtering.
-    P1.5+ adds ``room_type`` and ``room_state`` parameters alongside
-    the real ``agent.applies_to.room_types`` filtering logic.
+    Load-time filter: an agent is loaded iff its ``applies_to.room_types``
+    is ``["*"]`` (matches every room type) or contains ``room_type.value``.
+
+    ``room_state`` param accepted but unused for load-time filtering
+    (dispatch-time filtering happens in RoomRuntime).
 
     Selected agents are sorted **alphabetically by ``agent.id``
     ascending** (ADR-011 D3 revised — no ``priority`` field in P1.4).
     """
-    records = [AgentMatchRecord(agent_id=a.id, loaded=True) for a in available_agents.values()]
-    loaded = sorted(available_agents.values(), key=lambda a: a.id)
+    _ = room_state  # reserved for dispatch-time filtering in P1.5-7 RoomRuntime
+    records: list[AgentMatchRecord] = []
+    loaded: list[Agent] = []
+
+    for agent in available_agents.values():
+        rt = agent.applies_to.room_types
+        match = rt == ["*"] or room_type.value in rt
+        reason: Literal["room_type_match", "room_type_mismatch"] = (
+            "room_type_match" if match else "room_type_mismatch"
+        )
+        records.append(
+            AgentMatchRecord(
+                agent_id=agent.id,
+                loaded=match,
+                applies_to_match=match,
+                reason=reason,
+            )
+        )
+        if match:
+            loaded.append(agent)
+
+    loaded_sorted = sorted(loaded, key=lambda a: a.id)
     return AgentSelection(
-        loaded=loaded,
+        loaded=loaded_sorted,
         trace=AgentSelectionTrace(
             considered=records,
-            loaded_count=len(loaded),
+            loaded_count=len(loaded_sorted),
         ),
     )
 

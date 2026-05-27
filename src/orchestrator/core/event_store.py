@@ -66,11 +66,11 @@ CREATE TABLE IF NOT EXISTS events (
     FOREIGN KEY (room_id) REFERENCES rooms(id)
 );
 
--- Composite index covers `WHERE room_id = ? ORDER BY timestamp, id` queries
--- end-to-end (no separate sort step). The trailing `id` is the deterministic
--- tiebreaker for events at the same millisecond.
-CREATE INDEX IF NOT EXISTS idx_events_room_ts_id
-    ON events(room_id, timestamp, id);
+-- Composite index covers `WHERE room_id = ? ORDER BY timestamp` queries.
+-- rowid (implicit B-tree key) is the insertion-order tiebreaker for events
+-- that share a millisecond timestamp; no extra column needed in the index.
+CREATE INDEX IF NOT EXISTS idx_events_room_ts
+    ON events(room_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_parent ON events(parent_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(room_id, type);
 
@@ -340,7 +340,7 @@ class EventStore:
                       timestamp, content, metadata
                FROM events
                WHERE room_id = ?
-               ORDER BY timestamp ASC, id ASC""",
+               ORDER BY timestamp ASC, rowid ASC""",
             (room_id,),
         ).fetchall()
         return [self._row_to_event(row) for row in rows]
@@ -452,7 +452,7 @@ class EventStore:
                 """SELECT id, parent_id, room_id, type, author,
                           timestamp, content, metadata
                    FROM events
-                   ORDER BY timestamp ASC, id ASC"""
+                   ORDER BY timestamp ASC, rowid ASC"""
             ).fetchall()
             all_relations: list[tuple[Any, ...]] = []
             for row in event_rows:

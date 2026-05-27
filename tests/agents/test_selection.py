@@ -10,8 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 from textwrap import dedent
 
-import pytest
-
 from orchestrator.agents.schema import Agent, AgentContext, AgentMatchRecord
 from orchestrator.agents.selection import build_agent_context, decide_agents_for_room
 from orchestrator.core.room import RoomType
@@ -42,7 +40,21 @@ _LLM = AgentLLMConfig(
 
 
 def _agent(aid: str) -> Agent:
+    """Agent with default applies_to (room_types=["*"])."""
     return Agent(id=aid, role="r", persona="p", llm_config=_LLM)
+
+
+def _agent_for_room(aid: str, room_types: list[str]) -> Agent:
+    """Agent scoped to specific room types."""
+    from orchestrator.agents.schema import AgentAppliesTo
+
+    return Agent(
+        id=aid,
+        role="r",
+        persona="p",
+        llm_config=_LLM,
+        applies_to=AgentAppliesTo(room_types=room_types, room_states=["*"]),
+    )
 
 
 def _skill(sid: str, *, agents: list[str], body: str = "skill body", priority: int = 50) -> Skill:
@@ -56,54 +68,134 @@ def _skill(sid: str, *, agents: list[str], body: str = "skill body", priority: i
 
 
 # ---------------------------------------------------------------------------
-# decide_agents_for_room
+# decide_agents_for_room  (P1.5 two-layer filtering)
 # ---------------------------------------------------------------------------
 
 
 def test_decide_zero_agents() -> None:
-    result = decide_agents_for_room(available_agents={})
+    """Empty available_agents returns empty loaded."""
+    result = decide_agents_for_room(RoomType.RESEARCH, "open", available_agents={})
     assert result.loaded == []
     assert result.trace.loaded_count == 0
     assert result.trace.considered == []
 
 
-def test_decide_single_agent() -> None:
-    result = decide_agents_for_room(available_agents={"alpha": _agent("alpha")})
+def test_decide_wildcard_agent_matches_research() -> None:
+    """["*"] agent is loaded for research room type."""
+    agents = {"alpha": _agent("alpha")}  # default: room_types=["*"]
+    result = decide_agents_for_room(RoomType.RESEARCH, "open", available_agents=agents)
     assert len(result.loaded) == 1
     assert result.loaded[0].id == "alpha"
-    assert result.trace.loaded_count == 1
+    assert result.trace.considered[0].applies_to_match is True
+    assert result.trace.considered[0].reason == "room_type_match"
 
 
-def test_decide_two_agents_alphabetical_order() -> None:
-    agents = {"zebra": _agent("zebra"), "alpha": _agent("alpha")}
-    result = decide_agents_for_room(available_agents=agents)
-    assert [a.id for a in result.loaded] == ["alpha", "zebra"]
+def test_decide_wildcard_agent_matches_bug_fix() -> None:
+    """["*"] agent is loaded for bug_fix room type."""
+    agents = {"alpha": _agent("alpha")}
+    result = decide_agents_for_room(RoomType.BUG_FIX, "open", available_agents=agents)
+    assert len(result.loaded) == 1
+    assert result.loaded[0].id == "alpha"
 
 
-def test_decide_three_agents_alphabetical_order() -> None:
+def test_decide_concrete_agent_matches_own_room_type() -> None:
+    """Agent with room_types=["research"] matches research but not bug_fix."""
+    agents = {"researcher": _agent_for_room("researcher", ["research"])}
+    result = decide_agents_for_room(RoomType.RESEARCH, "open", available_agents=agents)
+    assert len(result.loaded) == 1
+    assert result.loaded[0].id == "researcher"
+    assert result.trace.considered[0].applies_to_match is True
+    assert result.trace.considered[0].reason == "room_type_match"
+
+
+def test_decide_concrete_agent_mismatches_other_room_type() -> None:
+    """Agent with room_types=["research"] is NOT loaded for bug_fix."""
+    agents = {"researcher": _agent_for_room("researcher", ["research"])}
+    result = decide_agents_for_room(RoomType.BUG_FIX, "open", available_agents=agents)
+    assert result.loaded == []
+    assert result.trace.loaded_count == 0
+    record = result.trace.considered[0]
+    assert record.loaded is False
+    assert record.applies_to_match is False
+    assert record.reason == "room_type_mismatch"
+
+
+def test_decide_mixed_agents_filter_correctly() -> None:
+    """With wildcard + scoped agents, only matching ones load."""
+    agents = {
+        "wild": _agent("wild"),  # room_types=["*"]
+        "researcher": _agent_for_room("researcher", ["research"]),
+        "bug-fixer": _agent_for_room("bug-fixer", ["bug_fix"]),
+    }
+    result = decide_agents_for_room(RoomType.RESEARCH, "open", available_agents=agents)
+    loaded_ids = [a.id for a in result.loaded]
+    assert "wild" in loaded_ids
+    assert "researcher" in loaded_ids
+    assert "bug-fixer" not in loaded_ids
+
+
+def test_decide_alphabetical_sort_preserved() -> None:
+    """Loaded agents are sorted alphabetically by id."""
     agents = {
         "charlie": _agent("charlie"),
         "alpha": _agent("alpha"),
         "beta": _agent("beta"),
     }
-    result = decide_agents_for_room(available_agents=agents)
+    result = decide_agents_for_room(RoomType.RESEARCH, "open", available_agents=agents)
     assert [a.id for a in result.loaded] == ["alpha", "beta", "charlie"]
 
 
-def test_decide_all_agents_loaded() -> None:
-    agents = {"a": _agent("a"), "b": _agent("b")}
-    result = decide_agents_for_room(available_agents=agents)
-    assert all(r.loaded for r in result.trace.considered)
-    assert result.trace.loaded_count == len(agents)
+def test_decide_alphabetical_sort_after_filtering() -> None:
+    """Alphabetical sort applies to the filtered subset, not all agents."""
+    agents = {
+        "zebra": _agent_for_room("zebra", ["research"]),
+        "alpha": _agent_for_room("alpha", ["research"]),
+        "not-loaded": _agent_for_room("not-loaded", ["bug_fix"]),
+    }
+    result = decide_agents_for_room(RoomType.RESEARCH, "open", available_agents=agents)
+    assert [a.id for a in result.loaded] == ["alpha", "zebra"]
 
 
-def test_decide_agent_match_record_no_reason_field() -> None:
-    """Regression: AgentMatchRecord must NOT have a reason field (R0-A Y1)."""
-    from pydantic import ValidationError
+def test_decide_trace_records_per_agent_match_data() -> None:
+    """Trace has one record per agent with accurate applies_to_match + reason."""
+    agents = {
+        "wild": _agent("wild"),
+        "scoped": _agent_for_room("scoped", ["bug_fix"]),
+    }
+    result = decide_agents_for_room(RoomType.RESEARCH, "open", available_agents=agents)
+    by_id = {r.agent_id: r for r in result.trace.considered}
+    assert by_id["wild"].applies_to_match is True
+    assert by_id["wild"].reason == "room_type_match"
+    assert by_id["scoped"].applies_to_match is False
+    assert by_id["scoped"].reason == "room_type_mismatch"
 
-    AgentMatchRecord(agent_id="x", loaded=True)  # must succeed
-    with pytest.raises(ValidationError):
-        AgentMatchRecord(agent_id="x", loaded=True, reason="some_reason")  # type: ignore[call-arg]
+
+def test_decide_room_state_unused_at_load_time() -> None:
+    """room_state param does not affect which agents are loaded."""
+    agents = {"alpha": _agent("alpha")}
+    result_open = decide_agents_for_room(RoomType.RESEARCH, "open", available_agents=agents)
+    result_closed = decide_agents_for_room(RoomType.RESEARCH, "closed", available_agents=agents)
+    assert [a.id for a in result_open.loaded] == [a.id for a in result_closed.loaded]
+
+
+def test_decide_all_five_room_types_with_wildcard() -> None:
+    """["*"] agent loads for every RoomType value."""
+    agents = {"universal": _agent("universal")}
+    for rt in RoomType:
+        result = decide_agents_for_room(rt, "open", available_agents=agents)
+        assert len(result.loaded) == 1, f"Expected load for room_type={rt}"
+
+
+def test_decide_agent_match_record_has_reason_field() -> None:
+    """Regression (P1.5): AgentMatchRecord now has reason + applies_to_match fields."""
+    record = AgentMatchRecord(
+        agent_id="x",
+        loaded=True,
+        applies_to_match=True,
+        reason="room_type_match",
+    )
+    assert record.reason == "room_type_match"
+    assert record.applies_to_match is True
 
 
 # ---------------------------------------------------------------------------

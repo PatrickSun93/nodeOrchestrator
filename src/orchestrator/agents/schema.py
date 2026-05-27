@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from orchestrator.core.event import Event, EventType
 from orchestrator.llm.types import AgentLLMConfig
@@ -61,6 +61,33 @@ Pydantic dispatches on the ``type`` field; an unknown value raises
 """
 
 # ---------------------------------------------------------------------------
+# Room filtering (ADR-012 Decision 3)
+# ---------------------------------------------------------------------------
+
+
+class AgentAppliesTo(BaseModel):
+    """Room-type and room-state scope for an agent.
+
+    Both fields use the ``["*"]`` sentinel (third project use, after
+    ADR-009 D3 + W-002.5). ``["*"]`` alone matches every value;
+    concrete values restrict the match. ADR-012 D3.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    room_types: list[str] = Field(min_length=1)
+    room_states: list[str] = Field(min_length=1)
+
+    @field_validator("room_types", "room_states")
+    @classmethod
+    def _reject_mixed_star(cls, v: list[str]) -> list[str]:
+        if "*" in v and len(v) > 1:
+            raise ValueError(
+                '"*" cannot be mixed with concrete values; use ["*"] alone or list specific values'
+            )
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Agent (handoff §4.4)
 # ---------------------------------------------------------------------------
 
@@ -84,6 +111,12 @@ class Agent(BaseModel):
     speaking_triggers: list[SpeakingTrigger] = Field(default_factory=list)
     cooldown_seconds: int = Field(default=0, ge=0)
     llm_config: AgentLLMConfig
+    applies_to: AgentAppliesTo = Field(
+        default_factory=lambda: AgentAppliesTo(
+            room_types=["*"],
+            room_states=["*"],
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -115,15 +148,19 @@ class SpeechDecision(BaseModel):
 class AgentMatchRecord(BaseModel):
     """Audit record for one agent considered during ``decide_agents_for_room``.
 
-    ``reason`` field is NOT in P1.4 — per R0-A Y1 routing (2026-05-27).
-    In P1.4 every agent has ``loaded=True``; no variance to record.
-    P1.5+ adds back additively when ``agent.applies_to`` filtering
-    surfaces real reason variance.
+    P1.5 extension (ADR-012 D4):
+    - ``applies_to_match``: whether ``agent.applies_to.room_types`` matched
+      the room type (``["*"]`` always matches; concrete list checked by value).
+    - ``reason``: load-time reason code for why ``loaded`` is True or False.
+      Reintroduced from P1.4-4 routing now that ``applies_to`` filtering
+      surfaces real reason variance.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     agent_id: str
     loaded: bool
+    applies_to_match: bool
+    reason: Literal["room_type_match", "room_type_mismatch"]
 
 
 class AgentSelectionTrace(BaseModel):

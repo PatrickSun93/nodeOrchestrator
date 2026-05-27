@@ -18,6 +18,7 @@ from orchestrator.agents.exceptions import (
 )
 from orchestrator.agents.schema import (
     Agent,
+    AgentAppliesTo,
     AgentContext,
     AgentMatchRecord,
     AgentSelection,
@@ -75,24 +76,25 @@ def _make_event(**overrides: object) -> Event:
 
 
 def test_state_transition_meta_accepts_valid() -> None:
-    m = StateTransitionMeta(new_state="research")
+    m = StateTransitionMeta(new_state="research", prior_state="setup")
     assert m.new_state == "research"
+    assert m.prior_state == "setup"
 
 
 def test_state_transition_meta_empty_new_state_raises() -> None:
     with pytest.raises(ValidationError):
-        StateTransitionMeta(new_state="")
+        StateTransitionMeta(new_state="", prior_state="setup")
 
 
 def test_state_transition_meta_frozen() -> None:
-    m = StateTransitionMeta(new_state="research")
+    m = StateTransitionMeta(new_state="research", prior_state="setup")
     with pytest.raises((ValidationError, TypeError)):
         m.new_state = "other"
 
 
 def test_state_transition_meta_extra_forbid() -> None:
     with pytest.raises(ValidationError):
-        StateTransitionMeta(new_state="x", unknown_field="y")  # type: ignore[call-arg]
+        StateTransitionMeta(new_state="x", prior_state="y", unknown_field="z")  # type: ignore[call-arg]
 
 
 def test_state_transition_meta_in_typed_metadata() -> None:
@@ -284,22 +286,50 @@ def test_speech_decision_extra_forbid() -> None:
 
 
 # ===========================================================================
-# AgentMatchRecord — §6  (regression: no `reason` field per R0-A Y1)
+# AgentMatchRecord — §6  (P1.5: applies_to_match + reason reintroduced)
 # ===========================================================================
 
 
 def test_agent_match_record_accepts_valid() -> None:
-    r = AgentMatchRecord(agent_id="skeptic", loaded=True)
+    r = AgentMatchRecord(
+        agent_id="skeptic",
+        loaded=True,
+        applies_to_match=True,
+        reason="room_type_match",
+    )
     assert r.loaded is True
+    assert r.applies_to_match is True
+    assert r.reason == "room_type_match"
 
 
-def test_agent_match_record_extra_forbid_rejects_reason() -> None:
+def test_agent_match_record_accepts_mismatch_reason() -> None:
+    r = AgentMatchRecord(
+        agent_id="skeptic",
+        loaded=False,
+        applies_to_match=False,
+        reason="room_type_mismatch",
+    )
+    assert r.loaded is False
+    assert r.reason == "room_type_mismatch"
+
+
+def test_agent_match_record_invalid_reason_raises() -> None:
     with pytest.raises(ValidationError):
-        AgentMatchRecord(agent_id="x", loaded=True, reason="some_reason")  # type: ignore[call-arg]
+        AgentMatchRecord(
+            agent_id="x",
+            loaded=True,
+            applies_to_match=True,
+            reason="some_invalid_reason",  # type: ignore[arg-type]
+        )
 
 
 def test_agent_match_record_frozen() -> None:
-    r = AgentMatchRecord(agent_id="x", loaded=True)
+    r = AgentMatchRecord(
+        agent_id="x",
+        loaded=True,
+        applies_to_match=True,
+        reason="room_type_match",
+    )
     with pytest.raises((ValidationError, TypeError)):
         r.loaded = False
 
@@ -311,7 +341,14 @@ def test_agent_match_record_frozen() -> None:
 
 def test_agent_selection_trace_accepts_valid() -> None:
     t = AgentSelectionTrace(
-        considered=[AgentMatchRecord(agent_id="x", loaded=True)],
+        considered=[
+            AgentMatchRecord(
+                agent_id="x",
+                loaded=True,
+                applies_to_match=True,
+                reason="room_type_match",
+            )
+        ],
         loaded_count=1,
     )
     assert t.loaded_count == 1
@@ -337,7 +374,14 @@ def test_agent_selection_accepts_valid() -> None:
     sel = AgentSelection(
         loaded=[_MIN_AGENT],
         trace=AgentSelectionTrace(
-            considered=[AgentMatchRecord(agent_id=_MIN_AGENT.id, loaded=True)],
+            considered=[
+                AgentMatchRecord(
+                    agent_id=_MIN_AGENT.id,
+                    loaded=True,
+                    applies_to_match=True,
+                    reason="room_type_match",
+                )
+            ],
             loaded_count=1,
         ),
     )
@@ -460,3 +504,105 @@ def test_dispatch_error_carries_agent_id() -> None:
 def test_dispatch_error_defaults_none() -> None:
     exc = DispatchError("oops")
     assert exc.agent_id is None
+
+
+# ===========================================================================
+# StateTransitionMeta.prior_state extension (P1.5-3) — §5 + §6
+# ===========================================================================
+
+
+def test_state_transition_meta_prior_state_accepts_valid() -> None:
+    m = StateTransitionMeta(new_state="exploration", prior_state="setup")
+    assert m.prior_state == "setup"
+
+
+def test_state_transition_meta_empty_prior_state_raises() -> None:
+    with pytest.raises(ValidationError):
+        StateTransitionMeta(new_state="exploration", prior_state="")
+
+
+def test_state_transition_meta_missing_prior_state_raises() -> None:
+    with pytest.raises(ValidationError):
+        StateTransitionMeta(new_state="exploration")  # type: ignore[call-arg]
+
+
+# ===========================================================================
+# AgentAppliesTo (P1.5-3) — §5 + §6
+# ===========================================================================
+
+
+def test_agent_applies_to_accepts_star_wildcard() -> None:
+    a = AgentAppliesTo(room_types=["*"], room_states=["*"])
+    assert a.room_types == ["*"]
+    assert a.room_states == ["*"]
+
+
+def test_agent_applies_to_accepts_concrete_values() -> None:
+    a = AgentAppliesTo(room_types=["research"], room_states=["exploration", "divergence"])
+    assert a.room_types == ["research"]
+    assert a.room_states == ["exploration", "divergence"]
+
+
+def test_agent_applies_to_frozen() -> None:
+    a = AgentAppliesTo(room_types=["*"], room_states=["*"])
+    with pytest.raises((ValidationError, TypeError)):
+        a.room_types = ["research"]
+
+
+def test_agent_applies_to_extra_forbid() -> None:
+    with pytest.raises(ValidationError):
+        AgentAppliesTo(room_types=["*"], room_states=["*"], extra_field="x")  # type: ignore[call-arg]
+
+
+def test_agent_applies_to_empty_room_types_raises() -> None:
+    with pytest.raises(ValidationError):
+        AgentAppliesTo(room_types=[], room_states=["*"])
+
+
+def test_agent_applies_to_empty_room_states_raises() -> None:
+    with pytest.raises(ValidationError):
+        AgentAppliesTo(room_types=["*"], room_states=[])
+
+
+# §5 multi-position boundary tests — ["*"] sentinel must be exclusive
+
+
+def test_agent_applies_to_star_leading_mixed_raises() -> None:
+    """["*", "research"] — star at position 0, mixed with concrete value."""
+    with pytest.raises(ValidationError, match=r"\*"):
+        AgentAppliesTo(room_types=["*", "research"], room_states=["*"])
+
+
+def test_agent_applies_to_star_trailing_mixed_raises() -> None:
+    """["research", "*"] — star at last position, mixed with concrete value."""
+    with pytest.raises(ValidationError, match=r"\*"):
+        AgentAppliesTo(room_types=["research", "*"], room_states=["*"])
+
+
+def test_agent_applies_to_star_middle_mixed_raises() -> None:
+    """["free_chat", "*", "bug_fix"] — star in the middle."""
+    with pytest.raises(ValidationError, match=r"\*"):
+        AgentAppliesTo(room_types=["free_chat", "*", "bug_fix"], room_states=["*"])
+
+
+# Agent.applies_to field — default + override
+
+
+def test_agent_applies_to_default_is_wildcard() -> None:
+    """Agent with no applies_to gets the all-rooms wildcard default."""
+    a = Agent(id="x", role="r", persona="p", llm_config=_LLM)
+    assert a.applies_to.room_types == ["*"]
+    assert a.applies_to.room_states == ["*"]
+
+
+def test_agent_applies_to_custom_override() -> None:
+    """Agent can declare specific room-type + room-state filters."""
+    a = Agent(
+        id="x",
+        role="r",
+        persona="p",
+        llm_config=_LLM,
+        applies_to=AgentAppliesTo(room_types=["research"], room_states=["exploration"]),
+    )
+    assert a.applies_to.room_types == ["research"]
+    assert a.applies_to.room_states == ["exploration"]
