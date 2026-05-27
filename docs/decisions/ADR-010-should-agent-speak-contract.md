@@ -1,6 +1,6 @@
 # ADR-010: `should_agent_speak` Decision Contract
 
-**Status:** Proposed — 2026-05-26 (revised 2026-05-27 absorbing R0-A-on-plan + R0-B-cross-family architect-routing — see `docs/process/reviews/P1.4/architect-routing.md`)
+**Status:** Accepted — 2026-05-27 (revised 2026-05-27 absorbing R0-A-on-plan + R0-B-cross-family architect-routing — see `docs/process/reviews/P1.4/architect-routing.md`)
 **Scope:** Governs the per-turn pure-function decision of whether a
 given agent speaks on a given turn: `should_agent_speak(agent,
 event_stream_snapshot, *, current_event) -> SpeechDecision`.
