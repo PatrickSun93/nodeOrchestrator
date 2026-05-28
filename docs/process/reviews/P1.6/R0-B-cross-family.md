@@ -9,15 +9,45 @@ reviewer_note: >
   for Claude biases: operational/failure-mode concerns, spec-implementation
   divergence, silent error paths). A true cross-family R0-B (DeepSeek/GPT/Gemini
   external session) should follow per RC-15 + external-r0b-prompt.md.
-verdict: needs_architect
+verdict: clean
 findings_count:
-  red: 1
-  yellow: 8
-  green: 10
-verdict_history: []
+  red: 0
+  yellow: 0
+  green: 19
+verdict_history:
+  - verdict: needs_architect
+    at_commit: c5ba841
+    findings_count: { red: 1, yellow: 8, green: 10 }
+    note: Cycle-1 proxy-lens review surfaced R1 (ToolCallRef anomaly handling contradicts ADR-014 D2.3) + 8 yellows spanning operational failure modes (Y4 stuck-room, Y2/Y6 silent ValidationError swallow), spec-impl divergence (R1 only), wasted work (Y1 produce_decision_log discard), semantic imprecision (Y5/Y7/Y8). 10 G's confirm structural soundness (clock-injection, D2.1-D2.5 predicates, schema discipline, e2e coverage, constitutional test, SummarySnapshotMeta duplication, ADR-013 D1 sibling pattern, ADR-015 D2 filter, chronological ordering, content_excerpt verbatim).
+  - verdict: clean
+    at_commit: 900d6f7
+    findings_count: { red: 0, yellow: 0, green: 19 }
+    note: Cycle-2 absorption per architect-routing-on-impl.md. R1+Y1-Y8 all 🟢-absorbed via M-R1+M-Y3+M-Y2+M-Y4+M-Y1+M-Y5+M-Y6+M-Y7 routing decisions. Original 10 greens preserved. Proxy-lens caveat preserved; true cross-family R0-B deferred per Y1 γ-override (architect skip).
 ---
 
 # P1.6 R0-B cross-family review (proxy lens)
+
+> **RC-10 frontmatter-as-live-signal bump (cycle-2 absorption, 2026-05-28)**
+>
+> Cycle-1 verdict `needs_architect (1🔴/8🟡/10🟢)` at `c5ba841` → cycle-2 verdict `clean (0🔴/0🟡/19🟢)` per architect-routing-on-impl.md absorption. All R1 + Y findings absorbed via routing decisions; original cycle-1 finding bodies preserved below as audit trail; **bump is additive history, not a rewrite**. Absorption trace per finding:
+>
+> - **R1 (ToolCallRef anomaly handling contradicts ADR-014 D2.3) → 🟢-absorbed via M-R1 α.** Literal expanded to `["countdown_confirm", "hard_confirm", "unknown"]` at `snapshot.py:44`; anomaly TC path now includes conservatively with `autonomy_tier="unknown"` at `snapshot.py:180-189`; ADR-014 D2.3 inscribes conservative-include rationale at `af8ccc4`; test `test_produce_snapshot_tc_without_preceding_ad_gets_unknown_tier` pins the semantic. **1st impl-stage empirical validation of dual-lens-r0b.md "trusts-the-types" Claude-family bias prediction** — proxy lens (deliberately contrarian Claude) earned its 1 🔴 against same-family R0-A senior + architect-partner who missed it.
+> - **Y1 (`produce_decision_log` result discarded in `snapshot_dispatch.py`) → 🟢-absorbed via M-Y3 β.** Comment at `snapshot_dispatch.py:55-58` rewritten to name both (a) ADR-015 D5 derivation-not-persistence intent + (b) intent to exercise derivation path so ValidationError surfaces at trigger, not at first downstream consumer. No code change; comment is now load-bearing documentation.
+> - **Y2 (pervasive `except Exception: pass` silences metadata errors) + Y6 (`last_state_transition` silently becomes `None` on metadata failure) → 🟢-absorbed via M-Y2 α-strict.** All swallow blocks removed (8 sites: 6 in `derived/snapshot.py`, 2 in `derived/decision_log.py`; senior+junior grep-confirmed zero remain in `derived/`). ValidationError now propagates; consumers responsible for catching at boundary. ADR-014 D7.1 inscribes the strict-propagation contract.
+> - **Y3 (no test coverage for malformed-metadata paths) → 🟢-absorbed via M-Y4 α.** 4 cleanup tests pinning the strict semantic across both modules (`test_produce_snapshot_malformed_decision_metadata_raises`, `..._retraction_..._raises`, `..._state_transition_..._raises`, `test_produce_decision_log_malformed_rejection_metadata_raises`).
+> - **Y4 (stuck-room risk: snapshot dispatch failure leaves room in `snapshot_pending` permanently) → 🟢-absorbed via M-Y1 α-A.** `dispatch.py:174` narrowed to `except ValidationError`; `TurnResult.snapshot_failed: bool` field added at `schema.py:239`; failure surfaced from dispatch block at line 186; non-ValidationError (e.g. `event_store.append` RuntimeError) now propagates per ADR-011 D7-b. Caller (room runtime) can retry/escalate. ADR-014 D7.2 inscribes the narrow-and-surface contract.
+> - **Y5 (`event_count` semantic is "events at fetch time" not "events at snapshot_at time") → 🟢-absorbed via M-Y5 δ-with-fold-in.** 1-line comment at `snapshot.py:222-223` documents `len(events)` reflects fetch-time count per ADR-011 D1 sequential dispatch; revisit at async-reshape via ADR-014 D6 amendment hook.
+> - **Y7 (`participants` excludes silent-voter agents) → 🟢-absorbed via M-Y6 β.** 6-line docstring at `snapshot.py:69-74` above `_AGENT_PARTICIPATION_TYPES` cites ADR-014 D2.4 + names double-count-avoidance rationale + flags future silent-voter revisit hook.
+> - **Y8 (snapshot uses pre-turn frozen events; same-turn utterances absent) → 🟢-absorbed via M-Y7 δ-with-fold-in.** 1-line comment at `dispatch.py:77` documents pre-turn snapshot per ADR-011 D2; same-turn utterances not reflected.
+> - **G1-G10 (cycle-1 greens) → 🟢-preserved** per architect-routing-on-impl §"Out of scope": "Re-litigating any 🟢 finding from R0-A senior, R0-B proxy, or R0-A architect-partner (all 26 confirm impl + ADR structural soundness)." No action; original findings preserved below as audit trail.
+>
+> **Proxy-lens caveat update**: this review remains a Claude-family proxy lens, **NOT** a true cross-family review. Cycle-2 dispatched γ-override (Y1 from architect-partner R0-A) **skipping true cross-family R0-B** per architect-routing-on-impl §Y1; rationale + risk-capture there. Future cycles may still dispatch external R0-B per `dual-lens-r0b.md:147` codified append-in-place convention (would append as new "True cross-family R0-B section" in this file).
+>
+> **Expected next state transition:** cycle close (multi-ADR W-002.5 aggregation 2nd project use); companion bumps: `plan-vs-impl.md` (senior; already bumped at `46de79e`) + `R0-A.md` (architect-partner; bumping in this pass).
+
+---
+
+## ORIGINAL CYCLE-1 REVIEW (preserved as audit trail per RC-10 §3)
 
 **Reviewed**: `claude/P1.6-impl` at `6c7cf7d` — all 5 atomics (P1.6-1 through P1.6-5).
 

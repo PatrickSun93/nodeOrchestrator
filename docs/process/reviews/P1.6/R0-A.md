@@ -1,14 +1,37 @@
 ---
 task_id: P1.6
 round: R0-A
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 11
+  yellow: 0
+  green: 13
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 587b320
+    findings_count: { red: 0, yellow: 2, green: 11 }
+    note: Cycle-1 architect-partner R0-A surfaced Y1 (external R0-B dispatch ordering at impl stage) + Y2 (ADR-014 D2 missing D2.6 derivation predicate for decision_count). 11 G's spanning independent verifications (R1 confirm, D5 layering, D2.x spot-check), milestones (7-cycle streak, SD-DOGFOOD 2nd, W-002.5 2nd, ADR-012/014/015 first-runtimes), pattern-recurrence (RC-19 anti-pattern, trusts-the-types prediction), brief-vs-impl coherence (W-004-2(c) non-meta-circular), meta-circular self-incrimination.
+  - verdict: clean
+    at_commit: 900d6f7
+    findings_count: { red: 0, yellow: 0, green: 13 }
+    note: Cycle-2 absorption per architect-routing-on-impl.md. Y1 → γ-override (architect skipped external R0-B; substrate maturity + cycle-velocity tradeoff); Y2 → α (ADR-014 D2.6 inscribed at af8ccc4 + opportunistic D2.1/D2.2 clarification). Both Y's reclassified as 🟢-absorbed. Original 11 G's preserved.
 ---
 
 # P1.6 R0-A review (architect-partner lens)
+
+> **RC-10 frontmatter-as-live-signal bump (cycle-2 absorption, 2026-05-28)**
+>
+> Cycle-1 verdict `needs_architect (0🔴/2🟡/11🟢)` at `587b320` → cycle-2 verdict `clean (0🔴/0🟡/13🟢)` per architect-routing-on-impl.md absorption. Original cycle-1 finding bodies preserved below as audit trail; **bump is additive history, not a rewrite**. Absorption trace per finding:
+>
+> - **Y1 (External R0-B not yet dispatched at impl stage) → 🟢-absorbed via architect γ-override.** Architect (this session) decided to skip external R0-B for P1.6 cycle-2 per Y1 γ-override captured in architect-routing-on-impl. Rationale: substrate maturity (7-cycle impl-drift-free streak; α-discipline gradient holds), cost-benefit favored cycle-velocity, project momentum unblocks P1.6.5+. Risk acknowledged + captured for future-cycle pattern recurrence. **1st instance of architect overriding architect-partner cross-family-dispatch lean at impl stage** — codification candidate in architect-routing-on-impl §"Pattern-recurrence note."
+> - **Y2 (ADR-014 D2 missing D2.6 derivation predicate for `decision_count`) → 🟢-absorbed via α.** ADR-014 amended at `af8ccc4`: D2.6 inscribed (union of `{DECISION, DECISION_PIVOT, REJECTION, RETRACTION}` per impl's `_DECISION_CLASS_TYPES` choice; rationale documents the "how decision-active is this room?" consumer semantic). D2.1 + D2.2 opportunistic clarification sentences also added per Y2 opportunistic-improvement sub-action. Cross-reference at `snapshot.py:213-214` cites D2.6. **2nd instance of "ADR D-section vocabulary types declared without derivation algorithms" anti-pattern** (after plan-stage Y1 → D2.1-D2.5 inscription); accumulates 2-of-3 threshold for W-005 codification.
+> - **G1-G11 (cycle-1 greens) → 🟢-preserved** per architect-routing-on-impl §"Out of scope": "Re-litigating any 🟢 finding from R0-A senior, R0-B proxy, or R0-A architect-partner (all 26 confirm impl + ADR structural soundness)." No action; original findings preserved below as audit trail.
+>
+> **Expected next state transition:** `awaiting_R0_A → awaiting_pr_merge` (per `gates.merge_clean`; multi-ADR W-002.5 aggregation 2nd project use approaches close). Companion bump: `R0-B-cross-family.md` (proxy) `needs_architect → clean` per RC-10 in same close pass.
+
+---
+
+## ORIGINAL CYCLE-1 REVIEW (preserved as audit trail per RC-10 §3)
 
 | Field | Value |
 |---|---|
