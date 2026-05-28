@@ -1,6 +1,6 @@
 # ADR-016: Cross-room memory persistence — Hypothesis + VerifiedKnowledge tables + user-confirm promotion + cross-room lookup (slice B)
 
-**Status:** Proposed — 2026-05-28
+**Status:** Proposed — 2026-05-28 · Amended — 2026-05-28 (plan-stage R0-A-on-plan routing absorption: D2 `source_event_ids` producer-time existence-check inscription [Y2 → α (ii)], D3 promotion-event `room_id` inscription [Y5 → α (a)], D6 empty-`topic_tags` `ValueError` semantic [Y4 → α (b)], D8 code block `str | None` deliberate-duplication + `@model_validator` co-presence enforcement [Y1 → α + Y3 → α (a)], forward-amendment hooks +2 entries [Y5 cross-N-rooms attribution + Y6 record_hypothesis ↔ event atomicity] — per `docs/process/reviews/P1.6.5/architect-routing.md`).
 **Scope:** Locks the schema vocabulary, producer contract, promotion contract, transaction-atomicity model, storage placement, candidate-flag column semantic, cross-room lookup contract, and VK cross-reference semantic for the `memory/` package — slice B (Hypothesis + VerifiedKnowledge primary; Entity schema-only stub; ProjectArchive deferred). Governs every future cross-room agent + UI surface consuming memory + every future producer that writes a Hypothesis row or invokes promotion. Does not govern Snapshot (ADR-014) or DecisionLog (ADR-015) derived views; those remain pure-function code-decided derivations over the event stream.
 
 ## Context
@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS entity (
 );
 ```
 
-**Why no relations to event log foreign-keyed beyond `promotion_event_id` and `source_event_ids`**: Hypothesis.source_event_ids stores a JSON list, not a FK, because SQLite FKs target single columns. The integrity guarantee is at the Pydantic layer (validators reject non-existent event_ids at producer time via lookup). `promotion_event_id` IS FK-enforceable (single column) and gets the FK constraint to make orphan promotions impossible at the schema level.
+**Why no relations to event log foreign-keyed beyond `promotion_event_id` and `source_event_ids`**: Hypothesis.source_event_ids stores a JSON list, not a FK, because SQLite FKs target single columns. The integrity guarantee is at the Pydantic layer (validators reject non-existent event_ids at producer time via lookup). **`record_hypothesis` enforces this via per-event-id `SELECT 1 FROM events WHERE id IN (...)` existence check before INSERT (P1.6.5-2 acceptance per Y2 → α (ii) routing); missing event raises `EventNotFoundError(LookupError)` from `memory/exceptions.py` and no row is written.** `promotion_event_id` IS FK-enforceable (single column) and gets the FK constraint to make orphan promotions impossible at the schema level.
 
 **Why no `topic_tags` table normalization**: tags are denormalized as a JSON list per VK row. P1.6.5 has 1 query pattern (`scope` filter + `topic_tags` OR-match); join overhead is not justified by the single consumer. Reshape to normalized form when ≥2 distinct query patterns emerge.
 
@@ -189,6 +189,8 @@ Transaction sequence (per D11):
 6. UPDATE Hypothesis row: `status='verified'`.
 
 All steps land in a single SQLite transaction per D11 (no partial state on any failure).
+
+**Promotion event `room_id` = originating Hypothesis's `room_id`** (architect-confirmed 2026-05-28 via Y5 → α (a) routing). The `decision` event constructed at step 4 uses `room_id = hypothesis.room_id` — i.e., the room where the hypothesis was first recorded. Rationale: preserves causal narrative — the room where the hypothesis was first recorded is also the room that surfaces the promotion event in its `decision_log` derived view (ADR-015 D2 filter). For future cross-N-rooms matcher promotion (deferred per D7), the originating room of the first hypothesis row in the cluster carries the promotion event; alternative shapes (dedicated `RoomType.CROSS_ROOM` pseudo-room; multiple promotion events one per source room) are forward-amendment hooks should the cross-N-rooms case need richer attribution.
 
 **Why `based_on=hypothesis.source_event_ids`**: `DecisionMeta.based_on: list[EventId] = Field(min_length=1)`. Promotion IS a decision based on the original observations; reusing the hypothesis's source events as the decision's `based_on` is semantically clean and satisfies the ≥1 constraint. For future cross-N-rooms promotion (matcher deferred), the union of source_event_ids across N hypothesis rows is the natural `based_on`.
 
@@ -276,7 +278,7 @@ def lookup_verified_knowledge(
 
 Semantics:
 - `scope` is filtered first (covered by `idx_vk_scope_last_validated`).
-- `topic_tags=[]` is a valid input — matches **zero rows** (empty OR matches nothing, deliberately; callers wanting "all rows in scope" pass a sentinel or use a separate API in a future cycle — keeps lookup intent explicit).
+- `topic_tags=[]` raises `ValueError("topic_tags must be non-empty")` (per Y4 → α (b) routing). Rationale: empty-tags is ambiguous between "I want all rows in scope" and "I haven't built my query yet"; raising makes the intent-mismatch fail loudly rather than silently return `[]`. Consumers wanting "all rows in scope" use a separate API in a future cycle (no such consumer exists in P1.6.5; defer the API until one materializes). Replaces the prior "empty OR matches nothing, deliberately" semantic.
 - `topic_tags=["a","b"]` matches any VK row where `"a" in row.topic_tags OR "b" in row.topic_tags`. Implementation: scan the rows in scope, JSON-parse `topic_tags`, set-intersection check. (SQLite has no native list-overlap operator; JSON1 functions are not assumed. Row count per scope is expected small at P1.6.5; reshape to JSON1 / normalized-tag-table when row count crosses a threshold to be defined at amendment time.)
 - Result ordering: `last_validated DESC, id ASC`. Deterministic across runs given a fixed input row set.
 - **No ranking, no similarity, no LLM**. Pure code per Principle 5.
@@ -303,16 +305,42 @@ Column ships in P1.6.5 schema (D2). No matcher impl in P1.6.5: no code writes th
 `DecisionMeta` at `core/event.py:135-145` is extended with three **optional defaulted** fields:
 
 ```python
+from pydantic import model_validator
+
 class DecisionMeta(_BaseMeta):
     based_on: list[EventId] = Field(min_length=1)
     trade_offs: dict[str, str] = Field(default_factory=dict)
-    # --- new fields for promotion semantic (P1.6.5 / ADR-016 D8) ---
+    # P1.6.5 / ADR-016 D8 — promotion-flavored decisions.
+    # hypothesis_id + vk_id are `str | None` (not HypothesisId | VKId) per
+    # deliberate-duplication rule (ADR-014 D5 precedent + the constitutional
+    # test_constitution_core_does_not_import_memory guard P1.6.5-1 ships):
+    # core/event.py MUST NOT import from memory/schema.py. memory/promotion.py
+    # constructs typed HypothesisId / VKId, calls str(hyp_id) at metadata
+    # emit time.
     promotion: bool = False
-    hypothesis_id: HypothesisId | None = None       # set iff promotion=True
-    vk_id: VKId | None = None                        # set iff promotion=True
+    hypothesis_id: str | None = None    # semantic: HypothesisId at memory layer
+    vk_id: str | None = None            # semantic: VKId at memory layer
+
+    @model_validator(mode="after")
+    def _promotion_co_presence(self) -> "DecisionMeta":
+        if self.promotion and (self.hypothesis_id is None or self.vk_id is None):
+            raise ValueError(
+                "promotion=True requires both hypothesis_id and vk_id"
+            )
+        if not self.promotion and (self.hypothesis_id is not None or self.vk_id is not None):
+            raise ValueError(
+                "hypothesis_id/vk_id forbidden when promotion=False"
+            )
+        return self
 ```
 
 Promotion events have `promotion=True` + `hypothesis_id` + `vk_id` populated. Non-promotion decisions retain `promotion=False` + None for the two IDs (defaults match the pre-ADR-016 shape; existing producers and consumers unaffected).
+
+**Deliberate-duplication rationale for `str | None` ID fields** (per Y1 → α routing):
+
+`HypothesisId` and `VKId` are `NewType` aliases in `memory/schema.py` (D2). Using them in `DecisionMeta` (which lives in `core/event.py`) would require `from orchestrator.memory.schema import HypothesisId, VKId` — violating the dep-direction layering invariant + the constitutional guard `test_constitution_core_does_not_import_memory` that P1.6.5-1 itself ships. ADR-014 D5 set the precedent (`SummarySnapshotMeta` stores serialized `dict[str, str]` instead of importing `HypothesisRef` from `derived/`); ADR-016 D8 follows it. The typed identity lives at the memory layer (`memory/promotion.py` constructs `HypothesisId` / `VKId` from the row reads); the event-layer metadata serializes them as plain strings via `str(hyp_id)` at emit time.
+
+**Co-presence enforcement** (per Y3 → α (a) routing): schema-enforced via `@model_validator(mode="after")` — `promotion=True ⇒ hypothesis_id + vk_id both set`; `promotion=False ⇒ both None`. This closes the forward-compat hazard from future producers emitting malformed promotion events (catches at `validate_metadata` step 0 inside `EventStore.append`, the earliest possible point in the writing path). Replaces the prior "runtime enforcement is `memory/promotion.py`'s responsibility" boundary — co-presence is now schema-enforced, no consumer-side defensive check needed.
 
 **Why reuse `decision` instead of new EventType.PROMOTION** (push-back #6 lean):
 
@@ -440,6 +468,8 @@ Conditions under which this ADR should be revisited via amendment:
 - **Concurrent dispatch / async-reshape** (deferred per ADR-011 D1): D11 atomicity assumes single-connection sequential writes. Multi-connection concurrent promotions would need either connection-per-promotion + retry-on-conflict OR a queueing layer. Revisit at that ADR.
 - **`DecisionMeta` field pollution** crosses the senior tolerance threshold (e.g., 3+ additional optional flags accumulate from future cycles): D8 reuse-of-`decision` revisits toward dedicated `EventType.PROMOTION`.
 - **`memory/` table row counts** cross a scale threshold (e.g., 100k+ rows per scope): D6 lookup's Python post-filter for `topic_tags` overlap becomes too slow; reshape to SQLite JSON1 functions OR normalized tag table. Threshold to be defined empirically at amendment time.
+- **Cross-N-rooms matcher promotion attribution** (per Y5 → α (a) routing): when D7 candidate-flag matcher lands, D3 promotion-event `room_id` choice may need amendment toward (i) multi-event promotion (one per source room), (ii) dedicated `RoomType.CROSS_ROOM` pseudo-room, or (iii) accept-loss-of-fidelity by keeping originating-room semantic. P1.6.5 ships (iii) by default (single-source-room is the common case); revisit at matcher ADR.
+- **`record_hypothesis` ↔ `hypothesis` event atomicity** (per Y6 → α routing; deferred per D4 — no consumer requires it in P1.6.5): if a future consumer materializes that joins `memory.hypothesis` rows with event_store `hypothesis` events (e.g., a query that requires both writes to have landed or neither), D4 revisits toward an atomic producer API mirroring D11's `append_in_transaction` pattern (e.g., `record_hypothesis_with_event(content, ..., conn, event_store)` calling `event_store.append_in_transaction(...)` inside the same `with conn:` block). Until then, callers emit `hypothesis` events separately + accept eventual consistency.
 
 ## Cross-references
 

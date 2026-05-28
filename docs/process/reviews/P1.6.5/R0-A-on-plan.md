@@ -1,12 +1,31 @@
 ---
 task_id: P1.6.5
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 6
-  green: 11
+  yellow: 0
+  green: 17
+verdict_history:
+  - verdict: needs_architect
+    at_commit: f9fac11
+    findings_count: { red: 0, yellow: 6, green: 11 }
+    note: original — 6 Y findings surfaced by architect-partner R0-A-on-plan (Y1 ADR D8 layering contradiction; Y2 source_event_ids integrity; Y3 DecisionMeta co-presence; Y4 lookup empty-tags semantic; Y5 promotion event room_id pin; Y6 record_hypothesis non-atomicity hook).
+  - verdict: clean
+    at_commit: HEAD
+    findings_count: { red: 0, yellow: 0, green: 17 }
+    note: senior revision absorbed all 6 α routings on this branch — ADR-016 amendments (D2 line 155 / D3 promotion room_id / D6 empty-tags ValueError / D8 str|None + @model_validator co-presence / forward-amendment hooks +2) + plan amendments (P1.6.5-1 EventNotFoundError / P1.6.5-2 existence-check + 2 tests / P1.6.5-3 @model_validator + 4 co-presence combination tests / P1.6.5-4 lookup empty-tags ValueError / P1.6.5-6 test delta updated). All 6 Y reclassified as 🟢 (Y1→🟢 / Y2→🟢 / Y3→🟢 / Y4→🟢 / Y5→🟢 / Y6→🟢) per RC-10. Cross-reference `docs/process/reviews/P1.6.5/architect-routing.md`.
 ---
+
+> **RC-10 verdict bump (post-routing-revision)** — frontmatter as live signal. Bump applied after senior absorbed all 6 α routings from `architect-routing.md` (`be43650`) into this branch's revision commit. Per RC-10 codification (`docs/process/reviews/README.md` §RC-10), original findings preserved as audit trail below; verdict + findings_count + verdict_history updated; 11th project use of RC-10 verdict-bump; 5th under codified protocol.
+>
+> Absorption per finding:
+> - **Y1 → 🟢 absorbed** — ADR-016 D8 code block updated to `str | None` with deliberate-duplication-per-ADR-014-D5 rationale.
+> - **Y2 → 🟢 absorbed** — `record_hypothesis` gains producer-time `SELECT 1 FROM events` existence check raising `EventNotFoundError`; ADR-016 D2 line 155 amended to inscribe enforcement mechanism.
+> - **Y3 → 🟢 absorbed** — `DecisionMeta` gains schema-level `@model_validator` enforcing `promotion=True ⇒ hypothesis_id + vk_id both set`; plan P1.6.5-3 acceptance reversed (schema-level enforcement replaces "promotion.py's responsibility").
+> - **Y4 → 🟢 absorbed** — ADR-016 D6 empty-`topic_tags` semantic flips from "matches zero rows" to "raises `ValueError`"; plan P1.6.5-4 acceptance + lookup module-surface docstring updated.
+> - **Y5 → 🟢 absorbed** — ADR-016 D3 gains explicit paragraph naming `room_id = originating Hypothesis's room_id` (architect-confirmed); forward-amendment hook added for cross-N-rooms attribution.
+> - **Y6 → 🟢 absorbed** — ADR-016 forward-amendment hooks gain entry naming `record_hypothesis` ↔ `hypothesis` event atomicity revisit trigger.
 
 # P1.6.5 R0-A-on-plan review (architect-partner lens)
 
