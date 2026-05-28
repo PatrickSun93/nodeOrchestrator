@@ -196,6 +196,7 @@ def test_e2e_synthetic_task_traverses_all_states(git_repo: Path) -> None:
     with (
         patch("orchestrator.workflow.cli._is_pr_merged", return_value=False),
         patch("orchestrator.workflow.cli.evaluate_merge_clean", return_value=True),
+        patch("orchestrator.workflow.cli._has_junior_impl_commits", return_value=False),
     ):
         rc = _advance(git_repo)
     assert rc == 0
@@ -205,6 +206,7 @@ def test_e2e_synthetic_task_traverses_all_states(git_repo: Path) -> None:
     with (
         patch("orchestrator.workflow.cli._is_pr_merged", return_value=False),
         patch("orchestrator.workflow.cli.evaluate_merge_clean", return_value=True),
+        patch("orchestrator.workflow.cli._has_junior_impl_commits", return_value=True),
     ):
         rc = _advance(git_repo)
     assert rc == 0
@@ -331,7 +333,7 @@ def test_side_channel_file_does_not_reach_parse_verdict(git_repo: Path) -> None:
     (reviews_dir / "README.md").write_text("no frontmatter here\n", encoding="utf-8")
 
     with (
-        patch("orchestrator.workflow.cli._has_commit_since", return_value=False),
+        patch("orchestrator.workflow.cli._has_junior_impl_commits", return_value=False),
         patch("orchestrator.workflow.cli._is_pr_merged", return_value=False),
     ):
         snapshot = build_artifact_snapshot(_TASK, task_state, wdir)
@@ -385,7 +387,7 @@ def test_e2e_path_beta_task_with_adr_advances(
     with (
         patch("orchestrator.workflow.cli._is_pr_merged", return_value=False),
         patch("orchestrator.workflow.cli.evaluate_merge_clean", return_value=True),
-        patch("orchestrator.workflow.cli._has_commit_since", return_value=False),
+        patch("orchestrator.workflow.cli._has_junior_impl_commits", return_value=False),
     ):
         rc = _advance(git_repo, task_id)
     assert rc == 0
@@ -441,7 +443,7 @@ def test_e2e_multi_adr_plan_advances_when_all_accepted(
     with (
         patch("orchestrator.workflow.cli._is_pr_merged", return_value=False),
         patch("orchestrator.workflow.cli.evaluate_merge_clean", return_value=True),
-        patch("orchestrator.workflow.cli._has_commit_since", return_value=False),
+        patch("orchestrator.workflow.cli._has_junior_impl_commits", return_value=False),
     ):
         rc = _advance(git_repo, task_id)
     assert rc == 0
@@ -454,7 +456,7 @@ def test_e2e_multi_adr_plan_advances_when_all_accepted(
     with (
         patch("orchestrator.workflow.cli._is_pr_merged", return_value=False),
         patch("orchestrator.workflow.cli.evaluate_merge_clean", return_value=True),
-        patch("orchestrator.workflow.cli._has_commit_since", return_value=False),
+        patch("orchestrator.workflow.cli._has_junior_impl_commits", return_value=False),
     ):
         rc = _advance(git_repo, task_id)
     assert rc == 0

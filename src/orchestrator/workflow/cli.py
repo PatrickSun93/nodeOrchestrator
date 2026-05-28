@@ -22,7 +22,14 @@ from typing import Literal
 import yaml
 
 from orchestrator.workflow.exceptions import WorkflowError
-from orchestrator.workflow.io import _git_show, _read_plan_frontmatter, read_state, write_state
+from orchestrator.workflow.io import (
+    _git_branch_exists,
+    _git_log_ahead_of_main_since,
+    _git_show,
+    _read_plan_frontmatter,
+    read_state,
+    write_state,
+)
 from orchestrator.workflow.schema import OverrideEntry, TaskState, WorkflowState
 from orchestrator.workflow.transitions import (
     ArtifactSnapshot,
@@ -156,21 +163,13 @@ def _read_adr_status(task_id: str, repo_root: Path) -> Literal["proposed", "acce
     return _parse_adr_status(adr_path.read_text(encoding="utf-8"))
 
 
-def _has_commit_since(since: datetime, repo_root: Path) -> bool:
-    """Return True if any git commit was authored after `since`."""
-    since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")  # Z = UTC; prevents local-tz misparse
-    try:
-        result = subprocess.run(
-            ["git", "log", "--oneline", f"--after={since_str}"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-            cwd=str(repo_root),
-        )
-        return bool(result.stdout.strip())
-    except (OSError, subprocess.TimeoutExpired):
+def _has_junior_impl_commits(task_id: str, since: datetime, repo_root: Path) -> bool:
+    """Return True if claude/{task_id}-impl branch exists on origin and has commits
+    ahead of origin/main since `since`. Task-scoped RC-19 fix replacing _has_commit_since."""
+    branch_ref = f"refs/remotes/origin/claude/{task_id}-impl"
+    if not _git_branch_exists(branch_ref, repo_root):
         return False
+    return _git_log_ahead_of_main_since(branch_ref, since, repo_root)
 
 
 def _is_pr_merged(repo_root: Path) -> bool:
@@ -222,7 +221,9 @@ def build_artifact_snapshot(
     senior_plan_path = repo_root / "docs" / "process" / "senior-plans" / f"{task_id}.md"
     senior_plan_exists = senior_plan_path.exists()
     adr_status = _read_adr_status(task_id, repo_root)
-    junior_impl_commit_present = _has_commit_since(state.last_transition_at, repo_root)
+    junior_impl_commit_present = _has_junior_impl_commits(
+        task_id, state.last_transition_at, repo_root
+    )
     plan_vs_impl_verdict = _safe_load_verdict(reviews_dir / "plan-vs-impl.md")
     r0_a_verdict = _safe_load_verdict(reviews_dir / "R0-A.md")
     pr_merged = _is_pr_merged(repo_root)

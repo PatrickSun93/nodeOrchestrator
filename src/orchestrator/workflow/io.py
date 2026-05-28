@@ -8,6 +8,7 @@ locking is implemented. (test-coverage-standard.md §2 N/A rationale.)
 from __future__ import annotations
 
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,38 @@ def _git_show(rel_path: str, ref: str = "origin/main") -> str | None:
     if result.returncode != 0:
         return None
     return result.stdout
+
+
+def _git_branch_exists(branch_ref: str, repo_root: Path) -> bool:
+    """Return True if branch_ref resolves in the local git repo. False on subprocess failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch_ref],
+            capture_output=True,
+            timeout=10,
+            check=False,
+            cwd=str(repo_root),
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _git_log_ahead_of_main_since(branch_ref: str, since: datetime, repo_root: Path) -> bool:
+    """Return True if branch_ref has commits ahead of origin/main authored after `since`."""
+    since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", f"--after={since_str}", f"origin/main..{branch_ref}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            cwd=str(repo_root),
+        )
+        return bool(result.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def _read_plan_frontmatter(path: Path) -> dict[str, Any] | None:

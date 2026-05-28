@@ -11,13 +11,19 @@ Covers:
 from __future__ import annotations
 
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from orchestrator.workflow.io import _git_show, _read_plan_frontmatter
+from orchestrator.workflow.io import (
+    _git_branch_exists,
+    _git_log_ahead_of_main_since,
+    _git_show,
+    _read_plan_frontmatter,
+)
 
 # ---------------------------------------------------------------------------
 # _git_show tests — mock subprocess.run
@@ -128,3 +134,97 @@ def test_read_plan_frontmatter_relative_path_resolves_against_cwd(
 
     assert result == {"task_id": "SYNTH", "adr": "ADR-099"}
     assert captured["rel_path"] == "docs/process/senior-plans/SYNTH.md"
+
+
+# ---------------------------------------------------------------------------
+# _git_branch_exists tests — W-004-1
+# ---------------------------------------------------------------------------
+
+_BRANCH_REF = "refs/remotes/origin/claude/W-004-impl"
+_REPO_ROOT = Path("/fake/repo")
+
+
+def test_git_branch_exists_present_returns_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        captured["cmd"] = cmd
+        return mock_result
+
+    monkeypatch.setattr("orchestrator.workflow.io.subprocess.run", fake_run)
+
+    assert _git_branch_exists(_BRANCH_REF, _REPO_ROOT) is True
+    assert captured["cmd"] == ["git", "rev-parse", "--verify", _BRANCH_REF]
+
+
+def test_git_branch_exists_absent_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    monkeypatch.setattr("orchestrator.workflow.io.subprocess.run", lambda *a, **kw: mock_result)
+    assert _git_branch_exists(_BRANCH_REF, _REPO_ROOT) is False
+
+
+def test_git_branch_exists_timeout_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_timeout(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired("git", 10)
+
+    monkeypatch.setattr("orchestrator.workflow.io.subprocess.run", raise_timeout)
+    assert _git_branch_exists(_BRANCH_REF, _REPO_ROOT) is False
+
+
+def test_git_branch_exists_oserror_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_oserror(*args: object, **kwargs: object) -> None:
+        raise OSError("git not found")
+
+    monkeypatch.setattr("orchestrator.workflow.io.subprocess.run", raise_oserror)
+    assert _git_branch_exists(_BRANCH_REF, _REPO_ROOT) is False
+
+
+# ---------------------------------------------------------------------------
+# _git_log_ahead_of_main_since tests — W-004-1
+# ---------------------------------------------------------------------------
+
+_SINCE = datetime(2026, 5, 26, 12, 0, 0, tzinfo=UTC)
+
+
+def test_git_log_ahead_of_main_since_has_commits_returns_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = "abc1234 commit msg\n"
+    monkeypatch.setattr("orchestrator.workflow.io.subprocess.run", lambda *a, **kw: mock_result)
+    assert _git_log_ahead_of_main_since(_BRANCH_REF, _SINCE, _REPO_ROOT) is True
+
+
+def test_git_log_ahead_of_main_since_no_commits_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = ""
+    monkeypatch.setattr("orchestrator.workflow.io.subprocess.run", lambda *a, **kw: mock_result)
+    assert _git_log_ahead_of_main_since(_BRANCH_REF, _SINCE, _REPO_ROOT) is False
+
+
+def test_git_log_ahead_of_main_since_timeout_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_timeout(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired("git", 10)
+
+    monkeypatch.setattr("orchestrator.workflow.io.subprocess.run", raise_timeout)
+    assert _git_log_ahead_of_main_since(_BRANCH_REF, _SINCE, _REPO_ROOT) is False
+
+
+def test_git_log_ahead_of_main_since_oserror_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_oserror(*args: object, **kwargs: object) -> None:
+        raise OSError("git not found")
+
+    monkeypatch.setattr("orchestrator.workflow.io.subprocess.run", raise_oserror)
+    assert _git_log_ahead_of_main_since(_BRANCH_REF, _SINCE, _REPO_ROOT) is False
