@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from orchestrator.workflow.cli import (
+    _has_junior_impl_commits,
     _read_adr_status,
     build_parser,
     cmd_advance,
@@ -763,3 +764,47 @@ def test_build_parser_subcommands_registered() -> None:
     )
     assert ns2.command == "verify-merge-readiness"
     assert ns2.task_id == "W-003"
+
+
+# ---------------------------------------------------------------------------
+# _has_junior_impl_commits — task-scoped RC-19 fix (W-004-1)
+# ---------------------------------------------------------------------------
+
+
+def test_has_junior_impl_commits_branch_absent_returns_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("orchestrator.workflow.cli._git_branch_exists", lambda *a: False)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_log_ahead_of_main_since", lambda *a: True)
+    assert _has_junior_impl_commits("TASK-1", _NOW, tmp_path) is False
+
+
+def test_has_junior_impl_commits_branch_present_no_commits_returns_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("orchestrator.workflow.cli._git_branch_exists", lambda *a: True)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_log_ahead_of_main_since", lambda *a: False)
+    assert _has_junior_impl_commits("TASK-1", _NOW, tmp_path) is False
+
+
+def test_has_junior_impl_commits_branch_present_with_commits_returns_true(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("orchestrator.workflow.cli._git_branch_exists", lambda *a: True)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_log_ahead_of_main_since", lambda *a: True)
+    assert _has_junior_impl_commits("TASK-1", _NOW, tmp_path) is True
+
+
+def test_has_junior_impl_commits_uses_correct_branch_ref(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Branch ref must be refs/remotes/origin/claude/{task_id}-impl."""
+    captured: dict[str, str] = {}
+
+    def fake_branch_exists(branch_ref: str, repo_root: Path) -> bool:
+        captured["branch_ref"] = branch_ref
+        return False
+
+    monkeypatch.setattr("orchestrator.workflow.cli._git_branch_exists", fake_branch_exists)
+    _has_junior_impl_commits("W-004", _NOW, tmp_path)
+    assert captured["branch_ref"] == "refs/remotes/origin/claude/W-004-impl"
