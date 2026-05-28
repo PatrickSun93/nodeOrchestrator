@@ -216,18 +216,23 @@ def test_next_state_awaiting_pr_merge_merged_closes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# next_state — auto-triggered transitions
+# AWAITING_SENIOR_PLAN_VS_IMPL → AWAITING_R0_A (ADR-008 Amendment 1, W-005)
+# Route B: R0-A fires regardless of plan-vs-impl verdict.
 # ---------------------------------------------------------------------------
 
 
 def test_next_state_plan_vs_impl_absent_returns_none() -> None:
+    """No plan-vs-impl artifact yet → no transition."""
     result = next_state(
-        WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL, _snap(plan_vs_impl_verdict="absent"), _gates()
+        WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL,
+        _snap(plan_vs_impl_verdict="absent"),
+        _gates(),
     )
     assert result is None
 
 
 def test_next_state_plan_vs_impl_clean_advances_to_r0_a() -> None:
+    """Route B: clean plan-vs-impl → R0-A (unchanged from pre-amendment)."""
     result = next_state(
         WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL,
         _snap(plan_vs_impl_verdict="clean"),
@@ -236,55 +241,102 @@ def test_next_state_plan_vs_impl_clean_advances_to_r0_a() -> None:
     assert result == WorkflowState.AWAITING_R0_A
 
 
-def test_next_state_plan_vs_impl_blocking_routes_to_architect_decision() -> None:
+def test_next_state_plan_vs_impl_blocking_route_b_still_advances_to_r0_a() -> None:
+    """Route B (W-005): blocking plan-vs-impl no longer short-circuits to
+    architect_decision; R0-A still fires."""
     result = next_state(
         WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL,
         _snap(plan_vs_impl_verdict="blocking"),
         _gates(),
     )
-    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+    assert result == WorkflowState.AWAITING_R0_A
 
 
-def test_next_state_plan_vs_impl_needs_architect_routes_to_architect_decision() -> None:
+def test_next_state_plan_vs_impl_needs_architect_route_b_still_advances_to_r0_a() -> None:
+    """Route B (W-005): needs_architect plan-vs-impl no longer short-circuits;
+    R0-A still fires for cross-perspective audit."""
     result = next_state(
         WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL,
         _snap(plan_vs_impl_verdict="needs_architect"),
         _gates(),
     )
-    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+    assert result == WorkflowState.AWAITING_R0_A
+
+
+# ---------------------------------------------------------------------------
+# AWAITING_R0_A → next (ADR-008 Amendment 1, W-005)
+# Joint-verdict evaluation: both plan_vs_impl AND r0_a must be clean (+ merge)
+# to advance to PR_MERGE; any non-clean from either review → architect_decision.
+# ---------------------------------------------------------------------------
 
 
 def test_next_state_r0_a_absent_returns_none() -> None:
-    result = next_state(WorkflowState.AWAITING_R0_A, _snap(r0_a_verdict="absent"), _gates())
+    """R0-A not pushed yet → no transition."""
+    result = next_state(
+        WorkflowState.AWAITING_R0_A,
+        _snap(plan_vs_impl_verdict="clean", r0_a_verdict="absent"),
+        _gates(),
+    )
     assert result is None
 
 
-def test_next_state_r0_a_blocking_routes_to_architect_decision() -> None:
-    result = next_state(WorkflowState.AWAITING_R0_A, _snap(r0_a_verdict="blocking"), _gates())
-    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
-
-
-def test_next_state_r0_a_needs_architect_routes_to_architect_decision() -> None:
-    result = next_state(
-        WorkflowState.AWAITING_R0_A, _snap(r0_a_verdict="needs_architect"), _gates()
-    )
-    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
-
-
-def test_next_state_r0_a_clean_merge_clean_advances_to_pr_merge() -> None:
+def test_next_state_r0_a_joint_clean_merge_clean_advances_to_pr_merge() -> None:
+    """Joint verdict: both clean + merge_clean → PR_MERGE."""
     result = next_state(
         WorkflowState.AWAITING_R0_A,
-        _snap(r0_a_verdict="clean"),
+        _snap(plan_vs_impl_verdict="clean", r0_a_verdict="clean"),
         _gates(merge_clean=True),
     )
     assert result == WorkflowState.AWAITING_PR_MERGE
 
 
-def test_next_state_r0_a_clean_merge_conflict_routes_to_architect_decision() -> None:
+def test_next_state_r0_a_joint_clean_merge_conflict_routes_to_architect_decision() -> None:
+    """Joint verdict clean but merge conflict → architect_decision (Decision 8)."""
     result = next_state(
         WorkflowState.AWAITING_R0_A,
-        _snap(r0_a_verdict="clean"),
+        _snap(plan_vs_impl_verdict="clean", r0_a_verdict="clean"),
         _gates(merge_clean=False),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+def test_next_state_r0_a_plan_vs_impl_non_clean_routes_to_architect_decision() -> None:
+    """Route B joint-verdict (W-005): R0-A clean but plan_vs_impl has findings →
+    architect must still route plan_vs_impl findings."""
+    result = next_state(
+        WorkflowState.AWAITING_R0_A,
+        _snap(plan_vs_impl_verdict="needs_architect", r0_a_verdict="clean"),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+def test_next_state_r0_a_blocking_routes_to_architect_decision() -> None:
+    """R0-A blocking → architect_decision regardless of plan_vs_impl."""
+    result = next_state(
+        WorkflowState.AWAITING_R0_A,
+        _snap(plan_vs_impl_verdict="clean", r0_a_verdict="blocking"),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+def test_next_state_r0_a_needs_architect_routes_to_architect_decision() -> None:
+    """R0-A needs_architect → architect_decision regardless of plan_vs_impl."""
+    result = next_state(
+        WorkflowState.AWAITING_R0_A,
+        _snap(plan_vs_impl_verdict="clean", r0_a_verdict="needs_architect"),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+def test_next_state_r0_a_both_non_clean_routes_to_architect_decision() -> None:
+    """Both verdicts non-clean → architect_decision (still one routing pass needed)."""
+    result = next_state(
+        WorkflowState.AWAITING_R0_A,
+        _snap(plan_vs_impl_verdict="needs_architect", r0_a_verdict="blocking"),
+        _gates(),
     )
     assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
 

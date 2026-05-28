@@ -158,20 +158,29 @@ def next_state(
 
     # --- Auto-triggered transitions ----------------------------------------
 
-    if current == WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL:
-        if artifacts.plan_vs_impl_verdict == "clean":
-            return WorkflowState.AWAITING_R0_A
-        if artifacts.plan_vs_impl_verdict in ("blocking", "needs_architect"):
-            return WorkflowState.AWAITING_ARCHITECT_DECISION
+    # Route B (ADR-008 Amendment 1, W-005): R0-A fires regardless of plan-vs-impl
+    # verdict. The verdict is captured in the snapshot for joint-verdict evaluation
+    # at AWAITING_R0_A; it does not short-circuit this transition.
+    if (
+        current == WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL
+        and artifacts.plan_vs_impl_verdict != "absent"
+    ):
+        return WorkflowState.AWAITING_R0_A
 
+    # Joint-verdict evaluation (ADR-008 Amendment 1, W-005): both plan_vs_impl
+    # AND r0_a verdicts must be clean (plus merge_clean) to advance to PR_MERGE.
+    # Any non-clean from either review routes to architect_decision.
     if current == WorkflowState.AWAITING_R0_A:
-        if artifacts.r0_a_verdict in ("blocking", "needs_architect"):
-            return WorkflowState.AWAITING_ARCHITECT_DECISION
-        if artifacts.r0_a_verdict == "clean" and gates.merge_clean:
+        if artifacts.r0_a_verdict == "absent":
+            return None  # R0-A not yet pushed
+        both_clean = (
+            artifacts.plan_vs_impl_verdict == "clean"
+            and artifacts.r0_a_verdict == "clean"
+        )
+        if both_clean and gates.merge_clean:
             return WorkflowState.AWAITING_PR_MERGE
-        if artifacts.r0_a_verdict == "clean" and not gates.merge_clean:
-            # ADR-008 Decision 8: merge conflict detected
-            return WorkflowState.AWAITING_ARCHITECT_DECISION
+        # Any non-clean OR merge-conflict → architect must rule.
+        return WorkflowState.AWAITING_ARCHITECT_DECISION
 
     return None
 
