@@ -25,7 +25,7 @@ requires_cross_family_review: false
 
 ---
 
-## The 9 states (ADR-008 Decision 6)
+## The 10 states (ADR-008 Decision 6 + W-005 Amendment 2)
 
 | State | Meaning |
 |---|---|
@@ -34,8 +34,9 @@ requires_cross_family_review: false
 | `awaiting_architect_accept` | Senior plan + ADR draft pushed; awaiting architect status bump |
 | `awaiting_junior_impl` | ADR Accepted; junior has not pushed an impl commit |
 | `awaiting_senior_plan_vs_impl` | Junior pushed; senior has not yet written plan-vs-impl review |
-| `awaiting_R0_A` | Plan-vs-impl posted with non-blocking verdict; R0-A not yet pushed |
+| `awaiting_R0_A` | Plan-vs-impl posted; R0-A not yet pushed (Route B / W-005 Amendment 1: R0-A fires regardless of plan-vs-impl verdict) |
 | `awaiting_architect_decision` | A review carries 🟡 or 🔴; architect must rule on routing |
+| `awaiting_senior_revision` | architect-routing*.md committed; senior absorbs routing + bumps verdicts (W-005 Amendment 2) |
 | `awaiting_PR_merge` | All gates clean; PR open; awaiting architect merge |
 | `closed` | Terminal; task is in main |
 

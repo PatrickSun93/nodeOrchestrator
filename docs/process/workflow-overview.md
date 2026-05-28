@@ -149,7 +149,7 @@ The workflow is automated with a per-task state machine. ADR-008 Accepted (2026-
 Key points:
 
 - **Per-task state files** at `.workflow/{task-id}.yaml`, treated as ground truth (Principle 11 — state file IS the truth, not chat history or session memory).
-- **9-state vocabulary** (closed set): `awaiting_brief`, `awaiting_senior_plan`, `awaiting_architect_accept`, `awaiting_junior_impl`, `awaiting_senior_plan_vs_impl`, `awaiting_R0_A`, `awaiting_architect_decision`, `awaiting_PR_merge`, `closed`.
+- **10-state vocabulary** (closed set, per ADR-008 Decision 6 + W-005 Amendment 2): `awaiting_brief`, `awaiting_senior_plan`, `awaiting_architect_accept`, `awaiting_junior_impl`, `awaiting_senior_plan_vs_impl`, `awaiting_R0_A`, `awaiting_architect_decision`, `awaiting_senior_revision`, `awaiting_PR_merge`, `closed`.
 - **Session-start trigger**: each Claude Code session reads `.workflow/` on launch, identifies which task states match its role, and acts. No GitHub Actions; no cron.
 - **Auto-trigger conditions**: review files carry YAML frontmatter `verdict: clean | blocking | needs_architect`. Auto-advance reads `verdict`. Any `blocking` or `needs_architect` routes to `awaiting_architect_decision`.
 - **Override**: architect (or architect-partner with architect authorization) can force-advance, force-revert, or halt any task; all overrides recorded in `override_history` with `reason`.

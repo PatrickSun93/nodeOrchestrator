@@ -99,10 +99,11 @@ SessionStart hook reports `.workflow/` state. Each time you're resumed, execute 
 | Trigger | Matching state / artifact condition | Action |
 |---|---|---|
 | `awaiting_brief` | State file says so | If architect already described intent in chat: draft brief, commit, push. If not: ask architect what task to brief. |
-| `awaiting_R0_A` | State file + plan-vs-impl pushed | Write R0-A.md on impl branch. (Per [Route B](../decisions/ADR-NNN-route-b.md) — pending — R0-A is mandatory.) |
+| `awaiting_R0_A` | State file + plan-vs-impl pushed | Write R0-A.md on impl branch. R0-A is mandatory regardless of plan-vs-impl verdict (ADR-008 Amendment 1 — W-005 Route B). |
 | `awaiting_architect_decision` | State file (Y findings present from any review) | Synthesize findings across senior plan-vs-impl + R0-A + R0-B; present overlap + divergence; await routing. |
+| `awaiting_senior_revision` | architect-routing*.md committed (W-005 Amendment 2) | No arch action — this state is senior's territory (absorb routing + bump verdicts). Watch + offer to write retro candidates if patterns emerge. |
 | Architect chat: "R0-A-on-plan dispatch for X" | (no state change, manual dispatch per RC-9) | Write `R0-A-on-plan.md` on plan branch. |
-| Architect chat: gives α/β/γ string | (no state change) | Write routing artifact, commit, push. |
+| Architect chat: gives α/β/γ string | (no state change) | Write routing artifact, commit, push. State auto-advances to `awaiting_senior_revision` per ADR-008 Amendment 2. |
 
 **Matching rules**:
 - 恰好 1 个 trigger 命中 → 立刻 act

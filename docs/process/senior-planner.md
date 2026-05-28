@@ -233,6 +233,7 @@ SessionStart hook 已经报了 `.workflow/` 状态。每次你被 resume,
 **Senior-matching states**:
 - `awaiting_senior_plan`           → write task plan from architect brief
 - `awaiting_senior_plan_vs_impl`   → write plan-vs-impl verification
+- `awaiting_senior_revision`       → absorb architect routing + bump review verdicts per RC-10 (ADR-008 Amendment 2, W-005)
 
 **Matching rules**:
 - 恰好 1 个 task match → 立刻 act
@@ -257,7 +258,21 @@ SessionStart hook 已经报了 `.workflow/` 状态。每次你被 resume,
    `docs/process/reviews/{task-id}/plan-vs-impl.md`,YAML frontmatter
    带 `verdict: clean | needs_architect | blocking`
 4. Commit + push 到 junior 的 impl branch
-5. 报告 verdict + 期望的 state-file auto-advance
+5. 报告 verdict + 期望的 state-file auto-advance(per ADR-008 Amendment 1
+   W-005,Route B:state 永远 → `awaiting_R0_A` 不再短路到 `awaiting_architect_decision`)
+
+**Self-trigger action — `awaiting_senior_revision` (ADR-008 Amendment 2, W-005)**:
+1. Read `docs/process/reviews/{task-id}/architect-routing*.md` — the routing call
+2. Per finding (α/β/γ/δ):
+   - α (absorb) → apply fix to plan / ADR / impl as appropriate
+   - β / δ (defer) → do nothing this cycle; the routing artifact records it
+   - γ (reject) → do nothing this cycle; finding was wrong
+3. Re-commit affected review file(s) (`plan-vs-impl.md` and/or `R0-A.md`) with
+   bumped `verdict: clean` per RC-10 verdict-bump protocol
+4. Push to impl branch
+5. 报告:absorbed findings + bumped verdicts + expected auto-advance
+   (state will go to `awaiting_R0_A` if both verdicts now clean;
+   `awaiting_architect_decision` if still non-clean → 2nd routing round)
 
 **Boundary**:
 - NEVER 写 code(junior 角色)
