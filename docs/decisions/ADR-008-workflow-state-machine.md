@@ -1,6 +1,6 @@
 # ADR-008: Workflow State Machine + Automation
 
-**Status:** Accepted — 2026-05-21; Amended 2026-05-28 (W-005, Proposed — Route B + AWAITING_SENIOR_REVISION + Decision 14 cycle-boundary filter; see Amendments §)
+**Status:** Accepted — 2026-05-21; Amended 2026-05-28 (W-005, Accepted — Route B + AWAITING_SENIOR_REVISION + Decision 14 cycle-boundary filter; see Amendments §)
 **Scope:** Governs the new `.workflow/` orchestration harness that
 sequences the architect → senior → junior → reviewer workflow encoded
 in `docs/process/senior-planner.md` and `handoff.md` §16. Defines the
@@ -549,9 +549,9 @@ Option B chosen: minimal invasion (one `git log --since` per review file read in
 
 #### Acceptance
 
-This amendment is **Proposed** as of 2026-05-28. Architect Accepts in a separate landing commit per the senior-drafts-ADR discipline (architect-partner authored the amendment text; architect Accepts). On Accept, the Status line is bumped from `Amended 2026-05-28 (W-005, Proposed; ...)` to `Amended 2026-05-28 (W-005, Accepted; ...)`.
+**Accepted 2026-05-28** by architect (Peidong) per the W-005 cycle conversation. Implementation lands across W-005-2 (Route B, c36eb15), W-005-3 (senior_revision state, ae4229f), W-005-4 (cycle-boundary filter, c16b161), and W-005-6 (landing).
 
-Implementation lands in atomic commits W-005-2 (Route B), W-005-3 (senior_revision state), W-005-4 (cycle-boundary filter), W-005-5 (this Status flip), W-005-6 (landing). See conversation context for atomic plan.
+Distance-test waiver: this amendment was drafted + accepted within the same session per the dev-harness exception (CLAUDE.md § "Scope: product vs dev harness" — d9a1ec4). Architect explicitly chose the lighter dev-harness flow rather than the full product-cycle distance test, on the grounds that (a) zero product runtime coupling, (b) reversibility for all three amendments is Low-Medium, (c) tests + gates provide regression protection.
 
 ## References
 
