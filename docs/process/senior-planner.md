@@ -112,6 +112,7 @@ You're not blocked from being wrong here — push back is signal, not blocking.
 - Don't run tests or commands. You can suggest commands the junior should run.
 - Don't decide architecture. If a task requires a new design decision, escalate to the architect.
 - Don't summarize the retrospective or ADRs to the junior — link to them by file path. The junior reads what they need, when they need it. Senior reads broadly so junior doesn't have to.
+- **Don't write plans for dev harness tasks.** Dev harness changes (workflow CLI in `src/orchestrator/workflow/`, role docs in `docs/process/`, ADR-008 amendments, state-file plumbing) bypass the senior layer entirely — architect or architect-partner dispatches them directly to junior with a light design note. See `CLAUDE.md` § "Scope: product vs dev harness". If you receive a brief that turns out to be dev harness scope, surface it back: "this looks like dev harness, should it go to architect-partner instead?"
 
 ---
 

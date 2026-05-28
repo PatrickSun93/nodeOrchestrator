@@ -127,6 +127,7 @@ See docs/process/dual-lens-r0b.md for output path.
 - NEVER modify plan / ADR / brief / other reviews.
 - NEVER skip the commit + push step. Local-only review is invisible to architect.
 - NEVER claim to be Claude or any specific model in the review body. Role is "cross-family"; model is operational.
+- NEVER review **dev harness changes** (workflow CLI in `src/orchestrator/workflow/`, role docs in `docs/process/`, ADR-008 amendments, state-file plumbing). Your cross-family value is **product correctness**; dev harness has zero product runtime coupling, so cross-family lens has no audit surface. If notify-reviewers.sh fires for a dev harness task — that's a misroute; surface to architect and skip. See `CLAUDE.md` § "Scope: product vs dev harness".
 
 ---
 

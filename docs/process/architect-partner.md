@@ -36,7 +36,8 @@ You do NOT need to read:
 
 | Artifact | Path | When written |
 |---|---|---|
-| Brief | `docs/process/architect-briefs/{task-id}.md` | Architect describes task; you draft + commit |
+| Brief | `docs/process/architect-briefs/{task-id}.md` | Architect describes task; you draft + commit. **Product tasks only** (P1.x). For dev harness tasks see "Dev harness design notes" below. |
+| Dev harness design note | inline in chat (no file path) OR ad-hoc commit message | Architect describes a dev harness change (workflow CLI / role docs / ADR-008 amendment / state-file plumbing); you produce a light design note (list of atomic commits + acceptance + gates) in chat — junior implements directly without senior. See CLAUDE.md § "Scope". |
 | R0-A on plan | `docs/process/reviews/{task-id}/R0-A-on-plan.md` | Senior plan landed; you R0-A (architect-dispatched) |
 | R0-A on impl | `docs/process/reviews/{task-id}/R0-A.md` | Junior pushed impl; you R0-A (per cycle flow) |
 | Architect routing (plan stage) | `docs/process/reviews/{task-id}/architect-routing.md` | Architect gave α/β/γ; you capture |

@@ -26,6 +26,27 @@ Each role doc has its own self-trigger flow (read on session start when the matc
 
 ---
 
+# Scope: product vs dev harness
+
+The repo contains two **functionally separate** code surfaces:
+
+| Surface | What | Files |
+|---|---|---|
+| **Product** (orchestrator) | What end-users will run: multi-agent rooms running real conversations. Architecture documented in `docs/architecture/`. | `src/orchestrator/{agents,autonomy,core,llm,rooms,skills}/`, `tests/{agents,autonomy,core,llm,rooms,skills,integration,derived}/`, `config/agents/`, `config/skills/`, `config/tools.yaml`, `handoff.md`, `chat-history.md`, `docs/architecture/*`, `docs/decisions/ADR-001..014` (except ADR-008) |
+| **Dev harness** | Tooling the architect uses to develop the product: workflow state machine, role docs, process docs, tmux launchers. Zero runtime coupling to product. | `src/orchestrator/workflow/` (standalone CLI, not imported by product), `tests/workflow/`, `.workflow/*.yaml`, `docs/process/*`, `docs/decisions/ADR-008-workflow-state-machine.md`, `scripts/` (gitignored), `pyproject.toml [project.scripts] workflow` entry |
+
+**Why the distinction matters**: dev harness changes have **zero product runtime risk** (no product module imports `orchestrator.workflow`). The full brief → senior plan → ADR → junior → R0-A/R0-B/plan-vs-impl review chain exists to protect **product correctness**. Dev harness changes bypass most of it:
+
+- **No senior plan** — architect (or arch-partner) writes a light design note; junior implements.
+- **No R0-A / R0-B / plan-vs-impl** — dev harness has no product-correctness invariant for them to protect.
+- **ADR amendment IS still required when changing `docs/decisions/ADR-008-*`** — that ADR is the dev harness contract; amendments must be inscribed.
+- **Tests + gates still mandatory** — `tests/workflow/*` + ruff + mypy + pytest all run; the CI/quality bar is the same.
+- **Architect Accept is still required for any ADR-008 amendment** — same audit-trail discipline.
+
+If you're unsure whether a change is product or dev harness: ask the architect. The default is "product"; opt-in to dev harness only when the architect confirms.
+
+---
+
 # Project-wide rules (apply to every role)
 
 These rules hold regardless of role. Role docs may add stricter constraints; they do not override these.

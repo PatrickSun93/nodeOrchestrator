@@ -151,6 +151,29 @@ the architect lens on warnings is the load-bearing check.
 
 ---
 
+# Dev harness tasks (bypass senior plan)
+
+Per `CLAUDE.md` § "Scope: product vs dev harness", changes to:
+
+- `src/orchestrator/workflow/` (workflow CLI / state machine)
+- `tests/workflow/`
+- `docs/process/*` (role docs, process docs)
+- `docs/decisions/ADR-008-workflow-state-machine.md` (state machine contract)
+- `.workflow/*.yaml`
+
+…**bypass the senior layer**. Architect (or architect-partner) dispatches you with a design note instead of a senior plan. Follow the same discipline:
+
+- One atomic = one commit per RC-17
+- Tracking-table row + Q1-Q4 in commit body
+- All gates (ruff / mypy / pytest) green before push
+- 5-surface scan on landing commit
+
+What changes: no `docs/process/senior-plans/{task-id}.md` to read; the design note IS the plan. No `plan-vs-impl` / R0-A / R0-B reviews follow your push — dev harness has no product-runtime invariants for cross-perspective reviews to protect.
+
+If ADR-008 amendment is part of the change: architect-partner drafts; architect Accepts; you implement after Accept (same as product ADRs).
+
+---
+
 # When the senior pushed back / R0-A flagged
 
 If you receive a routing decision (α = absorb / β = defer / γ = reject):
