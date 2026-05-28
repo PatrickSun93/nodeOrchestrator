@@ -12,7 +12,7 @@ verdict_history:
     findings_count: { red: 0, yellow: 6, green: 11 }
     note: original — 6 Y findings surfaced by architect-partner R0-A-on-plan (Y1 ADR D8 layering contradiction; Y2 source_event_ids integrity; Y3 DecisionMeta co-presence; Y4 lookup empty-tags semantic; Y5 promotion event room_id pin; Y6 record_hypothesis non-atomicity hook).
   - verdict: clean
-    at_commit: HEAD
+    at_commit: 748da5b
     findings_count: { red: 0, yellow: 0, green: 17 }
     note: senior revision absorbed all 6 α routings on this branch — ADR-016 amendments (D2 line 155 / D3 promotion room_id / D6 empty-tags ValueError / D8 str|None + @model_validator co-presence / forward-amendment hooks +2) + plan amendments (P1.6.5-1 EventNotFoundError / P1.6.5-2 existence-check + 2 tests / P1.6.5-3 @model_validator + 4 co-presence combination tests / P1.6.5-4 lookup empty-tags ValueError / P1.6.5-6 test delta updated). All 6 Y reclassified as 🟢 (Y1→🟢 / Y2→🟢 / Y3→🟢 / Y4→🟢 / Y5→🟢 / Y6→🟢) per RC-10. Cross-reference `docs/process/reviews/P1.6.5/architect-routing.md`.
 ---
