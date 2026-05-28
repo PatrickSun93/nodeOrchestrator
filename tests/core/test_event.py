@@ -6,10 +6,10 @@ is tested in test_constitution.py; store behaviors in test_event_store.py.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
-
-from typing import Any
 
 from orchestrator.core.event import (
     DecisionMeta,

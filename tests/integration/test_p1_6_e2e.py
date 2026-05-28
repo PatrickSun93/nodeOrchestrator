@@ -203,7 +203,7 @@ def test_p1_6_e2e_full_room_state_chain_through_snapshot_pending_to_closed() -> 
     )
     store.append(hyp2)
 
-    # Append hypothesis 3 as current_event; snapshot before hyp3 has hyp1+hyp2 (≥2) → divergence fires.
+    # hyp3 as current_event; snapshot before hyp3 has hyp1+hyp2 (>=2) → divergence fires.
     hyp3 = _make_event(
         room_id,
         event_type=EventType.HYPOTHESIS,
@@ -215,7 +215,9 @@ def test_p1_6_e2e_full_room_state_chain_through_snapshot_pending_to_closed() -> 
     store.append(hyp3)
     snapshot_before_hyp3 = [e for e in store.get_room_events(room_id) if e.id != hyp3.id]
     transition2 = next_room_state(room, snapshot_before_hyp3, current_event=hyp3)
-    assert transition2 is not None, "exploration→divergence should fire with 2+ hypotheses in snapshot"
+    assert transition2 is not None, (
+        "exploration→divergence should fire with 2+ hypotheses in snapshot"
+    )
     assert transition2.new_state == "divergence"
     _append_state_transition(store, room, transition2)
     room = Room(id=room_id, type=RoomType.RESEARCH, state="divergence")
