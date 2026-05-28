@@ -44,7 +44,12 @@ def _valid_override(**overrides: object) -> OverrideEntry:
 # ---------------------------------------------------------------------------
 
 
-def test_workflow_state_exact_9_values() -> None:
+def test_workflow_state_exact_10_values() -> None:
+    """10 canonical states per ADR-008 Decision 6 + Amendment 2 (W-005).
+
+    Amendment 2 added awaiting_senior_revision (routing absorption phase
+    previously implicit between architect_decision and PR_merge).
+    """
     expected = {
         "awaiting_brief",
         "awaiting_senior_plan",
@@ -53,6 +58,7 @@ def test_workflow_state_exact_9_values() -> None:
         "awaiting_senior_plan_vs_impl",
         "awaiting_R0_A",
         "awaiting_architect_decision",
+        "awaiting_senior_revision",  # W-005 Amendment 2
         "awaiting_PR_merge",
         "closed",
     }

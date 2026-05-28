@@ -38,6 +38,10 @@ class ArtifactSnapshot(BaseModel):
     # False = frontmatter present, no `adr` key → skip awaiting_architect_accept.
     # True = frontmatter present with `adr` key → route through awaiting_architect_accept.
     plan_has_adr: bool | None = None
+    # W-005 Amendment 2: presence of any architect-routing*.md in
+    # docs/process/reviews/{task-id}/ — triggers
+    # awaiting_architect_decision → awaiting_senior_revision.
+    architect_routing_exists: bool = False
 
 
 class GateSnapshot(BaseModel):
@@ -180,6 +184,32 @@ def next_state(
         if both_clean and gates.merge_clean:
             return WorkflowState.AWAITING_PR_MERGE
         # Any non-clean OR merge-conflict → architect must rule.
+        return WorkflowState.AWAITING_ARCHITECT_DECISION
+
+    # AWAITING_ARCHITECT_DECISION → AWAITING_SENIOR_REVISION (ADR-008 Amendment 2,
+    # W-005): when architect-routing*.md is committed, the architect's
+    # alpha/beta/gamma routing decision is captured; senior begins routing
+    # absorption (RC-10 verdict bump). Auto-triggered on artifact appearance.
+    if (
+        current == WorkflowState.AWAITING_ARCHITECT_DECISION
+        and artifacts.architect_routing_exists
+    ):
+        return WorkflowState.AWAITING_SENIOR_REVISION
+
+    # AWAITING_SENIOR_REVISION → next (ADR-008 Amendment 2, W-005): senior has
+    # absorbed routing and bumped review verdicts. If both verdicts now clean,
+    # re-enter AWAITING_R0_A (which will then evaluate joint-verdict + merge
+    # for PR_MERGE). If still non-clean, second routing round needed.
+    if current == WorkflowState.AWAITING_SENIOR_REVISION:
+        if artifacts.r0_a_verdict == "absent" or artifacts.plan_vs_impl_verdict == "absent":
+            return None  # Senior hasn't re-committed reviews yet
+        both_clean = (
+            artifacts.plan_vs_impl_verdict == "clean"
+            and artifacts.r0_a_verdict == "clean"
+        )
+        if both_clean:
+            return WorkflowState.AWAITING_R0_A
+        # Still non-clean → architect rules a second time.
         return WorkflowState.AWAITING_ARCHITECT_DECISION
 
     return None

@@ -236,6 +236,14 @@ def build_artifact_snapshot(
     else:
         plan_has_adr = "adr" in plan_fm
 
+    # W-005 Amendment 2: detect architect-routing*.md in reviews dir. Any file
+    # matching the glob (architect-routing.md, architect-routing-on-impl.md,
+    # architect-routing-deepseek.md, etc.) signals architect has routed; senior
+    # begins absorption.
+    architect_routing_exists = (
+        reviews_dir.exists() and any(reviews_dir.glob("architect-routing*.md"))
+    )
+
     return ArtifactSnapshot(
         brief_exists=brief_exists,
         senior_plan_exists=senior_plan_exists,
@@ -245,6 +253,7 @@ def build_artifact_snapshot(
         r0_a_verdict=r0_a_verdict,
         pr_merged=pr_merged,
         plan_has_adr=plan_has_adr,
+        architect_routing_exists=architect_routing_exists,
     )
 
 

@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class WorkflowState(StrEnum):
-    """The 9 canonical workflow states. See ADR-008 Decision 6."""
+    """The 10 canonical workflow states. See ADR-008 Decision 6 + Amendment 2 (W-005)."""
 
     AWAITING_BRIEF = "awaiting_brief"
     AWAITING_SENIOR_PLAN = "awaiting_senior_plan"
@@ -22,6 +22,7 @@ class WorkflowState(StrEnum):
     AWAITING_SENIOR_PLAN_VS_IMPL = "awaiting_senior_plan_vs_impl"
     AWAITING_R0_A = "awaiting_R0_A"
     AWAITING_ARCHITECT_DECISION = "awaiting_architect_decision"
+    AWAITING_SENIOR_REVISION = "awaiting_senior_revision"  # W-005 Amendment 2
     AWAITING_PR_MERGE = "awaiting_PR_merge"
     CLOSED = "closed"
 

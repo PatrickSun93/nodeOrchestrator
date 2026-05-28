@@ -49,6 +49,7 @@ def _snap(
     r0_a_verdict: Literal["clean", "blocking", "needs_architect", "absent"] = "absent",
     pr_merged: bool = False,
     plan_has_adr: bool | None = None,
+    architect_routing_exists: bool = False,
 ) -> ArtifactSnapshot:
     return ArtifactSnapshot(
         brief_exists=brief_exists,
@@ -59,6 +60,7 @@ def _snap(
         r0_a_verdict=r0_a_verdict,
         pr_merged=pr_merged,
         plan_has_adr=plan_has_adr,
+        architect_routing_exists=architect_routing_exists,
     )
 
 
@@ -336,6 +338,82 @@ def test_next_state_r0_a_both_non_clean_routes_to_architect_decision() -> None:
     result = next_state(
         WorkflowState.AWAITING_R0_A,
         _snap(plan_vs_impl_verdict="needs_architect", r0_a_verdict="blocking"),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+# ---------------------------------------------------------------------------
+# AWAITING_ARCHITECT_DECISION → AWAITING_SENIOR_REVISION (ADR-008 Amendment 2, W-005)
+# Auto-triggered by architect-routing*.md committed appearance.
+# ---------------------------------------------------------------------------
+
+
+def test_next_state_architect_decision_no_routing_returns_none() -> None:
+    """architect_decision is a gated state; without routing file, stay put."""
+    result = next_state(
+        WorkflowState.AWAITING_ARCHITECT_DECISION,
+        _snap(plan_vs_impl_verdict="needs_architect", r0_a_verdict="clean"),
+        _gates(),
+    )
+    assert result is None
+
+
+def test_next_state_architect_decision_routing_present_advances_to_senior_revision() -> None:
+    """architect-routing*.md committed → senior begins absorption."""
+    result = next_state(
+        WorkflowState.AWAITING_ARCHITECT_DECISION,
+        _snap(
+            plan_vs_impl_verdict="needs_architect",
+            r0_a_verdict="clean",
+            architect_routing_exists=True,
+        ),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_SENIOR_REVISION
+
+
+# ---------------------------------------------------------------------------
+# AWAITING_SENIOR_REVISION → next (ADR-008 Amendment 2, W-005)
+# Senior bumps verdicts per RC-10; clean → re-enter R0_A; non-clean → 2nd round.
+# ---------------------------------------------------------------------------
+
+
+def test_next_state_senior_revision_verdicts_absent_returns_none() -> None:
+    """Senior hasn't re-committed reviews yet → no transition."""
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_REVISION,
+        _snap(plan_vs_impl_verdict="absent", r0_a_verdict="absent"),
+        _gates(),
+    )
+    assert result is None
+
+
+def test_next_state_senior_revision_both_clean_advances_to_r0_a() -> None:
+    """Both verdicts bumped to clean → re-enter R0_A (which evaluates merge)."""
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_REVISION,
+        _snap(plan_vs_impl_verdict="clean", r0_a_verdict="clean"),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_R0_A
+
+
+def test_next_state_senior_revision_plan_vs_impl_still_non_clean_routes_to_architect() -> None:
+    """plan_vs_impl still non-clean after revision → 2nd architect routing round."""
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_REVISION,
+        _snap(plan_vs_impl_verdict="needs_architect", r0_a_verdict="clean"),
+        _gates(),
+    )
+    assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+def test_next_state_senior_revision_r0_a_still_non_clean_routes_to_architect() -> None:
+    """R0-A still non-clean after revision → 2nd architect routing round."""
+    result = next_state(
+        WorkflowState.AWAITING_SENIOR_REVISION,
+        _snap(plan_vs_impl_verdict="clean", r0_a_verdict="needs_architect"),
         _gates(),
     )
     assert result == WorkflowState.AWAITING_ARCHITECT_DECISION
