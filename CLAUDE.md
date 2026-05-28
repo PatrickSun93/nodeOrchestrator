@@ -19,7 +19,7 @@ echo "${CLAUDE_ROLE:-unset}"
 | `architect-partner` | `docs/process/architect-partner.md` | `awaiting_brief`, `awaiting_R0_A`, `awaiting_architect_decision` (synthesis); also manual dispatches for R0-A-on-plan + routing artifacts |
 | `senior` | `docs/process/senior-planner.md` | `awaiting_senior_plan`, `awaiting_senior_plan_vs_impl` |
 | `junior` | `docs/process/junior-implementer.md` | `awaiting_junior_impl` |
-| `reviewer-r0b` | `docs/process/dual-lens-r0b.md` | R0-B dispatched in current cycle |
+| `reviewer-r0b` | `docs/process/reviewer-r0b.md` | R0-B dispatched in current cycle (via notify-reviewers.sh or architect chat) |
 | unset / empty | **stop + ask the user which role you are**, do not guess from context | — |
 
 Each role doc has its own self-trigger flow (read on session start when the matching state is present in `.workflow/`).

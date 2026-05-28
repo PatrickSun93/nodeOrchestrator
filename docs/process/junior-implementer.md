@@ -94,6 +94,52 @@ the architect lens on warnings is the load-bearing check.
 
 ---
 
+# Decision vs auto-proceed matrix
+
+**Core rule**: junior is the most mechanical role. The plan IS your contract. Follow it without confirmation; halt + surface only when the plan can't be followed as written.
+
+## Auto-proceed (do without asking)
+
+| Action | Why |
+|---|---|
+| Implement plan §3 execution order, atomic by atomic | Plan IS the contract |
+| One atomic = one commit per RC-17 (subject names the atomic) | Mandatory; no confirmation needed |
+| Tracking-table row + Q1–Q4 in commit body | Mandatory; no confirmation needed |
+| Landing commit with 5-surface scan + handoff edits | Mandatory final step |
+| Run gates (ruff / ruff format --check / mypy --strict / pytest) before push | Mandatory; surface failures with logs |
+| `git push -u origin claude/{task-id}-impl` after gates pass | Mandatory final step |
+| `uv run workflow advance --task-id X` after push | Mandatory state-machine advance |
+| `./scripts/notify-reviewers.sh X` after advance | Mandatory trigger fan-out |
+| Apply α-routed fixes as a follow-up commit on the same impl branch | Routing call already made by architect |
+| Pre-edit grep before claiming "X already exists" (RC-1) | Required forcing function |
+| Read source / tests / ADRs cited by plan for context | Pure read |
+
+## Halt + surface (architect must decide)
+
+| Trigger | What to surface |
+|---|---|
+| Plan acceptance criterion seems impossible or wrong | "Plan task N acceptance criterion §M says X but reality is Y; halting." Wait. |
+| Plan ambiguous on "how to" detail | Sometimes senior-pushback path: surface to senior first ("does §3 task 2 imply A or B?"). If senior unsure → escalate to architect. |
+| Implementing X requires a design decision the plan didn't make | "Plan implies a choice between A/B at §N; not stated. Architect call?" |
+| Test failure that contradicts plan implications | "Plan §M implies behavior X, but test_Y fails — plan or impl wrong?" |
+| New ADR seems needed mid-impl | NEVER draft ADR yourself. Surface: "this commit needs ADR-NNN; halting until architect dispatches senior to draft." |
+| Tempting refactor of unrelated code | NEVER bundle. Stop. The refactor is a separate task. |
+| β finding got dispatched to you for absorption | β = defer (per [[architect-deferral-literal-reading]]). If routing string really said β, surface — β means do nothing this cycle. |
+| State machine reality vs `.workflow/{task-id}.yaml` mismatch | Halt + `git status` + surface; never auto-fix. |
+| Gates fail with unclear root cause | Surface logs; do NOT suppress or work around (no `# type: ignore`, no `--no-verify`). |
+| Junior tried push and got auth error | Surface: "no creds in WSL — architect please configure (gh auth login + gh auth setup-git)". (Resolved with PR #24 setup; here as fallback.) |
+
+## Surface-and-proceed (rare; use sparingly)
+
+| Pattern | Example |
+|---|---|
+| Trivial-fix routing dispatch from architect | "Architect dispatched single-commit fix on existing impl branch; proceeding per the trivial-fix routing pattern below." Then proceed. |
+| Plan §3 step explicitly says "follow precedent W-NNN" | "Following W-NNN's pattern for atomic 4 per plan instruction." Then proceed. |
+
+**Default heuristic**: if the plan tells you what + where + acceptance criteria → proceed. If you have to choose between options the plan didn't anticipate → halt + surface.
+
+---
+
 # Trivial-fix routing 例外
 
 (C3 Y1 / C4 Y1+G1+G3 / W-001-impl R0-A-1 pattern)
