@@ -673,3 +673,61 @@ def test_dispatch_tool_calls_auto_execute_creates_events() -> None:
 
     autonomy_events = [e for e in events if e.type == EventType.AUTONOMY_DECISION]
     assert len(autonomy_events) == 1
+
+
+# ---------------------------------------------------------------------------
+# 13. Logger + state_transition(snapshot_pending) → summary_snapshot in store
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_logger_produces_summary_snapshot_on_snapshot_pending() -> None:
+    """§1 integration: Logger agent triggered by state_transition(snapshot_pending)
+    → dispatch_turn appends summary_snapshot event to event_store.
+
+    Source ≠ sink: state_transition.metadata.new_state → produce_and_emit_snapshot
+    → SUMMARY_SNAPSHOT event in event_store with SummarySnapshotMeta metadata.
+    """
+    from orchestrator.agents.schema import StateChangeTrigger
+
+    store = _make_store()
+    room = Room(id=generate_room_id(), type=RoomType.RESEARCH, state="snapshot_pending")
+    store.append_room(room)
+
+    logger_agent = Agent(
+        id="logger",
+        role="logger",
+        persona="I am the Logger.",
+        llm_config=_LLM,
+        speaking_triggers=[StateChangeTrigger(target_state="snapshot_pending")],
+    )
+
+    st_event = Event(
+        id=generate_event_id(),
+        room_id=room.id,
+        type=EventType.STATE_TRANSITION,
+        author="system",
+        timestamp=now_ms(),
+        content="",
+        metadata={"new_state": "snapshot_pending", "prior_state": "convergence"},
+    )
+    store.append(st_event)
+
+    router = _mock_router("Logger acknowledged snapshot_pending.")
+    result = dispatch_turn(
+        {"logger": logger_agent},
+        room,
+        st_event,
+        event_store=store,
+        llm_router=router,
+        available_skills={},
+        regex_registry={},
+        tools={},
+    )
+
+    assert result.total_asked == 1
+    assert result.failed_agents == []
+
+    events = store.get_room_events(room.id)
+    ss_events = [e for e in events if e.type == EventType.SUMMARY_SNAPSHOT]
+    assert len(ss_events) == 1, f"Expected 1 SUMMARY_SNAPSHOT event, got {len(ss_events)}"
+    assert ss_events[0].author == build_author("logger")

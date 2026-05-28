@@ -19,12 +19,14 @@ from typing import Protocol
 
 from orchestrator.agents.schema import Agent, TurnResult
 from orchestrator.agents.selection import build_agent_context
+from orchestrator.agents.snapshot_dispatch import produce_and_emit_snapshot
 from orchestrator.agents.speaking import should_agent_speak
 from orchestrator.agents.tool_dispatch import process_tool_calls
 from orchestrator.autonomy.scoring import ThresholdConfig, ToolMeta
 from orchestrator.core.event import (
     Event,
     EventType,
+    StateTransitionMeta,
     build_author,
     generate_event_id,
     now_ms,
@@ -149,6 +151,26 @@ def dispatch_turn(
                 len(tool_result.decisions),
                 [str(d.tier) for d in tool_result.decisions],
             )
+
+        # Snapshot dispatch: Logger agent on state_transition to snapshot_pending.
+        # Single call site per ADR-013 D1 separate-concern discipline.
+        if agent.id == "logger" and current_event.type == EventType.STATE_TRANSITION:
+            try:
+                st_meta = StateTransitionMeta.model_validate(current_event.metadata)
+                if st_meta.new_state == "snapshot_pending":
+                    produce_and_emit_snapshot(
+                        agent=agent,
+                        room=room,
+                        current_event=current_event,
+                        event_store=event_store,
+                        snapshot_events=snapshot,
+                    )
+            except Exception as exc:
+                _log.warning(
+                    "agent %s snapshot dispatch failed; skipping (continuing): %s",
+                    agent.id,
+                    exc,
+                )
 
     return TurnResult(
         utterances=utterances,
