@@ -1,6 +1,6 @@
 # ADR-014: Snapshot contract — pure-function derived view + persisted-via-event
 
-**Status:** Proposed — 2026-05-28
+**Status:** Accepted — 2026-05-28
 **Scope:** Locks the structural vocabulary, producer semantic, persistence shape, and consumer protocol for the `Snapshot` type. Governs every future producer of `summary_snapshot` events and every consumer of derived state-at-time-X views. Does not govern decision log (separate ADR-015) or cross-room memory persistence (deferred).
 
 ## Context

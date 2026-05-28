@@ -1,6 +1,6 @@
 # ADR-015: Decision log shape — derived-live filter over event stream
 
-**Status:** Proposed — 2026-05-28
+**Status:** Accepted — 2026-05-28
 **Scope:** Locks the structural shape, filter semantic, ordering invariant, and consumer protocol for the `DecisionLog` derived view. Governs `produce_decision_log` in `derived/decision_log.py`. Does not govern snapshot vocabulary (separate ADR-014) or cross-room memory persistence (deferred).
 
 ## Context
