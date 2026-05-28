@@ -16,7 +16,7 @@ echo "${CLAUDE_ROLE:-unset}"
 
 | `CLAUDE_ROLE` value | Read this role doc | Matching states |
 |---|---|---|
-| `architect-partner` | `docs/process/workflow-overview.md` §1 (architect-partner row) | brief publishing, R0-A reviews, retro candidate capture |
+| `architect-partner` | `docs/process/architect-partner.md` | `awaiting_brief`, `awaiting_R0_A`, `awaiting_architect_decision` (synthesis); also manual dispatches for R0-A-on-plan + routing artifacts |
 | `senior` | `docs/process/senior-planner.md` | `awaiting_senior_plan`, `awaiting_senior_plan_vs_impl` |
 | `junior` | `docs/process/junior-implementer.md` | `awaiting_junior_impl` |
 | `reviewer-r0b` | `docs/process/dual-lens-r0b.md` | R0-B dispatched in current cycle |
