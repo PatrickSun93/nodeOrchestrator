@@ -268,3 +268,27 @@ sequential split in §3 explicitly. Junior may still serialize if
 session/operational constraints require, but the senior plan should
 name the parallelism opportunity. Wall-time savings are real; review
 surface is unchanged (each commit is reviewed on its own merits).
+
+---
+
+# Pre-investigation discipline
+
+These rules apply at plan-revision time — before the plan is published for junior dispatch. They close the gap where senior self-discoveries are captured as unverified claims, causing Y findings at R0-A.
+
+## (a) Claims-without-cites verification-cite rule
+
+When plan §5 self-discoveries / push-back results claim "values match" / "X passes" / "fixture exists" against an external surface (test fixture, existing config, existing ADR), include a verification cite — either a grep result OR an explicit "verified against `<file>:<line>`" annotation. The discipline closes the gap where claims-without-cites become Y findings at R0-A.
+
+_Recurrence instances_: 5 (W-003 R0-A-on-plan + P1.5.5 R0-A-on-plan + P1.5.5 R0-A senior plan-vs-impl); codified at W-004.
+
+## (b) Promotion-impact systematic grep
+
+Before plan §5 self-discoveries lock, when promoting `.example` configs (or any rename / removal of a previously-globbed file), grep for ALL callers of the old glob (test fixtures, dev tooling, doc generators, CI scripts) and include any caller-side updates in the relevant atomic task's acceptance criteria.
+
+_Recurrence instances_: 3 (P1.5.5 R0-A-on-plan G6 + P1.5.5 senior plan-vs-impl G6 + `TestExampleConfigs` follow-up commit); codified at W-004.
+
+## (c) Architect-deferral literal-reading discipline (senior-facing)
+
+When architect comments include phrases like "queued for W-N brief" / "defer to W-N" / "capture for retro" / "address later" — these mean **substantive deferral**, not green-light for an in-cycle fix or stab. Do not bundle a partial implementation or improvised fix under the guise of "defensive hardening" when the architect's language means the item is untouched this cycle. If you believe in-cycle action is correct despite the deferral language, surface to architect for explicit dispatch before including in the plan.
+
+_Recurrence instances_: 1 (P1.5.5 RC-19 mislabel — defensive Z-suffix bundled under δ deferral language, surfaced as Y finding at R0-A); high-stakes single-instance; codified at W-004. First exercise of the rule under its own codification: W-004-3 authorship boundary.

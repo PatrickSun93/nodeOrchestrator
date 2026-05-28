@@ -46,3 +46,9 @@ the architect lens on warnings is the load-bearing check.
   小修指令),识别为 trivial-fix routing:单 commit 在现有 impl branch 上,
   跟随原 issue source 引用
 - 这种 case **绕过** senior plan;但只在 architect 显式 dispatch 时 trigger
+
+**Architect-deferral literal-reading**:
+- 如果 architect 评论中出现 "queued for W-N brief" / "defer to W-N" / "capture for retro" / "address later" — 这些词语表示**实质性的推迟**,不是当前周期可以顺手做的绿灯信号。
+- 被推迟的 item 在当前周期保持不动;不要自作主张做修复或部分实现。
+- 如果你认为当前周期行动是合理的(尽管有推迟语言),halt + surface to architect 要求明确 dispatch。
+- 失败案例:P1.5.5 RC-19 — 将 defensive Z-suffix 捆绑进 δ 推迟语言下,被 R0-A 标记为 Y 发现。
