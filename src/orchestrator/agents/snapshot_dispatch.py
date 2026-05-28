@@ -52,8 +52,10 @@ def produce_and_emit_snapshot(
     snapshot_at = now_ms()
     snapshot = produce_snapshot(snapshot_events, room, snapshot_at=snapshot_at)
 
-    # Decision log is derived and available to callers via event_store, not persisted.
-    # Produce here to exercise the derivation; result not stored (ADR-015 D5).
+    # Decision log is derived (ADR-015 D5: not persisted; consumers always recompute).
+    # Call at snapshot dispatch exercises the derivation path so any ValidationError
+    # (per ADR-014 D7 strict-propagation semantic) surfaces at the same trigger as
+    # produce_snapshot, not at first downstream consumer.
     _ = produce_decision_log(snapshot_events, room)
 
     meta = SummarySnapshotMeta.model_validate(snapshot.model_dump())

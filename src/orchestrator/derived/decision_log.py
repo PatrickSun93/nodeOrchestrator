@@ -43,7 +43,10 @@ _DECISION_FILTER: frozenset[EventType] = frozenset(
 
 
 def produce_decision_log(events: list[Event], room: Room) -> DecisionLog:
-    """Pure derivation of chronological decision-class events. See ADR-015."""
+    """Pure derivation of chronological decision-class events. See ADR-015.
+
+    Raises pydantic.ValidationError on malformed typed metadata per ADR-014 D7.
+    """
     entries: list[DecisionEntry] = []
     for e in events:
         if e.type not in _DECISION_FILTER:
@@ -51,17 +54,11 @@ def produce_decision_log(events: list[Event], room: Room) -> DecisionLog:
 
         parent_event_id: str | None = None
         if e.type == EventType.REJECTION:
-            try:
-                rej_meta = RejectionMeta.model_validate(e.metadata)
-                parent_event_id = rej_meta.rejects
-            except Exception:
-                pass
+            rej_meta = RejectionMeta.model_validate(e.metadata)
+            parent_event_id = rej_meta.rejects
         elif e.type == EventType.RETRACTION:
-            try:
-                ret_meta = RetractionMeta.model_validate(e.metadata)
-                parent_event_id = ret_meta.retracts
-            except Exception:
-                pass
+            ret_meta = RetractionMeta.model_validate(e.metadata)
+            parent_event_id = ret_meta.retracts
 
         entries.append(
             DecisionEntry(

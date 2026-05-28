@@ -254,3 +254,21 @@ def test_produce_decision_log_content_excerpt_verbatim_200() -> None:
     dlog = produce_decision_log([d_with_long], _ROOM)
     assert dlog.entries[0].content_excerpt == long_content[:200]
     assert len(dlog.entries[0].content_excerpt) == 200
+
+
+# ---------------------------------------------------------------------------
+# M-Y4: §3-cleanup — malformed metadata raises ValidationError (strict propagation)
+# ---------------------------------------------------------------------------
+
+
+def test_produce_decision_log_malformed_rejection_metadata_raises() -> None:
+    """REJECTION event with malformed rejects field → produce_decision_log raises.
+
+    Per ADR-014 D7 strict-propagation semantic: ValidationError propagates; no swallow.
+    """
+    bad_rejection = _evt(
+        event_type=EventType.REJECTION,
+        metadata={"rejects": 12345, "reason": "wrong type"},  # rejects must be str
+    )
+    with pytest.raises(ValidationError):
+        produce_decision_log([bad_rejection], _ROOM)

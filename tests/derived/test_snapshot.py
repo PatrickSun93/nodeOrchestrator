@@ -454,3 +454,66 @@ def test_produce_snapshot_event_count() -> None:
     events = [_evt(event_type=EventType.USER_INPUT) for _ in range(5)]
     snap = produce_snapshot(events, _ROOM, snapshot_at=_TS)
     assert snap.event_count == 5
+
+
+# ---------------------------------------------------------------------------
+# M-R1: TC without preceding AD → included with autonomy_tier="unknown"
+# ---------------------------------------------------------------------------
+
+
+def test_produce_snapshot_tc_without_preceding_ad_gets_unknown_tier() -> None:
+    """TOOL_CALL without a preceding correlated AUTONOMY_DECISION → tier='unknown'.
+
+    Per ADR-014 D2.3 conservative-include semantic: anomaly TC still appears in
+    tool_calls_pending_confirm with autonomy_tier='unknown'.
+    """
+    tc_event = _evt(
+        event_type=EventType.TOOL_CALL,
+        author="agent:operator",
+        metadata={"tool_name": "read_file", "call_id": "call_anomaly", "params": {}},
+    )
+    snap = produce_snapshot([tc_event], _ROOM, snapshot_at=_TS)
+    assert len(snap.tool_calls_pending_confirm) == 1
+    assert snap.tool_calls_pending_confirm[0].autonomy_tier == "unknown"
+    assert snap.tool_calls_pending_confirm[0].tool_name == "read_file"
+
+
+# ---------------------------------------------------------------------------
+# M-Y4: §3-cleanup — malformed metadata raises ValidationError (strict propagation)
+# ---------------------------------------------------------------------------
+
+
+def test_produce_snapshot_malformed_decision_metadata_raises() -> None:
+    """DECISION event with malformed based_on → produce_snapshot raises ValidationError.
+
+    Per ADR-014 D7 strict-propagation: no silent swallow.
+    """
+    bad_decision = _evt(
+        event_type=EventType.DECISION,
+        author="user",
+        metadata={"based_on": "not_a_list", "trade_offs": {}},  # based_on must be list
+    )
+    with pytest.raises(ValidationError):
+        produce_snapshot([bad_decision], _ROOM, snapshot_at=_TS)
+
+
+def test_produce_snapshot_malformed_retraction_metadata_raises() -> None:
+    """RETRACTION event with malformed retracts field → produce_snapshot raises."""
+    bad_retraction = _evt(
+        event_type=EventType.RETRACTION,
+        author="user",
+        metadata={"retracts": ["should_be_str_not_list"], "reason": "oops"},
+    )
+    with pytest.raises(ValidationError):
+        produce_snapshot([bad_retraction], _ROOM, snapshot_at=_TS)
+
+
+def test_produce_snapshot_malformed_state_transition_metadata_raises() -> None:
+    """STATE_TRANSITION event with malformed metadata → produce_snapshot raises."""
+    bad_st = _evt(
+        event_type=EventType.STATE_TRANSITION,
+        author="system",
+        metadata={"new_state": "", "prior_state": "setup"},  # new_state min_length=1 fails
+    )
+    with pytest.raises(ValidationError):
+        produce_snapshot([bad_st], _ROOM, snapshot_at=_TS)

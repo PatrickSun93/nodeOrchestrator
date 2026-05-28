@@ -731,3 +731,141 @@ def test_dispatch_logger_produces_summary_snapshot_on_snapshot_pending() -> None
     ss_events = [e for e in events if e.type == EventType.SUMMARY_SNAPSHOT]
     assert len(ss_events) == 1, f"Expected 1 SUMMARY_SNAPSHOT event, got {len(ss_events)}"
     assert ss_events[0].author == build_author("logger")
+
+
+# ---------------------------------------------------------------------------
+# 14. M-Y1: snapshot dispatch ValidationError → snapshot_failed=True
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_snapshot_dispatch_validation_error_sets_snapshot_failed() -> None:
+    """Logger agent + produce_and_emit_snapshot raises ValidationError → snapshot_failed=True.
+
+    Mocks produce_and_emit_snapshot to raise ValidationError directly (the same error class
+    that M-Y2 strict propagation causes for malformed event metadata in derived/).
+    Per ADR-014 D7: ValidationError is caught by the narrowed except and surfaced as
+    TurnResult.snapshot_failed=True. Turn continues; no SUMMARY_SNAPSHOT appended.
+    """
+    from unittest.mock import patch
+
+    from pydantic import ValidationError as PydanticValidationError
+
+    from orchestrator.agents.schema import StateChangeTrigger
+
+    store = _make_store()
+    room = Room(id=generate_room_id(), type=RoomType.RESEARCH, state="snapshot_pending")
+    store.append_room(room)
+
+    logger_agent = Agent(
+        id="logger",
+        role="logger",
+        persona="I am the Logger.",
+        llm_config=_LLM,
+        speaking_triggers=[StateChangeTrigger(target_state="snapshot_pending")],
+    )
+
+    # Valid state_transition event (appended to store for utterance parent_id linkage).
+    st_event = Event(
+        id=generate_event_id(),
+        room_id=room.id,
+        type=EventType.STATE_TRANSITION,
+        author="system",
+        timestamp=now_ms(),
+        content="",
+        metadata={"new_state": "snapshot_pending", "prior_state": "convergence"},
+    )
+    store.append(st_event)
+
+    # Construct a real PydanticValidationError by triggering a schema failure.
+    try:
+        from orchestrator.derived.snapshot import HypothesisRef
+
+        HypothesisRef()  # type: ignore[call-arg]  # missing event_id → ValidationError
+    except PydanticValidationError as e:
+        fake_validation_error = e
+
+    router = _mock_router("Logger acknowledged.")
+    with patch(
+        "orchestrator.agents.dispatch.produce_and_emit_snapshot",
+        side_effect=fake_validation_error,
+    ):
+        result = dispatch_turn(
+            {"logger": logger_agent},
+            room,
+            st_event,
+            event_store=store,
+            llm_router=router,
+            available_skills={},
+            regex_registry={},
+            tools={},
+        )
+
+    assert result.total_asked == 1
+    assert result.failed_agents == []
+    assert result.snapshot_failed is True
+
+    events = store.get_room_events(room.id)
+    ss_events = [e for e in events if e.type == EventType.SUMMARY_SNAPSHOT]
+    assert len(ss_events) == 0, "No SUMMARY_SNAPSHOT should be appended on ValidationError"
+
+
+def test_dispatch_snapshot_dispatch_event_store_failure_propagates() -> None:
+    """Logger agent + snapshot dispatch event_store.append failure → propagates unwrapped.
+
+    Per ADR-014 D7: non-ValidationError (RuntimeError from event_store.append) is NOT
+    caught by the narrowed except; propagates per ADR-011 D7-b.
+    """
+    import sqlite3
+    from unittest.mock import patch
+
+    from orchestrator.agents.schema import StateChangeTrigger
+
+    store = _make_store()
+    room = Room(id=generate_room_id(), type=RoomType.RESEARCH, state="snapshot_pending")
+    store.append_room(room)
+
+    logger_agent = Agent(
+        id="logger",
+        role="logger",
+        persona="I am the Logger.",
+        llm_config=_LLM,
+        speaking_triggers=[StateChangeTrigger(target_state="snapshot_pending")],
+    )
+
+    st_event = Event(
+        id=generate_event_id(),
+        room_id=room.id,
+        type=EventType.STATE_TRANSITION,
+        author="system",
+        timestamp=now_ms(),
+        content="",
+        metadata={"new_state": "snapshot_pending", "prior_state": "convergence"},
+    )
+    store.append(st_event)
+
+    router = _mock_router("Logger acknowledged.")
+
+    # First append (utterance) succeeds; second append (summary_snapshot) raises.
+    original_append = store.append
+    call_count = [0]
+
+    def append_raise_on_second(event: Event) -> None:
+        call_count[0] += 1
+        if call_count[0] == 2:
+            raise sqlite3.OperationalError("disk full")
+        original_append(event)
+
+    with (
+        patch.object(store, "append", side_effect=append_raise_on_second),
+        pytest.raises(sqlite3.OperationalError, match="disk full"),
+    ):
+        dispatch_turn(
+            {"logger": logger_agent},
+            room,
+            st_event,
+            event_store=store,
+            llm_router=router,
+            available_skills={},
+            regex_registry={},
+            tools={},
+        )
