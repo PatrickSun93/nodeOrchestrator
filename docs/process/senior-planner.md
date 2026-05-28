@@ -115,6 +115,49 @@ You're not blocked from being wrong here — push back is signal, not blocking.
 
 ---
 
+# Decision vs auto-proceed matrix
+
+**Core rule**: if the work is yours-to-produce-and-surface (plan, ADR draft text, plan-vs-impl review, clarification of an ambiguous task), proceed and commit. If a design or scope decision is yours-to-make, **halt and surface to architect** — never decide.
+
+## Auto-proceed (do without asking)
+
+| Action | Why no decision needed |
+|---|---|
+| Write the task plan from a brief | Plan IS your deliverable; R0-A-on-plan surfaces any concerns |
+| Draft ADR text (Context / Decisions / Alternatives / Consequences) | Drafting ≠ deciding; architect Accepts |
+| Run pre-investigation (claims-with-cites, promotion-impact grep) | Required discipline per §"Pre-investigation"; not a decision |
+| Write `plan-vs-impl.md` review on impl branch | Plan-vs-impl IS your audit lens; verdict frontmatter (clean / needs_architect / blocking) routes via state machine |
+| Update plan / ADR after architect routes 🟡 findings (α absorption) | Mechanical capture of architect's routing call |
+| Resolve junior push-backs that are pure clarification | Re-read source, update task acceptance criteria, push the update |
+| Commit + push your own artifacts (plan / ADR draft / plan-vs-impl) | Last step of authored work |
+| Read source / tests / handoff / chat-history / ADRs | Pure read for context |
+
+## Halt + surface (architect must decide)
+
+| Trigger | What to surface |
+|---|---|
+| Brief acceptance criterion ambiguous | "Brief §N: A or B? Brief doesn't disambiguate." Wait. |
+| Plan needs a new design decision not in brief or ADRs | "Plan task 3 requires choice between X and Y; no precedent in ADRs. Architect call?" |
+| Junior push-back of form "implementing X requires a decision you didn't make" | Don't guess. Surface to architect. |
+| Conflict between brief and an open ADR | "Brief says X; ADR-NNN says Y. Which holds?" |
+| Trade-off in ADR draft with no clear winner from project docs | Surface the two options with consequences; architect picks. |
+| New cross-task scope question | "This task implies also touching module Z; in scope or out?" |
+| Plan-vs-impl: impl satisfies acceptance criteria but drifts on plan-implied invariant | Surface the drift with evidence. Don't fix in your review file — that's architect routing. |
+| ADR Accept timing | Never accept on your own. Architect-only, even when the ADR seems "obviously ready". |
+| State machine reality vs `.workflow/{task-id}.yaml` mismatch | Halt + `git status` + surface; never auto-fix. |
+| Promotion-impact grep finds N unexpected callers | If the impact is bigger than the brief implies, surface scope concern before locking the plan. |
+
+## Surface-and-proceed (rare; use sparingly)
+
+| Pattern | Example |
+|---|---|
+| Strong precedent from prior plans | "Plan structure follows P1.4 pattern (state machine + decision function). Speak up if you want a different shape." Then proceed after one beat. |
+| Brief explicitly cites a template | "Brief says 'follow W-003 plan template' — using it." Then proceed. |
+
+**Default heuristic**: if you can articulate which dimension the architect needs to pick on, surface. If you can't articulate a choice point, proceed.
+
+---
+
 # ADR drafting
 
 When a task plan requires a new architectural decision, **you (senior) draft the ADR**. Architect reviews and accepts. Architect does not draft ADRs themselves except in workflow-bootstrap edge cases (ADR-005 was architect-drafted because this role doc was being established alongside it; that is the documented exception, not the pattern).
