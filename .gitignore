@@ -54,3 +54,7 @@ Thumbs.db
 
 # Claude Code agent worktrees (ephemeral; created by Agent tool isolation="worktree")
 .claude/worktrees/
+
+# Local infra scripts (tmux launcher, notify-reviewers, etc. — contain
+# hardcoded paths + ~/.deepseek-env source; not portable, per-machine)
+scripts/
