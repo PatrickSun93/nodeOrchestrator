@@ -269,6 +269,28 @@ class StateTransitionMeta(_BaseMeta):
     prior_state: str = Field(min_length=1)
 
 
+class SummarySnapshotMeta(_BaseMeta):
+    """Metadata for ``summary_snapshot`` events.
+
+    Field shape mirrors ``Snapshot`` (deliberate duplication — ``orchestrator.core``
+    MUST NOT import from ``orchestrator.derived`` per layering; same pattern as
+    ``AutonomyDecisionMetadata`` at line 198+ mirroring ``DecisionTrace`` from
+    ``autonomy/scoring.py``). See ADR-014 D5 for the duplication rationale.
+    """
+
+    room_id: str
+    room_type: str
+    room_state: str
+    snapshot_at: int
+    event_count: int = Field(ge=0)
+    decision_count: int = Field(ge=0)
+    open_hypotheses: list[dict[str, str]]  # serialized HypothesisRef
+    closed_decisions: list[dict[str, str]]  # serialized DecisionRef
+    tool_calls_pending_confirm: list[dict[str, Any]]
+    last_state_transition: dict[str, Any] | None
+    participants: list[str]
+
+
 TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.HYPOTHESIS: HypothesisMeta,
     EventType.DECISION: DecisionMeta,
@@ -279,6 +301,7 @@ TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.AUTONOMY_DECISION: AutonomyDecisionMetadata,
     EventType.AUTONOMY_REFUSAL: AutonomyRefusalMetadata,
     EventType.STATE_TRANSITION: StateTransitionMeta,
+    EventType.SUMMARY_SNAPSHOT: SummarySnapshotMeta,
 }
 
 

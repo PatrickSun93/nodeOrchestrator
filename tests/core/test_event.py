@@ -9,6 +9,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from typing import Any
+
 from orchestrator.core.event import (
     DecisionMeta,
     Event,
@@ -21,6 +23,7 @@ from orchestrator.core.event import (
     RelationType,
     RetractionMeta,
     RoomId,
+    SummarySnapshotMeta,
     TimestampMs,
     ToolCallMeta,
     ToolResultMeta,
@@ -324,3 +327,82 @@ class TestRelation:
                 extracted_at=now_ms(),
                 extra="not allowed",  # type: ignore[call-arg]
             )
+
+
+# ---------------------------------------------------------------------------
+# SummarySnapshotMeta — §6 schema invariants + round-trip (P1.6-2)
+# ---------------------------------------------------------------------------
+
+_SUMMARY_SNAPSHOT_REQUIRED_FIELDS: dict[str, Any] = {
+    "room_id": "room_42",
+    "room_type": "research",
+    "room_state": "snapshot_pending",
+    "snapshot_at": 1234567890,
+    "event_count": 5,
+    "decision_count": 2,
+    "open_hypotheses": [{"event_id": "evt_h1"}],
+    "closed_decisions": [{"event_id": "evt_d1"}],
+    "tool_calls_pending_confirm": [],
+    "last_state_transition": None,
+    "participants": ["alpha", "logger"],
+}
+
+
+class TestSummarySnapshotMeta:
+    def test_frozen(self) -> None:
+        """SummarySnapshotMeta is frozen — mutating a field raises."""
+        meta = SummarySnapshotMeta(**_SUMMARY_SNAPSHOT_REQUIRED_FIELDS)
+        with pytest.raises(ValidationError):
+            meta.room_state = "closed"
+
+    def test_extra_forbid(self) -> None:
+        """SummarySnapshotMeta rejects unknown fields."""
+        with pytest.raises(ValidationError):
+            SummarySnapshotMeta(
+                **_SUMMARY_SNAPSHOT_REQUIRED_FIELDS,
+                unknown_field="boom",  # type: ignore[call-arg]
+            )
+
+    def test_required_field_absent(self) -> None:
+        """Omitting room_id → ValidationError."""
+        fields = dict(_SUMMARY_SNAPSHOT_REQUIRED_FIELDS)
+        del fields["room_id"]
+        with pytest.raises(ValidationError):
+            SummarySnapshotMeta(**fields)
+
+    def test_wrong_type_event_count(self) -> None:
+        """event_count ge=0 — negative value raises ValidationError."""
+        fields = dict(_SUMMARY_SNAPSHOT_REQUIRED_FIELDS)
+        fields["event_count"] = -1
+        with pytest.raises(ValidationError):
+            SummarySnapshotMeta(**fields)
+
+    def test_validate_metadata_roundtrip(self) -> None:
+        """validate_metadata(SUMMARY_SNAPSHOT, ...) succeeds and returns normalized dict."""
+        meta = validate_metadata(
+            EventType.SUMMARY_SNAPSHOT, dict(_SUMMARY_SNAPSHOT_REQUIRED_FIELDS)
+        )
+        assert meta["room_id"] == "room_42"
+        assert meta["room_state"] == "snapshot_pending"
+        assert meta["event_count"] == 5
+
+    def test_snapshot_roundtrip(self) -> None:
+        """Snapshot.model_dump() → SummarySnapshotMeta.model_validate() round-trips cleanly.
+
+        Per ADR-014 D5: deliberate duplication invariant — the serialized Snapshot
+        dict can be validated by SummarySnapshotMeta without data loss.
+        """
+        from orchestrator.core.event import generate_room_id
+        from orchestrator.core.room import Room, RoomType
+        from orchestrator.derived.snapshot import produce_snapshot
+
+        room = Room(id=generate_room_id(), type=RoomType.RESEARCH, state="snapshot_pending")
+        snapshot = produce_snapshot([], room, snapshot_at=TimestampMs(9999))
+        snap_dict = snapshot.model_dump()
+
+        meta = SummarySnapshotMeta.model_validate(snap_dict)
+        assert meta.room_id == str(room.id)
+        assert meta.room_state == "snapshot_pending"
+        assert meta.event_count == 0
+        assert meta.decision_count == 0
+        assert meta.participants == []
