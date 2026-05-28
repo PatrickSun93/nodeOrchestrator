@@ -26,11 +26,31 @@ Touches Principle 1, Principle 5 (code decides what code can — `produce_snapsh
 
 ## Decisions
 
-### 1. `produce_snapshot(events, room) -> Snapshot` is a pure function over event stream
+### 1. `produce_snapshot(events, room, *, snapshot_at)` is a pure function over event stream + caller-provided clock
 
-Pure function in `src/orchestrator/derived/snapshot.py`. Input: pre-fetched `events: list[Event]` + `room: Room`. Output: a frozen `Snapshot` Pydantic model. **The function does not call `event_store` internally** — caller is responsible for fetching events (typically via `event_store.get_room_events(room.id)`); the function does not append events; it does not invoke LLM.
+Pure function in `src/orchestrator/derived/snapshot.py` with **clock-injection** to preserve the purity contract (per R0-A Y2 → α routing absorption). Input: pre-fetched `events: list[Event]` + `room: Room` + `snapshot_at: TimestampMs` (keyword-only). Output: a frozen `Snapshot` Pydantic model.
 
-**Why**: Principle 1 + Principle 5. Snapshot is a derivation, not an authority; isolating purity from event-store I/O makes the function trivially testable + cacheable. Caller (Logger agent's `produce_and_emit_snapshot` from ADR-013-D1-style sibling module) handles the I/O.
+```python
+def produce_snapshot(
+    events: list[Event],
+    room: Room,
+    *,
+    snapshot_at: TimestampMs,
+) -> Snapshot:
+    """Pure derivation; caller provides snapshot_at (typically core.event.now_ms()).
+
+    Pure function: same (events, room, snapshot_at) → same Snapshot.
+    Caller (Logger's produce_and_emit_snapshot in snapshot_dispatch.py per P1.6-3)
+    calls core.event.now_ms() and passes it; isolates wall-clock impurity at caller layer.
+    See D6 (caller-frozen-time semantic).
+    """
+```
+
+**The function does not call `event_store` internally**; **does not call `now_ms()` internally** (caller's responsibility — restores purity contract per Y2 → α reconciliation); does not append events; does not invoke LLM.
+
+**Why clock-injection**: Y2 → α routing absorption. Original D1 ("pure function") + D6 ("snapshot_at via now_ms() at production time") were internally inconsistent — `now_ms()` is wall-clock impurity. Caller-injection of `snapshot_at` resolves the inconsistency: function stays pure (same input → same output); caller layer owns the clock impurity at a single boundary (P1.6-3 `snapshot_dispatch.py` calls `now_ms()` once, passes result through). Principle 5 (code decides; isolate impurity at boundary) preserved.
+
+**Why pure**: Principle 1 + Principle 5. Snapshot is a derivation, not an authority; isolating purity from event-store I/O + wall-clock I/O makes the function trivially testable + cacheable + deterministic per fixed inputs.
 
 ### 2. Bounded snapshot vocabulary — 11 classes (1 Snapshot + 4 Ref + serialized SummarySnapshotMeta in core)
 
@@ -63,14 +83,14 @@ class Snapshot(BaseModel):
     room_id: RoomId
     room_type: RoomType
     room_state: str
-    snapshot_at: int  # ms timestamp
+    snapshot_at: int  # ms timestamp; caller-provided per D1 clock-injection + D6 caller-frozen-time
     event_count: int = Field(ge=0)
     decision_count: int = Field(ge=0)
-    open_hypotheses: list[HypothesisRef]
-    closed_decisions: list[DecisionRef]
-    tool_calls_pending_confirm: list[ToolCallRef]
-    last_state_transition: StateTransitionRef | None
-    participants: list[str]  # sorted alphabetically by agent_id
+    open_hypotheses: list[HypothesisRef]  # derivation predicate: D2.1
+    closed_decisions: list[DecisionRef]  # derivation predicate: D2.2
+    tool_calls_pending_confirm: list[ToolCallRef]  # correlation algorithm: D2.3
+    last_state_transition: StateTransitionRef | None  # definition: D2.5
+    participants: list[str]  # criterion: D2.4 (sorted alphabetically by agent_id post-prefix-strip)
 ```
 
 **Field rationale** (per senior pre-investigation §5 #1 defense):
@@ -79,6 +99,62 @@ class Snapshot(BaseModel):
 - `tool_calls_pending_confirm.autonomy_tier`: convenience for "what's awaiting which kind of confirmation?" reads (`countdown_confirm` vs `hard_confirm`); `AUTO_EXECUTE` excluded because not pending.
 - `last_state_transition`: needed by consumers asking "how did we get here?" — references the most-recent state_transition event.
 - `participants`: sorted-alphabetically agent_ids that emitted ≥1 utterance in the room; deterministic ordering for reproducibility.
+
+**Derivation predicates** (per R0-A Y1 → α routing absorption — vocabulary types declared without algorithms is incomplete inscription per Principle 9). All predicates verified against `core/event.py` schemas at plan-revision time.
+
+### 2.1 `open_hypotheses` predicate
+
+A `HYPOTHESIS` event H is "open" iff **no subsequent event** E in chronological-strict order (`(E.timestamp, E.id)` ascending lex) satisfies ANY of:
+
+- E.type == `DECISION` AND `H.id ∈ E.metadata.based_on` (DecisionMeta.based_on cites H — verified `DecisionMeta.based_on: list[EventId] = Field(min_length=1)` at `core/event.py:144`)
+- E.type == `REJECTION` AND `E.metadata.rejects == H.id` (RejectionMeta.rejects cites H — verified `RejectionMeta.rejects: EventId` at `core/event.py:156`)
+- E.type == `RETRACTION` AND `E.metadata.retracts == H.id` (RetractionMeta.retracts cites H — verified `RetractionMeta.retracts: EventId` at `core/event.py:167`)
+
+**Why metadata-cite chains (not `parent_id`)**: routing-artifact sketch proposed walking via universal `parent_id` field; senior verification (per "senior decides verification path" clause) finds the typed-metadata cite fields are the load-bearing signal. `parent_id` is universal Event-level (any event can have a parent for general reply chains); the decision/rejection/retraction → hypothesis chain semantics are inscribed in the per-type typed metadata. Walking `parent_id` would include irrelevant reply chains; walking typed metadata captures the actual close-semantic.
+
+Implementation note: walk events in chronological order; build hypothesis_id → closed-by-event-id map; H is open iff not in the map at snapshot_at time.
+
+### 2.2 `closed_decisions` predicate
+
+A `DECISION` event D appears in `closed_decisions` iff D.type == `DECISION` AND **no subsequent retraction event** R in chronological-strict order satisfies `R.metadata.retracts == D.id`.
+
+**Note**: `DECISION_PIVOT` events are NOT included in `closed_decisions` — they're re-orientation moves, not closures (DECISION_PIVOT carries no metadata schema in `core/event.py:272-282` TYPED_METADATA dict; semantic is "we're changing direction" not "we decided X").
+
+**Why subsequent-retraction predicate**: A decision is "closed" in the sense that it remains the standing decision unless explicitly retracted. Pivots don't retract — they layer on. Verification: `RetractionMeta.retracts: EventId` at `core/event.py:167` is the load-bearing field.
+
+### 2.3 `tool_calls_pending_confirm` correlation algorithm
+
+For each `TOOL_CALL` event TC in the snapshot's event list, the **correlating `AUTONOMY_DECISION` event** AD is identified as:
+
+- AD.type == `AUTONOMY_DECISION`
+- AD.author == TC.author (same agent)
+- AD.metadata.operation_tool_id == TC.metadata.tool_name (same tool — verified `AutonomyDecisionMetadata.operation_tool_id: str` at `core/event.py:216`; `ToolCallMeta.tool_name: str` at `core/event.py:179`)
+- AD precedes TC in chronological order (per ADR-013 D2 + `tool_dispatch.py:80-115` — autonomy_decision is emitted BEFORE tool_call via `emit_gate_decision` call in `process_tool_calls`)
+- AD is the **most-recent** such AD with no intervening AD for the same `(author, tool_name)` pair
+
+TC is in `tool_calls_pending_confirm` iff its correlating AD has `AD.metadata.tier ∈ {countdown_confirm, hard_confirm}` (verified `AutonomyDecisionMetadata.tier: Literal["auto_execute", "countdown_confirm", "hard_confirm"]` at `core/event.py:219-223`). `AUTO_EXECUTE` tier means the tool call has been (or will be) executed; not pending.
+
+**Edge case (verified at routing-absorption)**: per ADR-013 D2 emission ordering — `emit_gate_decision` appends `autonomy_decision` synchronously before `process_tool_calls` appends the corresponding `tool_call` event. Therefore every TC in the stream has a preceding correlated AD; if a TC exists without a preceding AD, that's a data anomaly (snapshot still includes TC in pending-confirm conservatively, since "no decision = treat as awaiting confirmation").
+
+### 2.4 `participants` criterion
+
+Agent IDs appearing in `event.author` of any event with `event.type ∈ {UTTERANCE, SUMMARY_SNAPSHOT, TOOL_CALL, AUTONOMY_DECISION, AUTONOMY_REFUSAL}` (i.e., any agent-authored event type; **excludes user + system authors**).
+
+**Why this event-type set**:
+- `UTTERANCE`: primary agent speech.
+- `SUMMARY_SNAPSHOT`: Logger agent participation (P1.6-3 wires Logger as producer).
+- `TOOL_CALL` + `AUTONOMY_DECISION` + `AUTONOMY_REFUSAL`: operator-style agents that engage the autonomy gate (P1.5.5 wired operator as producer).
+- Excluded: `STATE_TRANSITION` (author == "system" per `rooms/runtime.py:93`); `USER_INPUT` (author == "user"); `HYPOTHESIS`/`DECISION`/`REJECTION`/`RETRACTION`/`OBSERVATION` (can be authored by user or agent; if agent-authored, the agent has likely also produced an UTTERANCE for the same content — counting via UTTERANCE alone avoids double-count).
+
+Author filter: agent_ids extracted via the pattern `agent:[a-zA-Z0-9_-]+` (verified at `core/event.py:289` — `_AUTHOR_PATTERN = re.compile(r"^(user|system|agent:[a-zA-Z0-9_-]+)$")`). The `agent:` prefix is stripped before storing in `Snapshot.participants` list.
+
+Deterministic ordering: ascending lexicographic by agent_id (post-prefix-strip).
+
+### 2.5 `last_state_transition` definition
+
+The `STATE_TRANSITION` event E maximizing `(E.timestamp, E.id)` ascending lex among all `STATE_TRANSITION` events in the snapshot's event list. `None` if no state_transition events exist in the snapshot (e.g., room never transitioned beyond initial state).
+
+Lex tie-break is consistent with ADR-015 D4 (same `(timestamp, event_id)` ordering convention). Per `StateTransitionMeta` at `core/event.py:259`, the `new_state` + `prior_state` fields are read via typed access (not dict access) for the `StateTransitionRef` construction.
 
 ### 3. Producer semantic: Logger agent triggers on `state_change: snapshot_pending`
 
@@ -103,11 +179,25 @@ This honors ADR-001 (event log is truth) + ADR-008 D7 (event store as canonical 
 
 **Round-trip invariant**: `Snapshot.model_dump() → dict → SummarySnapshotMeta.model_validate(dict).model_dump() → Snapshot.model_validate(dict)` yields identical Snapshot. Tested in P1.6-2 ≥1 round-trip test.
 
-### 6. Snapshot timestamp invariant under concurrent event append
+### 6. Caller-frozen-time semantic (snapshot timestamp invariant under concurrent event append)
 
-`Snapshot.snapshot_at` is captured AT `produce_snapshot` call time via `core.event.now_ms()`. The `events: list[Event]` argument is a pre-fetched snapshot (caller responsibility); any events appended to the event_store AFTER the fetch but BEFORE `summary_snapshot` lands are NOT in this snapshot. Re-running `produce_snapshot` on a later fetch produces a later snapshot.
+Per D1 clock-injection: `Snapshot.snapshot_at` is provided by the **caller** at the moment the caller decides to produce a snapshot. The caller (Logger's `produce_and_emit_snapshot` per ADR-013-D1-style sibling module, P1.6-3) calls `core.event.now_ms()` once and passes the result through to `produce_snapshot(events, room, snapshot_at=...)`.
 
-**This is the read-vs-write ordering invariant**: snapshot semantic is "state at time T as observed by the caller who fetched at T"; not "state at time T as universal truth." Test §2 concurrency pins this: appending an event during `produce_snapshot` does NOT change the returned Snapshot (pure function over the input list); the next snapshot run reflects the appended event. Consumers requiring strict universal-time semantics use the `event_store`'s SQLite transaction model directly (P1.7+ scope if needed).
+The `events: list[Event]` argument is a pre-fetched snapshot (caller responsibility — typically `event_store.get_room_events(room.id)` BEFORE calling `produce_snapshot`); any events appended to the event_store AFTER the fetch are NOT in this snapshot. Re-running `produce_snapshot` on a later fetch produces a later snapshot.
+
+**The read-vs-write ordering invariant** (caller-frozen time): snapshot semantic is "state at the caller-frozen time T as observed by the caller who fetched at T" — not "state at universal-time T." Concrete timeline at a snapshot dispatch:
+
+1. Logger triggers on `state_change: snapshot_pending` (P1.6-3 dispatch wiring).
+2. Caller `produce_and_emit_snapshot` calls `events = event_store.get_room_events(room.id)` — fetch boundary T₁.
+3. Caller calls `snapshot_at = now_ms()` — wall-clock boundary T₂ (T₂ ≥ T₁, typically same ms).
+4. Caller calls `snapshot = produce_snapshot(events, room, snapshot_at=snapshot_at)` — pure derivation; deterministic given fixed `(events, room, snapshot_at)`.
+5. Caller appends `summary_snapshot` event with `metadata=SummarySnapshotMeta(snapshot.model_dump())`.
+
+Any events appended to event_store between T₁ and step 5 are NOT in this snapshot's view. The next snapshot run (next room turn that triggers `produce_and_emit_snapshot`) reflects the appended events with a later `snapshot_at`.
+
+**Test §2 concurrency pins the contract**: appending an event during `produce_snapshot` execution does NOT change the returned Snapshot (pure function over the input list); the next snapshot run reflects the appended event. Consumers requiring strict universal-time semantics use the `event_store`'s SQLite transaction model directly (P1.7+ scope if needed).
+
+**Why caller-frozen time is sufficient for P1.6**: per ADR-011 D1 sequential per-room dispatch, there is no concurrent-write contention within a single room's turn. The caller-frozen-time semantic gives consumers a clear time-anchor without requiring distributed-clock guarantees. Future async-reshape (P1.5+ deferred per ADR-011 D1 "P1.5+ re-shapes signature for concurrent dispatch") would revisit via ADR-014 amendment.
 
 ## Considered alternatives
 

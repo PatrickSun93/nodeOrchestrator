@@ -71,7 +71,29 @@ class DecisionLog(BaseModel):
 
 Sort key: `(entry.timestamp, entry.event_id)` ascending. **No reordering for "importance" or "priority"** — chronological order preserves causal narrative; consumers needing other orderings re-sort the materialized list.
 
-**Why deterministic tie-break by event_id lex**: per P1.5 R1 retro lesson — earlier event_store `get_room_events` used random-UUID tiebreak; tests fluctuated. Lexicographic event_id tie-break is deterministic regardless of insertion order (event_ids are generated per `generate_event_id` at `core/event.py` — UUIDs in lexicographic order). Caller-deterministic ordering for reproducibility.
+**Tie-break rationale** (per R0-A Y3 → α routing absorption — rewritten for precision about UUID v4 randomness):
+
+- DecisionLog requires **deterministic ordering across test runs** (same input set → same output ordering) for reproducibility.
+- `generate_event_id()` at `core/event.py:38-49` returns `evt_<uuid4-hex>` — UUID v4 is random, NOT time-sortable. Lex sort of UUID v4 event_ids achieves **per-set determinism** (the same set of events always sorts the same way) — but it is **NOT insertion order, NOT causal order**.
+- This is acceptable for P1.6 DecisionLog because:
+  1. **ADR-011 D1 sequential per-room dispatch** makes same-ms decision ties rare in P1.6 scope (one agent decides at a time).
+  2. **Consumers needing causal ordering** query event_store directly via `parent_event_id` chains (RejectionMeta.rejects / RetractionMeta.retracts links).
+  3. **DecisionEntry semantics**: decisions arriving at the same ms are conceptually unordered relative to each other; lex tie-break is acceptable representation.
+
+**Why lex-of-random-UUID is acceptable here but was NOT in P1.5 R1's case**:
+
+- **P1.5 R1 retro** (`docs/process/reviews/P1.5/R0-A.md`, R1 round) caught random-UUID tiebreak instability in `event_store.get_room_events()` queries where insertion-order preservation was load-bearing for downstream room state machine transitions. The fix landed at P1.5 R1 commit `307a8fa`: changed the tiebreaker to SQLite `rowid` (implicit auto-increment B-tree key, insertion-order-preserving).
+- **DecisionLog is a different consumer surface** from `get_room_events`: decisions arriving at the same ms within a single room are conceptually unordered relative to each other; no downstream consumer in P1.6 scope requires insertion-order preservation across same-ms decisions. **Lex tie-break is the correct representation for this semantic.**
+
+**P1.6 scope decision — stay with lex tie-break, do NOT migrate to rowid**:
+
+- Migrating DecisionLog to rowid-based ordering would require querying SQLite-level `rowid` from `event_store` (currently `event_store.get_room_events` returns ORM-mapped Events without rowid); breaks the pure-function contract (`produce_decision_log` would need event_store access for rowid lookup, violating D1).
+- Future-amendment hook below names the conditions where this rationale breaks.
+
+**When this rationale breaks** (future-amendment hook):
+
+- **P1.5+ async-reshape** introduces concurrent dispatch → multiple agents may emit decisions at the same ms (ADR-011 D1 reserves this re-shape). If causal/insertion ordering becomes load-bearing for DecisionLog consumers (e.g., dependency graphs across same-ms decisions), revisit via ADR-015 amendment toward rowid-based ordering. The amendment would need to revisit D1 (pure function) — likely by passing rowid as a derived field on Event (caller-pre-fetched).
+- **Cross-room memory promotion logic** (P1.6.5/P1.7 per `handoff.md` §4.5 deferred) may add insertion-order-dependent semantics; revisit at that ADR.
 
 ### 5. Consumer protocol: query event_store + derive; no persistence
 

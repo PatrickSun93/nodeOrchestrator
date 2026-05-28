@@ -1,12 +1,56 @@
 ---
 task_id: P1.6
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 3
-  green: 8
+  yellow: 0
+  green: 11
+verdict_history:
+  - verdict: needs_architect
+    at_commit: cefed41
+    findings_count: { red: 0, yellow: 3, green: 8 }
+    note: Y1 (ADR-014 D2 derivation predicates underspecified) + Y2 (D1 purity vs D6 timestamp impurity inconsistency) + Y3 (ADR-015 D4 lex tiebreak rationale imprecise on UUID v4 randomness) — all "ADR D-section precision" sub-pattern (1st-instance class; W-005 codification queue).
+  - verdict: clean
+    at_commit: pending-this-revision
+    findings_count: { red: 0, yellow: 0, green: 11 }
+    note: Y1 + Y2 + Y3 absorbed per architect routing (all → α) at routing commit ca9c894. Senior verified all 5 D2.1-D2.5 derivation predicates against actual core/event.py typed-metadata schemas (HypothesisMeta + DecisionMeta + RejectionMeta + RetractionMeta + AutonomyDecisionMetadata + StateTransitionMeta); refined routing-artifact D2.1 sketch from `parent_id` walk to typed-metadata cite chains per "senior decides verification path" clause. 10th project use of RC-10 verdict-bump protocol; 4th codified.
 ---
+
+> **Verdict bump 2026-05-28 (RC-10 codified protocol, 10th project use, 4th codified):**
+> Senior absorbed architect routing at this revision commit (Y1 → α; Y2 → α;
+> Y3 → α per `architect-routing.md` at `ca9c894`). Spot-check verified:
+>
+> - **Y1 absorbed**: ADR-014 D2 gains 5 derivation-predicate subsections
+>   (D2.1-D2.5). Senior refined the routing-artifact D2.1 sketch — instead
+>   of walking via universal `parent_id`, the predicate walks **typed-metadata
+>   cite chains** (DecisionMeta.based_on / RejectionMeta.rejects /
+>   RetractionMeta.retracts), per "senior decides verification path" clause.
+>   Rationale: parent_id is universal Event-level (general reply); the typed
+>   metadata fields are the load-bearing close-semantic. Plan §2 P1.6-1
+>   acceptance updated to reference ADR-014 D2.1-D2.5 by section (no
+>   plan-text predicate re-statement per Principle 9).
+> - **Y2 absorbed**: ADR-014 D1 + D6 reconciled via clock-injection.
+>   `produce_snapshot` signature gains `snapshot_at: TimestampMs` keyword
+>   parameter. D1 stays "pure function" (now true: same `(events, room,
+>   snapshot_at)` → same Snapshot). D6 reframed as caller-frozen-time
+>   semantic. Plan §2 P1.6-1 + P1.6-3 acceptance updated; `snapshot_dispatch.py`
+>   calls `now_ms()` once and threads through.
+> - **Y3 absorbed**: ADR-015 D4 rewrite — verified `generate_event_id()`
+>   returns `evt_<uuid4-hex>` at `core/event.py:38-49` (UUID v4 = random,
+>   NOT time-sortable). Lex sort achieves per-set determinism but NOT
+>   insertion/causal order. P1.5 R1 retro cross-referenced (commit `307a8fa`
+>   rowid fix); P1.6 scope decision pinned (stay lex; semantic differs from
+>   `get_room_events`); future-amendment hooks named.
+>
+> Y1 + Y2 + Y3 reclassified as 🟢 G9 + G10 + G11 (the absorption itself is
+> the proof). Verdict bumps `needs_architect → clean` (0🔴 / 0🟡 / 11🟢;
+> 8 prior 🟢 + 3 new 🟢 from absorption).
+>
+> **10th project use of frontmatter-as-live-signal pattern**; **4th under
+> codified protocol** (`reviews/README.md` post-`6365cce`; W-003 R0-A-on-plan +
+> P1.5.5 R0-A-on-plan + P1.5.5 R0-A + this P1.6 R0-A-on-plan).
+>
 
 # P1.6 R0-A-on-plan review (architect-partner lens)
 
