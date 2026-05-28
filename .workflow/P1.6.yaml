@@ -1,6 +1,21 @@
 task_id: P1.6
-state: awaiting_junior_impl
-cycle: 1
-last_transition_at: '2026-05-28T03:00:10.176342Z'
-override_history: []
+state: awaiting_PR_merge
+cycle: 2
+last_transition_at: '2026-05-28T17:51:56.473073Z'
+override_history:
+- timestamp: '2026-05-28T17:12:46.415377Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: Cycle-2 rework dispatch per docs/process/reviews/P1.6/architect-routing-on-impl.md
+    (M-R1+M-Y1+M-Y2+M-Y4+Y2 alpha; M-Y3+M-Y6 beta; M-Y5+M-Y7 delta; Y1 gamma-override).
+    Senior amends ADR-014 + plan section 4 + junior cycle-2 impl follows.
+- timestamp: '2026-05-28T17:36:37.532356Z'
+  actor: architect
+  from_state: awaiting_R0_A
+  to_state: awaiting_junior_impl
+  reason: 'Rollback advance over-fire: workflow advance cascaded through cycle-1 artifacts
+    (plan-vs-impl.md, R0-A.md from prior cycle) reaching awaiting_R0_A. Cycle-2 impl
+    + R0-A have not actually happened. State machine cycle-boundary issue captured
+    for W-005 retro.'
 requires_cross_family_review: true

@@ -226,9 +226,14 @@ class TurnResult(BaseModel):
     - nothing to say: ``total_asked=0, utterances=[], failed_agents=[]``
     - N succeeded:    ``total_asked=N, utterances=N, failed_agents=[]``
     - N all failed:   ``total_asked=N, utterances=[], failed_agents=N ids``
+
+    ``snapshot_failed`` is True when snapshot dispatch raised ValidationError
+    per ADR-014 D7 error-semantic (narrowed from broad Exception per M-Y1 routing).
+    Caller (room runtime) can decide retry/escalate on snapshot_failed=True.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     utterances: list[Event]
     failed_agents: list[str] = Field(default_factory=list)
     total_asked: int = Field(ge=0)
+    snapshot_failed: bool = False

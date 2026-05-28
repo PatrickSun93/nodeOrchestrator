@@ -234,7 +234,13 @@ agent:
 
 ### 4.5 跨房间记忆
 
-四类,**严格分开**:
+**P1.6 新增**: 房间快照 (ADR-014) + 决策日志 (ADR-015) — 事件流的结构化衍生视图。
+- `produce_snapshot(events, room, *, snapshot_at) -> Snapshot` — 纯函数,状态时间点快照
+- `produce_decision_log(events, room) -> DecisionLog` — 纯函数,决策类事件过滤视图
+- `summary_snapshot` 事件由 Logger agent 在 `snapshot_pending` 状态触发后写入,无独立快照表 (ADR-014 D4)
+- 跨房间记忆持久化 (promotion 逻辑、SQLite 表) 推迟至 P1.6.5/P1.7
+
+四类跨房间记忆数据类 (**schema-only, 无持久化层**),**严格分开**:
 
 ```python
 # 1. 待验证 pool
@@ -632,7 +638,9 @@ async def select_model_and_provider(
 ### 5.8 持久化
 
 **事件流**:append-only 表,SQLite 起步即可
-**记忆系统**:四个独立的存储
+**快照**:持久化于 `summary_snapshot` 事件的 `metadata` 字段 (ADR-014 D4); 无独立快照表
+**决策日志**:按需衍生,不物化 (ADR-015 D5); 消费者调用 `produce_decision_log(events, room)`
+**记忆系统**:四个独立的存储 (schema-only; promotion 逻辑推迟至 P1.6.5/P1.7)
 **配置**:YAML 文件,可 git 版本化
 
 ---

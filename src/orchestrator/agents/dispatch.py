@@ -17,14 +17,18 @@ import logging
 import re
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from orchestrator.agents.schema import Agent, TurnResult
 from orchestrator.agents.selection import build_agent_context
+from orchestrator.agents.snapshot_dispatch import produce_and_emit_snapshot
 from orchestrator.agents.speaking import should_agent_speak
 from orchestrator.agents.tool_dispatch import process_tool_calls
 from orchestrator.autonomy.scoring import ThresholdConfig, ToolMeta
 from orchestrator.core.event import (
     Event,
     EventType,
+    StateTransitionMeta,
     build_author,
     generate_event_id,
     now_ms,
@@ -70,12 +74,14 @@ def dispatch_turn(
         TurnResult with utterances appended, failed_agents ids, and
         total_asked count (speak=True agents regardless of LLM outcome).
     """
+    # Pre-turn snapshot per ADR-011 D2; same-turn utterances NOT reflected in this snapshot.
     snapshot = event_store.get_room_events(room.id)
     sorted_agents = sorted(agents.values(), key=lambda a: a.id)
 
     utterances: list[Event] = []
     failed_agents: list[str] = []
     total_asked = 0
+    snapshot_failed = False
 
     for agent in sorted_agents:
         decision = should_agent_speak(
@@ -150,8 +156,32 @@ def dispatch_turn(
                 [str(d.tier) for d in tool_result.decisions],
             )
 
+        # Snapshot dispatch: Logger agent on state_transition to snapshot_pending.
+        # Single call site per ADR-013 D1 separate-concern discipline.
+        # Error semantic per ADR-014 D7: ValidationError caught + surfaced via snapshot_failed;
+        # non-ValidationError (e.g., event_store.append failure) propagates per ADR-011 D7-b.
+        if agent.id == "logger" and current_event.type == EventType.STATE_TRANSITION:
+            try:
+                st_meta = StateTransitionMeta.model_validate(current_event.metadata)
+                if st_meta.new_state == "snapshot_pending":
+                    produce_and_emit_snapshot(
+                        agent=agent,
+                        room=room,
+                        current_event=current_event,
+                        event_store=event_store,
+                        snapshot_events=snapshot,
+                    )
+            except ValidationError as exc:
+                _log.warning(
+                    "agent %s snapshot dispatch ValidationError; snapshot_failed=True: %s",
+                    agent.id,
+                    exc,
+                )
+                snapshot_failed = True
+
     return TurnResult(
         utterances=utterances,
         failed_agents=failed_agents,
         total_asked=total_asked,
+        snapshot_failed=snapshot_failed,
     )

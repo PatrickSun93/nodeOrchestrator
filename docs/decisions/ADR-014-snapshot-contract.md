@@ -1,7 +1,7 @@
 # ADR-014: Snapshot contract — pure-function derived view + persisted-via-event
 
-**Status:** Accepted — 2026-05-28
-**Scope:** Locks the structural vocabulary, producer semantic, persistence shape, and consumer protocol for the `Snapshot` type. Governs every future producer of `summary_snapshot` events and every consumer of derived state-at-time-X views. Does not govern decision log (separate ADR-015) or cross-room memory persistence (deferred).
+**Status:** Accepted — 2026-05-28 · Amended — 2026-05-28 (impl-stage R0 routing absorption: D2.3 `"unknown"` tier expansion, D2.1/D2.2 any-vs-subsequent clarification, new D2.6 `decision_count` predicate, new D7 error-semantic subsection — per `docs/process/reviews/P1.6/architect-routing-on-impl.md` M-R1 + M-Y1 + M-Y2 + Y2).
+**Scope:** Locks the structural vocabulary, producer semantic, persistence shape, error semantic, and consumer protocol for the `Snapshot` type. Governs every future producer of `summary_snapshot` events and every consumer of derived state-at-time-X views. Does not govern decision log (separate ADR-015) or cross-room memory persistence (deferred).
 
 ## Context
 
@@ -23,6 +23,7 @@ Touches Principle 1, Principle 5 (code decides what code can — `produce_snapsh
 - Persistence is via `summary_snapshot` events whose metadata carries the serialized Snapshot. No separate snapshot table; the event IS the persistence.
 - `core/event` MUST NOT import from `derived/`. Typed metadata duplicates the derived-class fields per the documented duplication pattern.
 - Constitutional invariant: no LLM imports in `derived/` (snapshot is code-decided per Principle 5).
+- **Error semantic (per D7)**: derived module propagates `pydantic.ValidationError` on malformed typed metadata; no silent swallow. Dispatch caller narrows to `ValidationError` only and surfaces failure via `TurnResult`; `event_store.append` failures propagate unwrapped per ADR-011 D7-b.
 
 ## Decisions
 
@@ -70,7 +71,7 @@ class ToolCallRef(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     event_id: str
     tool_name: str
-    autonomy_tier: Literal["countdown_confirm", "hard_confirm"]
+    autonomy_tier: Literal["countdown_confirm", "hard_confirm", "unknown"]  # "unknown" per D2.3 anomaly path
 
 class StateTransitionRef(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -96,7 +97,7 @@ class Snapshot(BaseModel):
 **Field rationale** (per senior pre-investigation §5 #1 defense):
 - Structural identifiers (`room_id`, `room_type`, `room_state`, `snapshot_at`, `event_count`, `decision_count`): foundational state-at-time-X identifiers.
 - Reference-only collections (`open_hypotheses`, `closed_decisions`, `tool_calls_pending_confirm`): preserve Principle 1 — references not content copies; consumer queries event_store for content.
-- `tool_calls_pending_confirm.autonomy_tier`: convenience for "what's awaiting which kind of confirmation?" reads (`countdown_confirm` vs `hard_confirm`); `AUTO_EXECUTE` excluded because not pending.
+- `tool_calls_pending_confirm.autonomy_tier`: convenience for "what's awaiting which kind of confirmation?" reads (`countdown_confirm` vs `hard_confirm` vs `"unknown"`); `AUTO_EXECUTE` excluded because not pending. The `"unknown"` value covers the anomaly path where a TC has no preceding correlated AD (D2.3 edge case).
 - `last_state_transition`: needed by consumers asking "how did we get here?" — references the most-recent state_transition event.
 - `participants`: sorted-alphabetically agent_ids that emitted ≥1 utterance in the room; deterministic ordering for reproducibility.
 
@@ -110,13 +111,17 @@ A `HYPOTHESIS` event H is "open" iff **no subsequent event** E in chronological-
 - E.type == `REJECTION` AND `E.metadata.rejects == H.id` (RejectionMeta.rejects cites H — verified `RejectionMeta.rejects: EventId` at `core/event.py:156`)
 - E.type == `RETRACTION` AND `E.metadata.retracts == H.id` (RetractionMeta.retracts cites H — verified `RetractionMeta.retracts: EventId` at `core/event.py:167`)
 
+**Note (any-vs-subsequent clarification, per impl-stage Y2 routing absorption)**: impl scans **all events** for the cite, not strictly events whose chronological order is after H. For valid event streams (cites never precede their cited target — DECISION can only base_on a HYPOTHESIS that already exists) this is equivalent to the "no subsequent" formulation. For anomaly cite-before-cited streams (out-of-order injection, test fixtures, migration replay), impl's "any-event-cites" semantic is preferred over "subsequent-only" because it gives **conservative closure** — if a cite exists anywhere in the stream, the hypothesis is considered closed. Plus: M-Y2 strict-propagation semantic means malformed metadata raises rather than silently degrading the close-walk, so this any-vs-subsequent looseness cannot mask correctness bugs.
+
 **Why metadata-cite chains (not `parent_id`)**: routing-artifact sketch proposed walking via universal `parent_id` field; senior verification (per "senior decides verification path" clause) finds the typed-metadata cite fields are the load-bearing signal. `parent_id` is universal Event-level (any event can have a parent for general reply chains); the decision/rejection/retraction → hypothesis chain semantics are inscribed in the per-type typed metadata. Walking `parent_id` would include irrelevant reply chains; walking typed metadata captures the actual close-semantic.
 
 Implementation note: walk events in chronological order; build hypothesis_id → closed-by-event-id map; H is open iff not in the map at snapshot_at time.
 
 ### 2.2 `closed_decisions` predicate
 
-A `DECISION` event D appears in `closed_decisions` iff D.type == `DECISION` AND **no subsequent retraction event** R in chronological-strict order satisfies `R.metadata.retracts == D.id`.
+A `DECISION` event D appears in `closed_decisions` iff D.type == `DECISION` AND **no retraction event** R anywhere in the event list satisfies `R.metadata.retracts == D.id`.
+
+**Note (any-vs-subsequent clarification, per impl-stage Y2 routing absorption)**: impl scans all events for the retracts-cite, not strictly events whose chronological order is after D. For valid streams (a retraction can only retract an already-emitted DECISION) this is equivalent to "no subsequent retraction." For anomaly streams with out-of-order events, "any-event-retracts" gives the same conservative-closure preference as D2.1. M-Y2 strict-propagation semantic on `RetractionMeta.model_validate` makes any malformed retraction surface as ValidationError rather than silently dropping the close-event.
 
 **Note**: `DECISION_PIVOT` events are NOT included in `closed_decisions` — they're re-orientation moves, not closures (DECISION_PIVOT carries no metadata schema in `core/event.py:272-282` TYPED_METADATA dict; semantic is "we're changing direction" not "we decided X").
 
@@ -132,9 +137,15 @@ For each `TOOL_CALL` event TC in the snapshot's event list, the **correlating `A
 - AD precedes TC in chronological order (per ADR-013 D2 + `tool_dispatch.py:80-115` — autonomy_decision is emitted BEFORE tool_call via `emit_gate_decision` call in `process_tool_calls`)
 - AD is the **most-recent** such AD with no intervening AD for the same `(author, tool_name)` pair
 
-TC is in `tool_calls_pending_confirm` iff its correlating AD has `AD.metadata.tier ∈ {countdown_confirm, hard_confirm}` (verified `AutonomyDecisionMetadata.tier: Literal["auto_execute", "countdown_confirm", "hard_confirm"]` at `core/event.py:219-223`). `AUTO_EXECUTE` tier means the tool call has been (or will be) executed; not pending.
+TC is in `tool_calls_pending_confirm` iff EITHER:
+- its correlating AD has `AD.metadata.tier ∈ {countdown_confirm, hard_confirm}` (verified `AutonomyDecisionMetadata.tier: Literal["auto_execute", "countdown_confirm", "hard_confirm"]` at `core/event.py:219-223`), OR
+- no correlating AD exists in the event list (anomaly path — see edge case below).
 
-**Edge case (verified at routing-absorption)**: per ADR-013 D2 emission ordering — `emit_gate_decision` appends `autonomy_decision` synchronously before `process_tool_calls` appends the corresponding `tool_call` event. Therefore every TC in the stream has a preceding correlated AD; if a TC exists without a preceding AD, that's a data anomaly (snapshot still includes TC in pending-confirm conservatively, since "no decision = treat as awaiting confirmation").
+`AUTO_EXECUTE` tier means the tool call has been (or will be) executed; not pending — excluded.
+
+**Edge case — TC without preceding AD (anomaly path, per impl-stage M-R1 routing absorption)**: per ADR-013 D2 emission ordering, `emit_gate_decision` appends `autonomy_decision` synchronously before `process_tool_calls` appends the corresponding `tool_call` event. Therefore every TC in a well-formed stream has a preceding correlated AD. If a TC exists **without** a preceding correlated AD, that is a data anomaly — caused by (a) a non-validated write path (debug fixture, migration replay), (b) a future P1.5+ async-reshape that weakens the ADR-013 D2 ordering guarantee, or (c) a producer bug. **Conservative-include semantic**: the snapshot includes such TC in `tool_calls_pending_confirm` with `autonomy_tier="unknown"` (per ToolCallRef.autonomy_tier Literal expansion in D2). Rationale: "no decision recorded = treat as awaiting confirmation" preserves the safer-default property of the autonomy gate (a missed TC in pending-confirm risks at-most a redundant confirm prompt; a missed pending-tier classification could allow silent execution downstream).
+
+**Why a Literal value, not `None`**: `None` would collide with the well-formed "no pending TC" semantic elsewhere; an explicit `"unknown"` tier is a positive signal that the correlator could not bind a tier to this TC, surfacing the anomaly rather than masking it. Consumers reading `ToolCallRef.autonomy_tier == "unknown"` should treat as confirm-required AND log/alert for upstream investigation.
 
 ### 2.4 `participants` criterion
 
@@ -155,6 +166,20 @@ Deterministic ordering: ascending lexicographic by agent_id (post-prefix-strip).
 The `STATE_TRANSITION` event E maximizing `(E.timestamp, E.id)` ascending lex among all `STATE_TRANSITION` events in the snapshot's event list. `None` if no state_transition events exist in the snapshot (e.g., room never transitioned beyond initial state).
 
 Lex tie-break is consistent with ADR-015 D4 (same `(timestamp, event_id)` ordering convention). Per `StateTransitionMeta` at `core/event.py:259`, the `new_state` + `prior_state` fields are read via typed access (not dict access) for the `StateTransitionRef` construction.
+
+### 2.6 `decision_count` predicate
+
+`decision_count = |{e ∈ events : e.type ∈ {DECISION, DECISION_PIVOT, REJECTION, RETRACTION}}|`.
+
+I.e., the count of all decision-class events in the room — **not filtered by closure** (per D2.2 retraction filter), **not limited to literal DECISION events**. Decision-class includes pivots (re-orientation = decision-making act) + rejections + retractions (each is itself a decision).
+
+**Why this set (not literal DECISION only)**: consumers asking "how decision-active is this room?" want the full decision-class signal, including reversals and re-orientations. Closure-aware count (`len(closed_decisions)`) is available separately via the `closed_decisions` field; `decision_count` complements as "decision-class events total."
+
+**Why not weighted by closure**: decision_count is the room's decision-activity signal, not its decision-stability signal. A high count + low `len(closed_decisions)` means the room is decision-active but not yet stable (high retraction/pivot churn); both fields together expose the shape. Collapsing into a single closure-aware count would lose this orthogonal information.
+
+**Verification path**: `core/event.py` `TYPED_METADATA` (lines 272-282) registers DecisionMeta + RejectionMeta + RetractionMeta; DECISION_PIVOT has no typed metadata schema (semantic is "we're changing direction" — no typed fields beyond event content). All 4 event types are present at the schema layer; the count semantic is over **event types**, not metadata correctness — so M-Y2 strict-propagation does not affect `decision_count` (no `model_validate` call needed for the count itself).
+
+**Cross-references**: impl at `derived/snapshot.py:_DECISION_CLASS_TYPES` frozenset; consumer differentiation `decision_count` (total) vs `len(closed_decisions)` (stable) vs `len(open_hypotheses)` (in-flight) gives the room a three-axis decision-state shape.
 
 ### 3. Producer semantic: Logger agent triggers on `state_change: snapshot_pending`
 
@@ -197,7 +222,55 @@ Any events appended to event_store between T₁ and step 5 are NOT in this snaps
 
 **Test §2 concurrency pins the contract**: appending an event during `produce_snapshot` execution does NOT change the returned Snapshot (pure function over the input list); the next snapshot run reflects the appended event. Consumers requiring strict universal-time semantics use the `event_store`'s SQLite transaction model directly (P1.7+ scope if needed).
 
-**Why caller-frozen time is sufficient for P1.6**: per ADR-011 D1 sequential per-room dispatch, there is no concurrent-write contention within a single room's turn. The caller-frozen-time semantic gives consumers a clear time-anchor without requiring distributed-clock guarantees. Future async-reshape (P1.5+ deferred per ADR-011 D1 "P1.5+ re-shapes signature for concurrent dispatch") would revisit via ADR-014 amendment.
+**Why caller-frozen time is sufficient for P1.6**: per ADR-011 D1 sequential per-room dispatch, there is no concurrent-write contention within a single room's turn. The caller-frozen-time semantic gives consumers a clear time-anchor without requiring distributed-clock guarantees. Future async-reshape (P1.5+ deferred per ADR-011 D1 "P1.5+ re-shapes signature for concurrent dispatch") would revisit via ADR-014 amendment. `event_count = len(events)` precision under async dispatch is queued as a named revisit item at the same async-reshape amendment hook (per M-Y5 routing).
+
+### 7. Error semantic — derived module propagates; dispatch caller narrows + surfaces; ADR-011 D7-b preserved for event_store
+
+Per impl-stage M-Y1 + M-Y2 routing absorption (`docs/process/reviews/P1.6/architect-routing-on-impl.md`), the snapshot subsystem has **three layered error responsibilities**, each with a precise contract:
+
+**7.1 Derived module (`derived/snapshot.py`, `derived/decision_log.py`) — strict propagation.**
+
+`produce_snapshot` and `produce_decision_log` propagate `pydantic.ValidationError` on malformed typed metadata. No internal `try / except` wrappers around `model_validate` calls. Rationale:
+
+- `core/event.py` `_BaseMeta` discipline runs `validate_metadata` at event-store **append** time. A `ValidationError` raised during `model_validate` inside the derivation function therefore means either (a) a non-validated write path (debug SQLite, migration replay, test fixture bypassing append-time validation), or (b) a programming error (schema rename without metadata migration; new EventType with stale TYPED_METADATA dict). Both must surface, not silently warp the derivation result.
+- Silent swallow has a documented lie-about-room-state risk: a malformed `DecisionMeta.based_on` would leave the cited hypotheses spuriously in `open_hypotheses`; a snapshot consumer would believe the room is still in-flight on a decided question.
+- `except Exception` (overly broad) also masks AttributeError / KeyError from programming bugs. Strict propagation surfaces these immediately, at the function the bug touches.
+
+Consumers requiring degraded-snapshot fallback (rather than turn-abort) catch `ValidationError` at the **caller boundary** (e.g., in `snapshot_dispatch.py` if a future requirement materializes). The derivation function does not embed that policy.
+
+**7.2 Snapshot dispatch caller (`agents/dispatch.py:155-173` snapshot block) — narrow + surface.**
+
+The snapshot dispatch block at the Logger trigger site:
+
+- `except ValidationError` only (not `except Exception`) — catches the explicit `StateTransitionMeta.model_validate(current_event.metadata)` failure path on the gate condition.
+- Non-`ValidationError` exceptions (e.g., `event_store.append` raising RuntimeError on storage failure) **propagate unwrapped** per ADR-011 D7-b semantics — these are persistence failures, not data-validation failures, and the turn aborts.
+- On ValidationError, the failure surfaces via `TurnResult` (either a new `snapshot_failed: bool` field or by including the agent_id in `failed_agents` per existing dispatch convention; impl-time choice). Caller (room runtime) can decide retry / escalate / move on.
+
+Rationale: room state machine has **exactly one** producer for `snapshot_pending → closed` (ADR-012 + this ADR D3). Silent failure = silent liveness violation (room stuck in snapshot_pending). Either path — caller retries, or operator surfaces the failure — needs visibility, not a warn-log buried in dispatch internals.
+
+**7.3 `event_store.append` — ADR-011 D7-b semantics preserved.**
+
+`event_store.append` failures during snapshot dispatch (raised inside `produce_and_emit_snapshot` via the embedded append) propagate unwrapped per ADR-011 D7-b. The dispatch-caller wrapper (7.2) deliberately narrows to `ValidationError` precisely so it does NOT swallow `event_store.append` failures.
+
+**Cross-reference summary**:
+
+| Layer | Catches | Action |
+|---|---|---|
+| Derivation (`produce_snapshot`, `produce_decision_log`) | Nothing internally | Propagate ValidationError up |
+| Snapshot dispatch caller (`dispatch.py` snapshot block) | `ValidationError` only on `StateTransitionMeta.model_validate` gate | Log + surface via TurnResult |
+| `event_store.append` failures inside snapshot dispatch | Not caught (passes through 7.2's narrow filter) | Propagate per ADR-011 D7-b |
+| Other `ValidationError` inside `produce_and_emit_snapshot` (e.g., `produce_snapshot` raising on malformed `DecisionMeta`) | NOT caught by 7.2 (7.2 wraps only the gate `StateTransitionMeta.model_validate`) | Propagate; turn aborts; room runtime visibility |
+
+The 7.2 narrow catch is **specifically** the gate-check failure (current_event has malformed `StateTransitionMeta`). Other ValidationErrors arising during derivation are NOT inside 7.2's `try` block — they propagate per 7.1 (strict).
+
+**Test invariants (per M-Y4 routing, pinned in `tests/derived/` + `tests/agents/test_dispatch.py`)**:
+
+- DECISION with malformed `based_on` → `produce_snapshot` raises ValidationError.
+- RETRACTION with malformed `retracts` → `produce_snapshot` raises ValidationError.
+- STATE_TRANSITION with malformed `new_state` → `produce_snapshot` raises ValidationError (via D2.5 path).
+- REJECTION with malformed `rejects` → `produce_decision_log` raises ValidationError.
+- Snapshot dispatch caller: state_transition event with malformed metadata → TurnResult surfaces failure (not silent).
+- Snapshot dispatch caller: simulated `event_store.append` RuntimeError → propagates (NOT swallowed by 7.2).
 
 ## Considered alternatives
 
@@ -239,6 +312,7 @@ Two packages, each owning one derived view; two constitutional tests; two `__ini
 - Adding fields to `Snapshot` requires ADR-014 amendment (Principle 9 — vocabulary fixed). Hidden cost: future-consumer wishes get debated at ADR-revision time, not silently added.
 - `core/event.py` + `derived/snapshot.py` carry the deliberate-duplication of fields — keeping them in sync is manual discipline (tested via round-trip invariant in P1.6-2).
 - Logger's single-producer assumption hardcodes `agent.id == "logger"` in dispatch wiring; future multi-producer support requires ADR amendment (P1.7+ if a real second producer materializes).
+- Per D7 strict propagation: any non-validated write path (debug fixture, migration replay) that inserts malformed typed metadata becomes immediately visible at snapshot dispatch (the room turn aborts with ValidationError). Operators must repair upstream rather than silently observe a degraded snapshot.
 
 **Neutral:**
 
@@ -255,7 +329,9 @@ Two packages, each owning one derived view; two constitutional tests; two `__ini
 | D3 (state-machine-triggered Logger producer) | **Low.** Alternative trigger (e.g., user-request-triggered) is one yaml edit (logger.yaml `speaking_triggers` update) + dispatch path adjustment. Multi-producer support is bigger refactor but additively decided. |
 | D4 (persisted-via-event; no separate table) | **Expensive.** Adding a snapshot table means migrating existing event_store snapshots + dual-write semantics + consumer-API change. Major refactor; would need new ADR. ADR-001 alignment is the conservative choice. |
 | D5 (deliberate duplication) | **Trivial.** Field-set mirror; if classes diverge, round-trip test catches; can be re-synced. Pattern is intentional per `autonomy/emission.py:7-11` precedent. |
-| D6 (snapshot timestamp invariant under concurrent append) | **Low.** Read-vs-write semantic; if stricter universal-time needed, callers use event_store transactions directly. Doesn't constrain producer; constrains consumer expectation. |
+| D6 (snapshot timestamp invariant under concurrent append) | **Low.** Read-vs-write semantic; if stricter universal-time needed, callers use event_store transactions directly. Doesn't constrain producer; constrains consumer expectation. `event_count` precision under async dispatch revisits at the same amendment hook (M-Y5 queued). |
+| D2.6 (`decision_count` as union of decision-class event types) | **Low.** Field semantic is an event-type filter — adding/removing types from the union is an ADR amendment + 1-line `_DECISION_CLASS_TYPES` frozenset update. No persisted-data migration (snapshots compute the count fresh on derivation). |
+| D7 (layered error semantic — strict in derivation, narrow + surface in dispatch caller) | **Medium.** Reverting to swallow-and-continue requires re-introducing `try/except` wrappers in derivation + a TurnResult shape change. Cost is proportional to the test suite that pins the strict-propagation semantic (M-Y4 tests). The decision was prompted by a documented lying-snapshot risk (R0-A senior Y2); reversal needs an equally concrete counter-argument. |
 
 ## References
 
@@ -272,5 +348,9 @@ Two packages, each owning one derived view; two constitutional tests; two `__ini
 - `src/orchestrator/agents/schema.py:39-50` — `StateChangeTrigger.target_state: str` (consumed by D3 — accepts `snapshot_pending` as-is).
 - `src/orchestrator/rooms/state_machine.py:26` — `snapshot_pending → closed` transition declaration (consumed by D3 — Logger's snapshot append fires this).
 - `docs/process/architect-briefs/P1.6.md` — brief that prompted this ADR.
-- `docs/process/senior-plans/P1.6.md` — plan that locks atomic-task breakdown.
-- Implementation lands on `claude/P1.6-impl` post-Accept.
+- `docs/process/senior-plans/P1.6.md` — plan that locks atomic-task breakdown; §4 amended in same routing cycle to add error-semantic forcing-function for new module surfaces.
+- `docs/process/reviews/P1.6/architect-routing-on-impl.md` — impl-stage routing that drove the 2026-05-28 amendment (D2.3 `"unknown"`, D2.1/D2.2 clarification, D2.6, D7).
+- `docs/process/reviews/P1.6/plan-vs-impl.md` — senior R0-A surface (Y1 + Y2 routed to M-Y1 + M-Y2 via the impl-stage routing).
+- `docs/process/reviews/P1.6/R0-A.md` — architect-partner R0-A surface (Y2 routed to D2.6 amendment).
+- `docs/process/reviews/P1.6/R0-B-cross-family.md` — proxy R0-B surface (R1 routed to D2.3 `"unknown"` expansion).
+- Implementation lands on `claude/P1.6-impl` post-Accept; cycle-2 lands after senior revision (this commit) per architect-routing-on-impl §"Senior revision actions".

@@ -13,6 +13,10 @@ forbidden_behaviors:
   - "TODO: paraphrasing_decisions"
   - "TODO: lossy_compression"
 
+speaking_triggers:
+  - type: state_change
+    target_state: snapshot_pending
+
 cooldown_seconds: 120
 
 llm_config:
