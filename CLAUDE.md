@@ -1,54 +1,85 @@
-# Self-organization on session start / resume
+# Project context for all Claude Code sessions
 
-SessionStart hook 已经报了 `.workflow/` 状态。每次你被 resume,
-执行下面流程:
+This repo runs a **multi-role workflow** (architect / senior planner / junior implementer / reviewers). Each role runs in a **distinct Claude session** for cross-perspective independence. Role collapse is the single biggest project risk (see `docs/retrospectives/P1.2.md` §9).
 
-**Junior-matching state**:
-- `awaiting_junior_impl`  → implement code per senior plan
+If you don't know which role you are, **stop and identify before acting**.
 
-**Matching rules**: 恰好 1 个 → act;多个 → 问 architect;0 → 报 idle。
+---
 
-**Self-trigger action — `awaiting_junior_impl`**:
-1. Read `docs/process/senior-plans/{task-id}.md` (your task plan)
-2. Read ADRs cited in plan(特别是新 Accepted 的)
-3. Read `docs/process/architect-briefs/{task-id}.md`(architect intent context)
-4. Read `docs/process/reviews/{task-id}/R0-A-on-plan.md` 如果存在
-   (architect 可能 dispatch 了 plan-stage R0-A,plan 可能已 revised)
-5. 开新 branch `claude/{task-id}-impl` from main
-6. 实施 plan §3 execution order 的每个 atomic task;**每个 task 一个 commit**;
-   commit body 含 tracking-table row + Q1-Q4
-7. 最后 commit 跑 5-surface scan + advance `.workflow/{task-id}.yaml`
-   从 `awaiting_junior_impl` 到 `awaiting_senior_plan_vs_impl`
-8. 每次 push 前本地跑 gates:`ruff check` / `ruff format --check` /
-   `mypy --strict src tests` / `pytest`
-9. Push branch + 报告:branch name + commit count + gate status
+# Identify your role
 
-## Workflow verify-workspace pre-landing
+Your role is set via the env var `CLAUDE_ROLE`. On session start, check it:
 
-Before pushing any landing commit (5-surface scan committed), run
-`uv run workflow verify-workspace`. If output surfaces a warning,
-address it OR note in commit body explicitly. The CLI exits 0 always;
-the architect lens on warnings is the load-bearing check.
+```bash
+echo "${CLAUDE_ROLE:-unset}"
+```
 
-**Boundary**:
-- NEVER amend 已 push 的 commits(audit trail 保留),除非 architect explicit dispatch
-- NEVER 写 plans / ADRs / reviews(senior / architect-partner 工作)
-- NEVER 决定 design 问题 — 如果 plan acceptance criterion 看似 impossible / 错,
-  **halt + surface to architect**,不要静默 improvise
-- NEVER LLM-judgment a routing decision(grep `LLMPurpose` 用法,只在 content-gen 用)
+| `CLAUDE_ROLE` value | Read this role doc | Matching states |
+|---|---|---|
+| `architect-partner` | `docs/process/workflow-overview.md` §1 (architect-partner row) | brief publishing, R0-A reviews, retro candidate capture |
+| `senior` | `docs/process/senior-planner.md` | `awaiting_senior_plan`, `awaiting_senior_plan_vs_impl` |
+| `junior` | `docs/process/junior-implementer.md` | `awaiting_junior_impl` |
+| `reviewer-r0b` | `docs/process/dual-lens-r0b.md` | R0-B dispatched in current cycle |
+| unset / empty | **stop + ask the user which role you are**, do not guess from context | — |
 
-**Stale-workspace guard**:同 senior。Stale → halt + status + pull / stash → act。
+Each role doc has its own self-trigger flow (read on session start when the matching state is present in `.workflow/`).
 
-**Workflow state machine 自检**:state 和现实矛盾 → halt + surface,不自动修复。
+---
 
-**Trivial-fix routing 例外**(C3 Y1 / C4 Y1+G1+G3 / W-001-impl R0-A-1 pattern):
-- 如果 architect 给你**直接发 task brief**(不是 senior plan,而是 chat 里的
-  小修指令),识别为 trivial-fix routing:单 commit 在现有 impl branch 上,
-  跟随原 issue source 引用
-- 这种 case **绕过** senior plan;但只在 architect 显式 dispatch 时 trigger
+# Project-wide rules (apply to every role)
 
-**Architect-deferral literal-reading**:
-- 如果 architect 评论中出现 "queued for W-N brief" / "defer to W-N" / "capture for retro" / "address later" — 这些词语表示**实质性的推迟**,不是当前周期可以顺手做的绿灯信号。
-- 被推迟的 item 在当前周期保持不动;不要自作主张做修复或部分实现。
-- 如果你认为当前周期行动是合理的(尽管有推迟语言),halt + surface to architect 要求明确 dispatch。
-- 失败案例:P1.5.5 RC-19 — 将 defensive Z-suffix 捆绑进 δ 推迟语言下,被 R0-A 标记为 Y 发现。
+These rules hold regardless of role. Role docs may add stricter constraints; they do not override these.
+
+## Workflow state is the ground truth
+
+`.workflow/{task-id}.yaml` (per ADR-008) is the source of truth for "where is this task now". The state file IS the truth — not chat history, not session memory, not your recollection.
+
+**State machine self-check**: if `.workflow/{task-id}.yaml` state and reality contradict (e.g., state says `awaiting_senior_plan` but `senior-plans/{task-id}.md` already exists), **halt + surface to architect**. Do NOT auto-fix.
+
+Use `uv run workflow advance` / `uv run workflow override` (per `.workflow/README.md`). NEVER hand-edit state files — the override-history audit record exists for a reason.
+
+## Stale-workspace guard (RC-7 mitigation)
+
+SessionStart hook reports `.workflow/` status + workspace freshness. If the hook shows untracked / modified files not in your expected scope → **halt + `git status` to see clearly + pull / stash → then act**. Do not work on a stale checkout.
+
+## Architect-deferral literal-reading
+
+When architect comments include "queued for W-N brief" / "defer to W-N" / "capture for retro" / "address later" — these phrases mean **substantive deferral**, NOT a green light to opportunistically fix in the current cycle.
+
+- Deferred items stay untouched this cycle.
+- Do not bundle a partial implementation or "defensive hardening" under deferral language.
+- If you think in-cycle action is correct despite the deferral language → halt + surface to architect for explicit dispatch.
+
+Failure precedent: P1.5.5 RC-19 (defensive Z-suffix bundled under δ deferral, surfaced as Y finding at R0-A).
+
+## Never LLM-judge a routing decision
+
+Grep `LLMPurpose` usage for the allowed surfaces — only `content-gen` purposes are valid. Routing decisions (α / β / γ) are **architect** decisions, not LLM judgments. The architect-partner surfaces; the architect routes. No role re-routes via "I think this finding doesn't apply".
+
+## Never amend pushed commits
+
+Audit trail must remain intact. Exceptions require explicit architect dispatch. If a pre-commit hook fails locally on an unpushed commit, fix-and-recommit is fine. Once pushed, never amend / force-push without architect go-ahead.
+
+## Surface, don't improvise
+
+If anything in your role's input artifacts (plan, brief, ADR, routing) looks wrong, impossible, or contradicts reality:
+- **halt + surface** with specific evidence (file path, line, expected vs actual)
+- do NOT silently improvise a "best-guess" fix
+- do NOT silently re-interpret architect intent
+
+The cost of pausing to ask is low; the cost of silent improvisation is high (P1.5.5 RC-19, multiple other instances).
+
+---
+
+# Reference
+
+| Topic | Source |
+|---|---|
+| Workflow overview (roles, lifecycle, file path map) | `docs/process/workflow-overview.md` |
+| Project framing, principles, P1 plan | `handoff.md` |
+| Design reasoning history | `chat-history.md` |
+| State machine vocabulary | `docs/decisions/ADR-008-workflow-state-machine.md` |
+| State files (per-task ground truth) | `.workflow/{task-id}.yaml` + `.workflow/README.md` |
+| PR template, 5-surface scan, Q1–Q4 | `docs/contributing.md` |
+| Distance test (architect inscription pacing) | `docs/process/distance-test.md` |
+| Dual-lens R0-B dispatch criteria | `docs/process/dual-lens-r0b.md` |
