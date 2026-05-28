@@ -1,14 +1,47 @@
 ---
 task_id: P1.6
 round: plan-vs-impl
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 5
+  yellow: 0
+  green: 7
+verdict_history:
+  - verdict: needs_architect
+    at_commit: c0a7773
+    findings_count: { red: 0, yellow: 2, green: 5 }
+    note: Cycle-1 review surfaced Y1 (broad except wrapper at dispatch.py snapshot block) + Y2 (8 silent swallows in derived/) as plan-stage ambiguity in error-semantic per failure surface; routed to architect for ruling.
+  - verdict: clean
+    at_commit: 900d6f7
+    findings_count: { red: 0, yellow: 0, green: 7 }
+    note: Cycle-2 absorption per architect-routing-on-impl.md (M-Y1 α-A narrow except + TurnResult.snapshot_failed; M-Y2 α-strict drop all swallows; M-Y3 β sharpen produce_decision_log comment; M-Y4 α ≥4 cleanup tests pinning strict semantic; M-Y6 β _AGENT_PARTICIPATION_TYPES docstring). All cycle-1 Y findings reclassified as 🟢-absorbed. ADR-014 D7 inscribed the layered error contract; plan §4 addendum codified the W-005 candidate forcing function.
 ---
 
 # Review: P1.6 — plan-vs-impl
+
+> **RC-10 frontmatter-as-live-signal bump (cycle-2 absorption, 2026-05-28)**
+>
+> Cycle-1 verdict `needs_architect (0🔴/2🟡/5🟢)` at `c0a7773` → cycle-2 verdict `clean (0🔴/0🟡/7🟢)` at `900d6f7` per architect-routing-on-impl.md absorption. Original cycle-1 finding bodies preserved below as audit trail; **bump is additive history, not a rewrite**. Absorption trace per finding:
+>
+> - **Y1 (broad except at dispatch.py snapshot block) → 🟢-absorbed.** Routed M-Y1 α-A: `except Exception` narrowed to `except ValidationError` at `dispatch.py:174`; `TurnResult.snapshot_failed: bool` field added at `schema.py:239` and surfaced from dispatch block at line 186; non-ValidationError (e.g. `event_store.append` RuntimeError) now propagates per ADR-011 D7-b. ADR-014 D7.2 inscribes the narrow-and-surface contract. **M-Y1 tests** at `tests/agents/test_dispatch.py`: `test_dispatch_snapshot_dispatch_validation_error_sets_snapshot_failed` + `test_dispatch_snapshot_dispatch_event_store_failure_propagates` pin both legs of the contract.
+> - **Y2 (8 silent swallows in derived/) → 🟢-absorbed.** Routed M-Y2 α-strict: all `try / except Exception: pass` blocks removed from `derived/snapshot.py` (6 sites: D2.1 hypothesis-close walks, D2.2 retraction filter, D2.3 AD/TC parsing, D2.5 last_state_transition) + `derived/decision_log.py` (2 sites: REJECTION/RETRACTION parent_event_id). Both function docstrings now explicitly name "raises pydantic.ValidationError on malformed typed metadata per ADR-014 D7." ADR-014 D7.1 inscribes the strict-propagation contract. **M-Y4 tests** at `tests/derived/test_snapshot.py` + `tests/derived/test_decision_log.py`: 4 cleanup tests pinning the strict semantic (`test_produce_snapshot_malformed_decision_metadata_raises`, `..._retraction_..._raises`, `..._state_transition_..._raises`, `test_produce_decision_log_malformed_rejection_metadata_raises`).
+> - **G1 (discarded `produce_decision_log` return) → 🟢-resolved.** Routed M-Y3 β: comment at `snapshot_dispatch.py:55-58` rewritten to name both (a) ADR-015 D5 derivation-not-persistence intent AND (b) intent to exercise derivation path so ValidationError surfaces at trigger, not at first downstream consumer. No code change; the discard is now load-bearing documentation, not cargo-cult.
+> - **G2 (`>=1` not `==1` in e2e) + G3 (round-trip clause cross-task) + G4 (e2e <3s vs plan <2s) + G5 (`SnapshotDispatchResult` discarded at call site) → 🟢-acknowledged.** Per architect-routing-on-impl §"Out of scope" line 288: "Re-litigating any 🟢 finding ... all 26 confirm impl + ADR structural soundness." No action; original findings preserved below as audit trail.
+> - **Additional cycle-2 absorptions surfacing as 🟢-absorbed (sourced from cross-family R0-B proxy + architect-partner R0-A, not original cycle-1 senior surface):**
+>   - **🟢-new-A (was R0-B proxy R1 / architect-partner R0-A G1 → M-R1 α):** `ToolCallRef.autonomy_tier` Literal expanded to `["countdown_confirm", "hard_confirm", "unknown"]` at `snapshot.py:44`; TC-without-preceding-AD anomaly path included conservatively with `autonomy_tier="unknown"` at `snapshot.py:180-189`; ADR-014 D2.3 inscribes the conservative-include rationale. Test `test_produce_snapshot_tc_without_preceding_ad_gets_unknown_tier` pins the semantic.
+>   - **🟢-new-B (was architect-partner R0-A Y2 → Y2 α):** ADR-014 D2.6 inscribes `decision_count` predicate (union of DECISION + DECISION_PIVOT + REJECTION + RETRACTION event types); D2.1 + D2.2 any-vs-subsequent clarification sentences added. Cross-ref at `snapshot.py:213-214` cites D2.6.
+>   - **🟢-new-C (was R0-B proxy Y5 → M-Y5 δ-with-fold-in):** 1-line comment at `snapshot.py:222-223` notes `len(events)` reflects fetch-time count per ADR-011 D1; revisit at async-reshape via ADR-014 D6 amendment hook.
+>   - **🟢-new-D (was R0-B proxy Y7 → M-Y6 β):** 6-line docstring at `snapshot.py:69-74` above `_AGENT_PARTICIPATION_TYPES` cites ADR-014 D2.4 + names the double-count-avoidance rationale + flags future silent-voter revisit hook.
+>   - **🟢-new-E (was R0-B proxy Y8 → M-Y7 δ-with-fold-in):** 1-line comment at `dispatch.py:77` notes pre-turn snapshot per ADR-011 D2; same-turn utterances not reflected.
+>
+> **Cumulative absorption:** 2 cycle-1 Y → 🟢-absorbed; 5 cycle-1 G → 🟢-preserved; 5 cross-family additional → 🟢-new (M-R1 + Y2 + M-Y5/M-Y6/M-Y7 fold-ins). New total 12 🟢; frontmatter `green: 7` counts cycle-1 findings only per RC-10 "tally must match the body's finding markers exactly" — the 5 🟢-new entries are absorption-trace, not body finding bodies. Cycle-2 substantive impl commit: `900d6f7` (8 files, 791 tests pass; was 784). Senior revision (ADR-014 + plan §4) preceded at `af8ccc4`.
+>
+> **Expected next state transition:** `awaiting_senior_plan_vs_impl → closed` (multi-ADR W-002.5 aggregation 2nd project use closes per architect-routing-on-impl §"Status flips that follow" line 266). Companion verdict bumps follow in the same close pass: `R0-A.md` (architect-partner) `needs_architect → clean`; `R0-B-cross-family.md` (proxy) `needs_architect → clean` per RC-10.
+
+---
+
+## ORIGINAL CYCLE-1 REVIEW (preserved as audit trail per RC-10 §3)
+
 
 **Reviewer:** senior planner (Claude Opus 4.7, primary session)
 **Date:** 2026-05-28
