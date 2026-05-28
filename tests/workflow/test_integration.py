@@ -12,7 +12,7 @@ Source ≠ sink: task_id written into state file is asserted to equal
 from __future__ import annotations
 
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from unittest.mock import patch
@@ -280,6 +280,76 @@ def test_merge_conflict_path_routes_to_architect_decision(git_repo: Path) -> Non
         rc = _advance(git_repo)
     assert rc == 0
     assert read_state(wdir / f"{_TASK}.yaml").state == WorkflowState.AWAITING_ARCHITECT_DECISION
+
+
+# ---------------------------------------------------------------------------
+# Cycle-boundary artifact filter (ADR-008 Decision 14 / W-005 Amendment)
+# Prevents cycle-2 advance from cascading through cycle-1 review files.
+# ---------------------------------------------------------------------------
+
+
+def test_cycle_boundary_filter_stale_review_treated_as_absent(git_repo: Path) -> None:
+    """P1.6 cycle-2 scenario: review file committed in cycle 1 must not
+    trigger transitions when state is in cycle 2 (last_transition_at is
+    after the review's last commit)."""
+    wdir = _wdir(git_repo)
+
+    # Cycle 1: write + commit a clean R0-A.
+    _make_review(git_repo, "plan-vs-impl.md", "clean")
+    _make_review(git_repo, "R0-A.md", "clean")
+    subprocess.run(
+        ["git", "-C", str(git_repo), "add", "."],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(git_repo), "commit", "-m", "cycle-1 reviews"],
+        check=True,
+        capture_output=True,
+    )
+
+    # State is in cycle 2: last_transition_at AFTER the cycle-1 commit.
+    future = datetime.now(UTC) + timedelta(hours=1)
+    _init_state(
+        wdir, state=WorkflowState.AWAITING_R0_A, last_transition_at=future
+    )
+
+    # advance must NOT see the cycle-1 reviews; no transition fires.
+    with patch("orchestrator.workflow.cli._is_pr_merged", return_value=False):
+        rc = _advance(git_repo)
+    assert rc == 0
+    # State unchanged (no transition because both verdicts filtered to 'absent').
+    assert read_state(wdir / f"{_TASK}.yaml").state == WorkflowState.AWAITING_R0_A
+
+
+def test_cycle_boundary_filter_fresh_review_counts(git_repo: Path) -> None:
+    """Inverse: review committed AFTER last_transition_at IS in cycle."""
+    wdir = _wdir(git_repo)
+
+    # State first (with last_transition_at = past).
+    _init_state(
+        wdir,
+        state=WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL,
+        last_transition_at=_PAST,
+    )
+
+    # Now commit the review AFTER last_transition_at.
+    _make_review(git_repo, "plan-vs-impl.md", "clean")
+    subprocess.run(
+        ["git", "-C", str(git_repo), "add", "."],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(git_repo), "commit", "-m", "fresh plan-vs-impl"],
+        check=True,
+        capture_output=True,
+    )
+
+    # Route B: clean plan-vs-impl always → AWAITING_R0_A.
+    rc = _advance(git_repo)
+    assert rc == 0
+    assert read_state(wdir / f"{_TASK}.yaml").state == WorkflowState.AWAITING_R0_A
 
 
 # ---------------------------------------------------------------------------

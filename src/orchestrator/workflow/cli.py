@@ -64,6 +64,73 @@ def _safe_load_verdict(
     return parse_verdict(path)
 
 
+def _review_file_in_cycle(path: Path, since: datetime, repo_root: Path) -> bool:
+    """Return True if the review file is considered "in cycle" for state-
+    machine purposes (ADR-008 Decision 14 — cycle-boundary artifact filter).
+
+    Three cases:
+    - File doesn't exist on disk → True (caller sees 'absent' anyway).
+    - File exists but has NO git history at all → True (file is fresh in
+      working tree; never committed; treat as in-cycle. Real workflow
+      never produces this state since review pushes commit + push; synthetic
+      tests do.)
+    - File exists with git history → True iff at least one commit since
+      `since`. Stale cycle-1 artifacts in cycle 2+ return False.
+
+    Prevents the P1.6 cycle-2 cascade where workflow advance read cycle-1
+    plan-vs-impl + R0-A files and inappropriately reached AWAITING_R0_A.
+    """
+    if not path.exists():
+        return True  # caller will see 'absent' regardless; don't double-filter
+    try:
+        rel = str(path.relative_to(repo_root))
+        # First: does the file have ANY git history?
+        any_log = subprocess.run(
+            ["git", "log", "--format=%H", "-1", "--", rel],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            cwd=str(repo_root),
+        )
+        if not any_log.stdout.strip():
+            # Never committed → working tree artifact; not stale.
+            return True
+        # Has history → check for commits since the cycle boundary.
+        cycle_log = subprocess.run(
+            [
+                "git",
+                "log",
+                f"--since={since.isoformat()}",
+                "--format=%H",
+                "--",
+                rel,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            cwd=str(repo_root),
+        )
+        return bool(cycle_log.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        # Conservative on failure: treat as "in cycle" to avoid silently
+        # hiding artifacts. State-machine self-check will surface
+        # inconsistencies (per CLAUDE.md "halt + surface" rule).
+        return True
+
+
+def _safe_load_verdict_cycle_filtered(
+    path: Path, since: datetime, repo_root: Path
+) -> Literal["clean", "blocking", "needs_architect", "absent"]:
+    """Like _safe_load_verdict but additionally returns 'absent' for files
+    that exist on disk but have no commit-since-{since} (ADR-008 Decision 14).
+    """
+    if not _review_file_in_cycle(path, since, repo_root):
+        return "absent"
+    return _safe_load_verdict(path)
+
+
 def _parse_adr_status(content: str) -> Literal["proposed", "accepted", "none"]:
     lowered = content.lower()
     if "status: accepted" in lowered or "**status:** accepted" in lowered:
@@ -224,8 +291,15 @@ def build_artifact_snapshot(
     junior_impl_commit_present = _has_junior_impl_commits(
         task_id, state.last_transition_at, repo_root
     )
-    plan_vs_impl_verdict = _safe_load_verdict(reviews_dir / "plan-vs-impl.md")
-    r0_a_verdict = _safe_load_verdict(reviews_dir / "R0-A.md")
+    # W-005 Decision 14: cycle-boundary filter — review files only count if
+    # touched by a commit since state.last_transition_at. Prevents cycle-2
+    # advance from cascading through cycle-1 artifacts (P1.6 c2b7a12 incident).
+    plan_vs_impl_verdict = _safe_load_verdict_cycle_filtered(
+        reviews_dir / "plan-vs-impl.md", state.last_transition_at, repo_root
+    )
+    r0_a_verdict = _safe_load_verdict_cycle_filtered(
+        reviews_dir / "R0-A.md", state.last_transition_at, repo_root
+    )
     pr_merged = _is_pr_merged(repo_root)
 
     # Compute plan_has_adr for W-002-2b no-ADR routing in next_state.
