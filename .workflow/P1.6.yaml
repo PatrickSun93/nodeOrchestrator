@@ -1,7 +1,7 @@
 task_id: P1.6
-state: awaiting_junior_impl
+state: awaiting_PR_merge
 cycle: 2
-last_transition_at: '2026-05-28T17:36:37.532356Z'
+last_transition_at: '2026-05-28T17:51:56.473073Z'
 override_history:
 - timestamp: '2026-05-28T17:12:46.415377Z'
   actor: architect
