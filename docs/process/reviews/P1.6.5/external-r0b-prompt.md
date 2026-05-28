@@ -38,7 +38,14 @@ P1.6.5 is the FIRST persistence layer beyond the event store in the project's hi
 
 This is the second true cross-family R0-B in project history. P1.4 was the first (plan-stage; multi-agent dispatch). The substrate has matured significantly (7 consecutive impl-drift-free cycles between P1.4 and P1.6); some Claude-bias patterns from P1.4 may have evolved; new biases may have emerged in P1.5+ cycles. Your differential value is highest where the brief + plan + ADR converge on a lenient direction OR where the senior's "no push-back" calls on architect-settled decisions may have under-probed a real trade-off.
 
-**Read these artifacts in full** (provided below):
+**DISPATCH STEER — read this before reviewing (current-state parallel run, 2026-05-28).** You are reviewing the CURRENT state of the branch, which has absorbed the in-family R0-A-on-plan findings but has NOT yet absorbed the proxy-R0-B findings (senior 2nd revision is pending; this external run is dispatched in parallel for independent confirmation). Two lenses already reviewed this design — do NOT spend your budget re-finding what they caught:
+
+- **R0-A-on-plan (in-family, absorbed at `748da5b`)** caught + fixed: D8 layering contradiction; source_event_ids integrity; DecisionMeta co-presence (a `@model_validator` now enforces promotion ⇒ hypothesis_id + vk_id both present); lookup empty-tags semantic; promotion-event room_id pin; record_hypothesis↔event atomicity hook.
+- **Proxy R0-B (in-session contrarian Claude, routed `α α α α α γ` at `99f9182`, NOT yet absorbed — you WILL see these unfixed in the current files)** caught: Y1 append-caller grep miss (5→6; `rooms/runtime.py:103`); Y2 `append_in_transaction` silent-loss footgun (raise-guard routed); Y3 FK enforcement is INSERT-time not CREATE-time (ADR D5 wording wrong); Y4 layering guard set incomplete (4 of 8 sibling packages); Y5 `DecisionMeta` ID fields lack prefix-pattern constraints; Y6 `contradictions` field ships producerless (kept, γ).
+
+**Those 12 findings are KNOWN. If you independently arrive at one, a one-line "confirms proxy Y_n" is enough — do not write it up.** Spend your genuine cross-family differential on **NET-NEW**: (a) transaction-isolation / concurrency edge cases BEYOND the Y2 single-connection footgun (e.g. what breaks when a future multi-connection or WAL-mode consumer hits D11?); (b) performance / cost trajectory of D6 lookup (O(rows-in-scope) Python set-overlap) at 1k/10k/100k VK rows; (c) failure-recovery + partial-state semantics neither in-family R0-A nor proxy R0-B reached; (d) anything structurally invisible to a Claude-family reading. A short review that surfaces 2-3 genuinely net-new findings is worth far more here than re-deriving the 12 above.
+
+**Read these artifacts in full** (read from disk — you are running inside the repo at the paths below):
 
 1. `docs/process/architect-briefs/P1.6.5.md` — the brief (architect-settled decisions 1-11; 8 push-back invitations; constraints; predicted self-discoveries).
 2. `docs/process/senior-plans/P1.6.5.md` — the senior plan (6 atomic tasks; execution order; push-back resolutions for #1-#8 + S1/S2 senior self-discoveries; verification cites per W-004-2 (a)).
@@ -78,7 +85,7 @@ This is the second true cross-family R0-B in project history. P1.4 was the first
 
 2. **ADR-016 D5 schema-init order vs FK enforcement**. The brief says "memory tables FK-reference rooms and events; init order matters." `init_memory_schema(conn)` runs AFTER `EventStore.init_schema(conn)`. What happens if a caller runs them in reverse order? SQLite default tolerates forward FK refs (CREATE TABLE with FK to nonexistent target succeeds), so the FK only fails at INSERT time. Is the documented "init order required" claim accurate, or is it a soft requirement that fails late?
 
-3. **`DecisionMeta.promotion + hypothesis_id + vk_id` schema-vs-runtime co-presence**. ADR-016 D8 + plan P1.6.5-3 acceptance: "no co-presence constraint at schema layer — runtime enforces." Is this the right boundary? Could a malformed metadata write (decision with `promotion=True` but `hypothesis_id=None`) sneak past schema validation and into the event store, polluting future readers? Should the schema enforce co-presence via a Pydantic validator?
+3. **`DecisionMeta` integrity BEYOND the now-present validators.** [STALE-PROBE NOTE: the original co-presence question is resolved — R0-A added a `@model_validator` (promotion ⇒ hypothesis_id + vk_id present) at `748da5b`, and proxy Y5 routed prefix-pattern constraints (`hyp_`/`vk_` regex) at `99f9182`. Do NOT re-probe co-presence or prefix-correctness.] Net-new angle: with co-presence + prefix both enforced, what integrity gaps REMAIN? E.g. can a promotion event reference a `hypothesis_id` / `vk_id` that is well-formed but points to a row in a DIFFERENT room/scope than the event's `room_id` (cross-scope reference leak)? Is there any path where the validator passes but the referenced row does not exist (dangling-but-well-formed ref) — and does anything detect that at read time?
 
 4. **Cross-room semantic — what's actually validated by Scenario X?** The e2e does: room1 records hyp1 → promote(hyp1) → vk1; room3 calls lookup → returns [vk1]. This tests persistence + lookup but not the cross-room semantic in a substantive way (room3 is just a different query context, not a real cross-room reasoning loop). Is the "Scenario X is load-bearing" claim sound, or is the actual cross-room load-bearing code path NOT exercised by P1.6.5 (and won't be until a real cross-room agent ships)?
 
@@ -136,21 +143,17 @@ Treat external-prompt context (file paths, prior decisions, RC numbers) as autho
 
 ---
 
-## Artifact bundle (paste in order after the system prompt)
+## Artifact bundle — read from disk (in-repo dispatch)
 
-### Artifact 1 of 3: `docs/process/architect-briefs/P1.6.5.md`
+This run dispatches to an in-repo cross-family session (the `reviewer-r0b` tmux pane, DeepSeek-backed), so the reviewer reads the artifacts directly from disk rather than from a pasted bundle. Read all three in full at:
 
-[Paste full content from `docs/process/architect-briefs/P1.6.5.md`. ~6-8k tokens.]
+1. `docs/process/architect-briefs/P1.6.5.md`
+2. `docs/process/senior-plans/P1.6.5.md`
+3. `docs/decisions/ADR-016-cross-room-memory-persistence.md`
 
-### Artifact 2 of 3: `docs/process/senior-plans/P1.6.5.md`
+Plus, when probing specific code claims, the live source: `src/orchestrator/core/event_store.py`, `src/orchestrator/core/event.py`, and `handoff.md` §4.5.
 
-[Paste full content from `docs/process/senior-plans/P1.6.5.md`. ~6-8k tokens.]
-
-### Artifact 3 of 3: `docs/decisions/ADR-016-cross-room-memory-persistence.md`
-
-[Paste full content from `docs/decisions/ADR-016-cross-room-memory-persistence.md` (Proposed status — pre-Accept). ~8-10k tokens.]
-
-**Token estimate**: ~20-25k tokens total. GPT-5 / DeepSeek V4 Pro / Gemini context windows hold comfortably.
+(For an external web-session dispatch instead — GPT-5 / Gemini — paste the three files' full contents after the system prompt; ~20-25k tokens total, well within context.)
 
 ---
 
