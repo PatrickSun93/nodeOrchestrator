@@ -1,6 +1,6 @@
 # ADR-008: Workflow State Machine + Automation
 
-**Status:** Accepted — 2026-05-21
+**Status:** Accepted — 2026-05-21; Amended 2026-05-28 (W-005, Proposed — Route B + AWAITING_SENIOR_REVISION + Decision 14 cycle-boundary filter; see Amendments §)
 **Scope:** Governs the new `.workflow/` orchestration harness that
 sequences the architect → senior → junior → reviewer workflow encoded
 in `docs/process/senior-planner.md` and `handoff.md` §16. Defines the
@@ -455,6 +455,103 @@ human-initiated and observable.
 | 11. Rework cycle semantics | Trivial — cycle counter is a state-file field; behavior change is in the transition library. |
 | 12. Bootstrapping (P1.2 = closed; W-001-impl is first) | Trivial — retroactive bootstrapping of closed tasks is a one-shot script; reversal means deleting those state files. |
 | 13. R0 family orthogonality | Trivial — adding a cross-family gate is a new precondition on `awaiting_R0_A → awaiting_PR_merge`, additive. |
+| 14. Cycle-boundary artifact filter (Option B — review-file recency) | Low — `git log --since` filter in `build_artifact_snapshot`. Reversal removes the filter; cycle-2 advance reverts to reading cycle-1 artifacts (the bug this filter fixes). |
+
+## Amendments
+
+### 2026-05-28 (W-005) — Status: Proposed
+
+Three coordinated changes derived from P1.6 cycle observations:
+
+1. **Amendment to Decision 1** — Remove `plan_vs_impl_verdict == "clean"` conditional on `AWAITING_SENIOR_PLAN_VS_IMPL → AWAITING_R0_A`. The transition fires whenever the plan-vs-impl artifact appears, regardless of verdict.
+2. **Amendment to Decision 6** — Add new state `AWAITING_SENIOR_REVISION` (state vocabulary expands 9 → 10).
+3. **New Decision 14** — Cycle-boundary artifact filter (Option B chosen: review-file recency via `git log --since {state.last_transition_at}`).
+
+#### Amendment 1: Decision 1 — Route B (R0-A mandatory)
+
+**Original transition row** (in Decision 1 Auto-triggered table):
+
+| From state | To state | Auto-trigger condition |
+|---|---|---|
+| `awaiting_senior_plan_vs_impl` | `awaiting_R0_A` | review file at `docs/process/reviews/{task-id}/plan-vs-impl.md` appears AND its frontmatter `verdict` field is non-blocking |
+
+Plus the implicit conditional: if verdict is `blocking` or `needs_architect`, the transition routes to `awaiting_architect_decision` instead.
+
+**Amended behavior**:
+
+| From state | To state | Auto-trigger condition |
+|---|---|---|
+| `awaiting_senior_plan_vs_impl` | `awaiting_R0_A` | review file at `docs/process/reviews/{task-id}/plan-vs-impl.md` appears (any verdict) |
+
+The verdict is captured in the snapshot but does not short-circuit the transition. R0-A always fires.
+
+**Downstream change at AWAITING_R0_A → next state**: now considers **both** `plan_vs_impl_verdict` AND `r0_a_verdict`:
+
+| From state | To state | Condition |
+|---|---|---|
+| `awaiting_R0_A` | `awaiting_PR_merge` | BOTH `plan_vs_impl_verdict == clean` AND `r0_a_verdict == clean` AND `merge_clean` |
+| `awaiting_R0_A` | `awaiting_architect_decision` | ANY of: `plan_vs_impl_verdict != clean`, `r0_a_verdict != clean`, or `!merge_clean` |
+
+**Rationale**: cycle-flow doc in `docs/process/workflow-overview.md` §2 + `docs/process/architect-partner.md` describe R0-A as always-fires post plan-vs-impl. The original implicit conditional contradicted that. P1.6 cycle-1 evidence: senior plan-vs-impl flagged 2🟡, state machine skipped R0-A, architect manually backfilled R0-A which surfaced 0🔴+2🟡+11🟢 of independent findings + r0b R0-B caught 1🔴 senior missed. Cross-perspective independence has measurable signal; the skip optimization cost real audit coverage.
+
+**Reversibility**: Medium — restoring the skip behavior requires re-introducing the verdict conditional + reverting the joint-verdict logic at `AWAITING_R0_A`. Existing tests would catch the regression.
+
+#### Amendment 2: Decision 6 — Add `AWAITING_SENIOR_REVISION` state (9 → 10 states)
+
+**Original state vocabulary**: 9 states (Decision 6, `awaiting_brief` ... `closed`).
+
+**Amended**: 10 states. Insert `AWAITING_SENIOR_REVISION` between `awaiting_architect_decision` and `awaiting_PR_merge`:
+
+```
+7. awaiting_architect_decision — a review carries 🟡 or 🔴; architect must rule on routing
+8. awaiting_senior_revision — architect-routing*.md committed; senior absorbs routing per RC-10
+9. awaiting_PR_merge — all gates clean; PR open; awaiting architect merge
+10. closed — terminal
+```
+
+**New transitions**:
+
+| From state | To state | Trigger |
+|---|---|---|
+| `awaiting_architect_decision` | `awaiting_senior_revision` | `architect-routing*.md` (matching `architect-routing*.md` glob) committed at `docs/process/reviews/{task-id}/` |
+| `awaiting_senior_revision` | `awaiting_R0_A` | both `plan_vs_impl_verdict` and `r0_a_verdict` bumped to `clean` (RC-10 verdict bump protocol) |
+| `awaiting_senior_revision` | `awaiting_architect_decision` | verdicts still non-clean after revision (rare; means second routing round needed) |
+
+The existing override path `AWAITING_ARCHITECT_DECISION → AWAITING_JUNIOR_IMPL` for cycle-N rework is preserved unchanged (cycle counter still increments per Decision 11).
+
+**Rationale**: P1.6 cycle observed the "senior absorbs routing → revise → bump verdicts" phase as a real workflow segment with no codified state. The state was effectively "stuck at awaiting_architect_decision while senior works." Codifying it (a) enables `notify-reviewers.sh` to auto-kick senior on this transition (future work, out of scope for W-005), and (b) makes the state-file history readable when reviewing past cycles.
+
+**Schema impact**: `ArtifactSnapshot` gains `architect_routing_exists: bool`. `build_artifact_snapshot` detects routing files via glob.
+
+**Reversibility**: Medium — additive state can be removed by replacing the new transitions with direct paths (architect_decision → R0_A on verdict bump). Existing state files for closed tasks are unaffected.
+
+#### Amendment 3: Decision 14 — Cycle-boundary artifact filter
+
+**Problem**: `build_artifact_snapshot` in `src/orchestrator/workflow/cli.py` reads review files unconditionally — no awareness of cycle boundary. P1.6 cycle-2 incident at override `c2b7a12`: running `workflow advance` after dispatching cycle-2 cascaded through cycle-1's `plan-vs-impl.md` + `R0-A.md` (which existed on the impl branch with old content) and inappropriately reached `awaiting_R0_A`. Architect rolled back via a second override.
+
+**Decision (W-005-3 plan §5 push-back chose Option B)**: Apply a recency filter to review-file reads. A review file is considered "present" for state-machine purposes only if it has a commit modifying it since `state.last_transition_at`. Implementation: `git log --since "{state.last_transition_at}" -- {review-file-path}` returns non-empty.
+
+**Considered alternatives**:
+- Option A — full git-log scoping per review file (more invasive; potentially slow for large repos).
+- Option C — `cycle: N` field in review file frontmatter; ArtifactSnapshot filters by current cycle (requires frontmatter schema migration; non-trivial for existing review files).
+
+Option B chosen: minimal invasion (one `git log --since` per review file read in `build_artifact_snapshot`), no schema change, leverages git history as ground truth (consistent with Principle 11). Trade-off: assumes review-file commits are recent enough to be the "current cycle" version — if a review file is committed once and then never re-committed in cycle 2 despite verdict change, the filter could miss it. Mitigated by RC-10 verdict bump protocol requiring re-commits on each routing absorption.
+
+**Implementation surface**:
+- `src/orchestrator/workflow/cli.py:build_artifact_snapshot` — wrap each review-file read with `_review_file_in_cycle(path, since: datetime)` helper.
+- `src/orchestrator/workflow/transitions.py` — no change; receives `ArtifactSnapshot` with filtered verdicts.
+
+**Tests**:
+- Synthetic repo with cycle-1 review files committed before `state.last_transition_at` (cycle-2 timestamp); verify `build_artifact_snapshot` returns `verdict: absent`.
+- Synthetic repo with cycle-2 review files committed after `last_transition_at`; verify normal read.
+
+**Reversibility**: Low — remove the helper, restore direct reads. The P1.6 cycle-2 over-advance bug returns. Listed in Reversibility table above.
+
+#### Acceptance
+
+This amendment is **Proposed** as of 2026-05-28. Architect Accepts in a separate landing commit per the senior-drafts-ADR discipline (architect-partner authored the amendment text; architect Accepts). On Accept, the Status line is bumped from `Amended 2026-05-28 (W-005, Proposed; ...)` to `Amended 2026-05-28 (W-005, Accepted; ...)`.
+
+Implementation lands in atomic commits W-005-2 (Route B), W-005-3 (senior_revision state), W-005-4 (cycle-boundary filter), W-005-5 (this Status flip), W-005-6 (landing). See conversation context for atomic plan.
 
 ## References
 
