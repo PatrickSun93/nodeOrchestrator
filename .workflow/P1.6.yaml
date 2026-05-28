@@ -1,6 +1,13 @@
 task_id: P1.6
-state: awaiting_junior_impl
-cycle: 1
-last_transition_at: '2026-05-28T03:00:10.176342Z'
-override_history: []
+state: awaiting_senior_plan_vs_impl
+cycle: 2
+last_transition_at: '2026-05-28T17:26:45.422109Z'
+override_history:
+- timestamp: '2026-05-28T17:12:46.415377Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: Cycle-2 rework dispatch per docs/process/reviews/P1.6/architect-routing-on-impl.md
+    (M-R1+M-Y1+M-Y2+M-Y4+Y2 alpha; M-Y3+M-Y6 beta; M-Y5+M-Y7 delta; Y1 gamma-override).
+    Senior amends ADR-014 + plan section 4 + junior cycle-2 impl follows.
 requires_cross_family_review: true
