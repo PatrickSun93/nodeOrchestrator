@@ -116,3 +116,32 @@ def test_constitution_skills_does_not_import_rooms() -> None:
         "orchestrator.skills imports from orchestrator.rooms — layering violation.\n"
         "skills → rooms direction is forbidden (ADR-012 D7):\n" + "\n".join(violations)
     )
+
+
+def test_constitution_rooms_does_not_import_memory() -> None:
+    """src/orchestrator/rooms/ must never import from orchestrator.memory.
+
+    Per ADR-016 Hard Requirements: rooms/ is an orchestration layer above
+    the memory persistence layer conceptually. A rooms → memory import
+    would risk making room state transitions depend on memory state,
+    violating the event-log-is-truth principle.
+    """
+    forbidden_patterns = ["from orchestrator.memory", "import orchestrator.memory"]
+    violations: list[str] = []
+    for py_path in _ROOMS_SRC.rglob("*.py"):
+        if "__pycache__" in py_path.parts:
+            continue
+        try:
+            content = py_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rel = py_path.relative_to(_ROOMS_SRC.parent.parent)
+        for pattern in forbidden_patterns:
+            if pattern in content:
+                violations.append(f"  {rel}: {pattern!r}")
+
+    assert not violations, (
+        "orchestrator.rooms imports from orchestrator.memory — layering violation.\n"
+        "rooms → memory direction is forbidden (ADR-016 Hard Requirements):\n"
+        + "\n".join(violations)
+    )

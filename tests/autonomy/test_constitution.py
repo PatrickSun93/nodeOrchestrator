@@ -190,3 +190,38 @@ def test_constitution_unknown_tool_attempt_always_emits_refusal_event() -> None:
     for ev, op in zip(sorted_events, sorted_ops, strict=True):
         assert ev.metadata["operation_tool_id"] == op.tool_id
         assert ev.metadata["refusal_reason"] == "unknown_tool"
+
+
+def test_constitution_autonomy_does_not_import_memory() -> None:
+    """src/orchestrator/autonomy/ must never import from orchestrator.memory.
+
+    Per ADR-016 Hard Requirements (most load-bearing guard):
+    autonomy scoring must not become a function of memory-query results,
+    which would breach handoff.md §3.1 code-driven-decisions invariant.
+    Autonomy decisions are gated on code-observable state (threshold
+    values, tool metadata), never on cross-room memory queries.
+    """
+    from pathlib import Path as _Path
+
+    autonomy_src = (
+        _Path(__file__).resolve().parent.parent.parent / "src" / "orchestrator" / "autonomy"
+    )
+    forbidden_patterns = ["from orchestrator.memory", "import orchestrator.memory"]
+    violations: list[str] = []
+    for py_path in autonomy_src.rglob("*.py"):
+        if "__pycache__" in py_path.parts:
+            continue
+        try:
+            content = py_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rel = py_path.relative_to(autonomy_src.parent.parent)
+        for pattern in forbidden_patterns:
+            if pattern in content:
+                violations.append(f"  {rel}: {pattern!r}")
+
+    assert not violations, (
+        "orchestrator.autonomy imports from orchestrator.memory — layering violation.\n"
+        "autonomy → memory direction is forbidden (ADR-016 Hard Requirements):\n"
+        + "\n".join(violations)
+    )

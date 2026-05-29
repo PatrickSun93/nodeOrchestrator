@@ -223,3 +223,34 @@ def test_constitution_no_llm_calls_in_autonomy_module() -> None:
         "autonomy module has LLM dependencies (per handoff §3.1, "
         "autonomy is decision-path code and must not call LLMs):\n" + "\n".join(violations)
     )
+
+
+def test_constitution_llm_does_not_import_memory() -> None:
+    """src/orchestrator/llm/ must never import from orchestrator.memory.
+
+    Per ADR-016 Hard Requirements: this guard forbids the anticipated-but-
+    deferred LLM-augmented matcher/promotion path. An llm/ → memory/ import
+    is exactly the future breach to forbid now — it would make LLM content
+    generation aware of memory state, potentially enabling an auto-promote
+    path through the LLM layer (Principle 5 / handoff.md §3.1 violation).
+    """
+    llm_src = SRC_ROOT / "orchestrator" / "llm"
+    forbidden_patterns = ["from orchestrator.memory", "import orchestrator.memory"]
+    violations: list[str] = []
+    for py_path in llm_src.rglob("*.py"):
+        if "__pycache__" in py_path.parts:
+            continue
+        try:
+            content = py_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rel = py_path.relative_to(llm_src.parent.parent)
+        for pattern in forbidden_patterns:
+            if pattern in content:
+                violations.append(f"  {rel}: {pattern!r}")
+
+    assert not violations, (
+        "orchestrator.llm imports from orchestrator.memory — layering violation.\n"
+        "llm → memory direction is forbidden (ADR-016 Hard Requirements):\n"
+        + "\n".join(violations)
+    )

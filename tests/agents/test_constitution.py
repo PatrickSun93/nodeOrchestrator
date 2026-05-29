@@ -127,3 +127,32 @@ def test_constitution_skills_does_not_import_agents() -> None:
         "orchestrator.skills imports from orchestrator.agents — layering violation.\n"
         "skills → agents direction is forbidden (ADR-011 Decision 5):\n" + "\n".join(violations)
     )
+
+
+def test_constitution_agents_does_not_import_memory() -> None:
+    """src/orchestrator/agents/ must never import from orchestrator.memory.
+
+    Per ADR-016 Hard Requirements: memory/ is above agents/ in the
+    dependency graph. agents → memory would invert the layering and risk
+    making agent dispatch depend on memory-query results, breaching
+    handoff.md §3.1 (code-driven decisions).
+    """
+    forbidden_patterns = ["from orchestrator.memory", "import orchestrator.memory"]
+    violations: list[str] = []
+    for py_path in _AGENTS_SRC.rglob("*.py"):
+        if "__pycache__" in py_path.parts:
+            continue
+        try:
+            content = py_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rel = py_path.relative_to(_AGENTS_SRC.parent.parent)
+        for pattern in forbidden_patterns:
+            if pattern in content:
+                violations.append(f"  {rel}: {pattern!r}")
+
+    assert not violations, (
+        "orchestrator.agents imports from orchestrator.memory — layering violation.\n"
+        "agents → memory direction is forbidden (ADR-016 Hard Requirements):\n"
+        + "\n".join(violations)
+    )

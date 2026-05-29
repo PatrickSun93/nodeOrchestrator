@@ -222,3 +222,33 @@ def test_constitution_core_does_not_import_autonomy() -> None:
         "orchestrator.core imports from orchestrator.autonomy — layering violation.\n"
         "core → autonomy direction is forbidden (see event.py:209-211):\n" + "\n".join(violations)
     )
+
+
+def test_constitution_core_does_not_import_memory() -> None:
+    """``src/orchestrator/core/`` must never import from ``orchestrator.memory``.
+
+    Per ADR-016 D8 deliberate-duplication rule (ADR-014 D5 precedent):
+    core/event.py uses ``str | None`` for hypothesis_id/vk_id instead of
+    HypothesisId/VKId NewTypes, precisely to avoid this import. If core
+    ever imports memory, the layering boundary collapses and the
+    constitutional no-auto-promote invariant is weakened.
+    """
+    forbidden_patterns = ["from orchestrator.memory", "import orchestrator.memory"]
+    violations: list[str] = []
+    for py_path in _CORE_SRC.rglob("*.py"):
+        if "__pycache__" in py_path.parts:
+            continue
+        try:
+            content = py_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rel = py_path.relative_to(_CORE_SRC.parent.parent)
+        for pattern in forbidden_patterns:
+            if pattern in content:
+                violations.append(f"  {rel}: {pattern!r}")
+
+    assert not violations, (
+        "orchestrator.core imports from orchestrator.memory — layering violation.\n"
+        "core → memory direction is forbidden (ADR-016 D8 deliberate-duplication):\n"
+        + "\n".join(violations)
+    )
