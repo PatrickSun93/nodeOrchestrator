@@ -1,6 +1,6 @@
 # ADR-008: Workflow State Machine + Automation
 
-**Status:** Accepted — 2026-05-21; Amended 2026-05-28 (W-005, Accepted — Route B + AWAITING_SENIOR_REVISION + Decision 14 cycle-boundary filter; see Amendments §)
+**Status:** Accepted — 2026-05-21; Amended 2026-05-28 (W-005, Accepted — Route B + AWAITING_SENIOR_REVISION + Decision 14 cycle-boundary filter); Amended 2026-05-29 (RC-21, Proposed — Decision 15 merge-durable impl detection; see Amendments §)
 **Scope:** Governs the new `.workflow/` orchestration harness that
 sequences the architect → senior → junior → reviewer workflow encoded
 in `docs/process/senior-planner.md` and `handoff.md` §16. Defines the
@@ -552,6 +552,33 @@ Option B chosen: minimal invasion (one `git log --since` per review file read in
 **Accepted 2026-05-28** by architect (Peidong) per the W-005 cycle conversation. Implementation lands across W-005-2 (Route B, c36eb15), W-005-3 (senior_revision state, ae4229f), W-005-4 (cycle-boundary filter, c16b161), and W-005-6 (landing).
 
 Distance-test waiver: this amendment was drafted + accepted within the same session per the dev-harness exception (CLAUDE.md § "Scope: product vs dev harness" — d9a1ec4). Architect explicitly chose the lighter dev-harness flow rather than the full product-cycle distance test, on the grounds that (a) zero product runtime coupling, (b) reversibility for all three amendments is Low-Medium, (c) tests + gates provide regression protection.
+
+### 2026-05-29 (RC-21) — Status: Proposed
+
+**New Decision 15 — Merge-durable impl-stage detection.**
+
+**Problem.** `AWAITING_JUNIOR_IMPL → AWAITING_SENIOR_PLAN_VS_IMPL` (Decision 1) requires `artifacts.junior_impl_commit_present`, computed by `_has_junior_impl_commits` (cli.py) as *"`origin/claude/{task_id}-impl` exists AND is ahead of `origin/main` since `last_transition_at`"* (`_git_log_ahead_of_main_since`, io.py). Once the impl PR merges, the branch is no longer ahead of `origin/main` (its commits ARE main), so the signal evaluates False and `workflow advance` stalls at `awaiting_junior_impl` reporting "no transition fires."
+
+**The asymmetry (RC-21).** Plan-stage detection (`senior_plan_exists`, `adr_status`) keys on **file presence on main** → **merge-durable**. Impl-stage detection keys on **branch-ahead** → **merge-fragile**. The "reconcile state after merge" workflow — correct + dogfooded at plan stage — silently breaks at impl stage. Verified on P1.6.5 post-PR-#26: `origin/main..origin/claude/P1.6.5-impl` empty (0 ahead), branch is an ancestor of main (merged), 14 commits after `last_transition_at`. Recurs on every impl cycle reconciled after merge; each occurrence would otherwise need a non-substantive architect override (inflating `override_history`, defeating its audit value).
+
+**Decision.** `_has_junior_impl_commits` returns True if **either**:
+
+1. **Pre-merge (unchanged):** the impl branch is ahead of `origin/main` with at least one commit after `since` (`_git_log_ahead_of_main_since`).
+2. **Post-merge (new):** the impl branch is an ancestor of `origin/main` (merged) **AND** has at least one commit after `since` on the branch (`_git_branch_merged` + a branch-since check).
+
+Both signals survive a merge, restoring symmetry with plan-stage detection. The post-merge clause is task-scoped (the specific `claude/{task_id}-impl` ref) and time-scoped (commits after `since`), preserving the RC-19 properties.
+
+**Guardrail (remedy (c)).** When `advance` finds no transition while state is `awaiting_junior_impl` and a merged-but-not-ahead `{task_id}-impl` branch exists, it prints an actionable note rather than the bare "no transition fires" — so a stale-detection edge surfaces instead of reading as "nothing to do."
+
+**Considered + rejected.** (b) "advance impl-stage states before merge" — contradicts the merge-durable plan-stage habit and requires advancing main's state file against an open branch. Rejected for the asymmetry it preserves.
+
+**Implementation surface.** `io.py` (`_git_branch_merged` + branch-since helper); `cli.py:_has_junior_impl_commits` (the OR) + `cmd_advance` warn. Tests: branch-ahead→True; merged+post-since→True; merged+no-post-since→False; no-branch→False.
+
+**Reversibility.** Low — drop the post-merge clause; the merge-fragility (and the per-cycle override burden) returns.
+
+#### Acceptance (Decision 15)
+
+_Pending — Proposed as of 2026-05-29; architect Accepts in the landing commit after implementation + tests, per the senior-drafts-ADR discipline (draft then accept as a distinct step). RC-21 graduates from `docs/retrospectives/P1.6.5-candidates.md` (surfaced 08fdf6a) on Accept._
 
 ## References
 
