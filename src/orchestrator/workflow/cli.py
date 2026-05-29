@@ -24,7 +24,9 @@ import yaml
 from orchestrator.workflow.exceptions import WorkflowError
 from orchestrator.workflow.io import (
     _git_branch_exists,
+    _git_branch_merged,
     _git_log_ahead_of_main_since,
+    _git_log_branch_since,
     _git_show,
     _read_plan_frontmatter,
     read_state,
@@ -231,12 +233,32 @@ def _read_adr_status(task_id: str, repo_root: Path) -> Literal["proposed", "acce
 
 
 def _has_junior_impl_commits(task_id: str, since: datetime, repo_root: Path) -> bool:
-    """Return True if claude/{task_id}-impl branch exists on origin and has commits
-    ahead of origin/main since `since`. Task-scoped RC-19 fix replacing _has_commit_since."""
+    """Return True if the claude/{task_id}-impl branch carries junior impl commits
+    since `since` — merge-durably (ADR-008 Decision 15, RC-21).
+
+    Two cases, either suffices:
+      1. Pre-merge: branch is ahead of origin/main with commits after `since`.
+      2. Post-merge: branch is an ancestor of origin/main (its commits ARE main
+         now) AND has commits after `since`.
+
+    Case 1 alone (the pre-RC-21 behavior) is merge-fragile: once the PR merges,
+    `origin/main..branch` is empty and the signal the impl-stage cascade depends
+    on vanishes, stalling `advance` at awaiting_junior_impl. Case 2 restores the
+    symmetry with plan-stage detection (which keys on file presence on main).
+
+    Task-scoped (the specific {task_id}-impl ref) + time-scoped (commits after
+    `since`) in both cases — preserves the RC-19 properties.
+    """
     branch_ref = f"refs/remotes/origin/claude/{task_id}-impl"
     if not _git_branch_exists(branch_ref, repo_root):
         return False
-    return _git_log_ahead_of_main_since(branch_ref, since, repo_root)
+    # Case 1 — pre-merge (branch ahead of main).
+    if _git_log_ahead_of_main_since(branch_ref, since, repo_root):
+        return True
+    # Case 2 — post-merge (branch merged into main, still carries post-`since` commits).
+    return _git_branch_merged(branch_ref, "origin/main", repo_root) and _git_log_branch_since(
+        branch_ref, since, repo_root
+    )
 
 
 def _is_pr_merged(repo_root: Path) -> bool:
@@ -437,6 +459,21 @@ def cmd_advance(args: argparse.Namespace) -> int:
 
     if result is None:
         print(f"{args.task_id}: no transition fires (current state: {state.state})")
+        # RC-21 guardrail (ADR-008 Decision 15): if stalled at awaiting_junior_impl
+        # while a merged-but-not-detected impl branch exists, surface it instead of
+        # leaving the bare "no transition fires" reading as "nothing to do".
+        if state.state == WorkflowState.AWAITING_JUNIOR_IMPL:
+            branch_ref = f"refs/remotes/origin/claude/{args.task_id}-impl"
+            if _git_branch_exists(branch_ref, repo_root) and _git_branch_merged(
+                branch_ref, "origin/main", repo_root
+            ):
+                print(
+                    f"  note: {branch_ref} appears merged into origin/main but no "
+                    f"impl commits were detected after the last transition. If this "
+                    f"task is genuinely complete, override to closed with a reason "
+                    f"citing the merge (ADR-008 Decision 15 / RC-21).",
+                    file=sys.stderr,
+                )
         return 0
 
     new_state = state.model_copy(

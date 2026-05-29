@@ -782,17 +782,50 @@ def test_has_junior_impl_commits_branch_absent_returns_false(
 def test_has_junior_impl_commits_branch_present_no_commits_returns_false(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    # Neither pre-merge (ahead) nor post-merge (merged+since) → False.
     monkeypatch.setattr("orchestrator.workflow.cli._git_branch_exists", lambda *a: True)
     monkeypatch.setattr("orchestrator.workflow.cli._git_log_ahead_of_main_since", lambda *a: False)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_branch_merged", lambda *a: False)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_log_branch_since", lambda *a: False)
     assert _has_junior_impl_commits("TASK-1", _NOW, tmp_path) is False
 
 
 def test_has_junior_impl_commits_branch_present_with_commits_returns_true(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    # Case 1: pre-merge — ahead of main with post-since commits.
     monkeypatch.setattr("orchestrator.workflow.cli._git_branch_exists", lambda *a: True)
     monkeypatch.setattr("orchestrator.workflow.cli._git_log_ahead_of_main_since", lambda *a: True)
     assert _has_junior_impl_commits("TASK-1", _NOW, tmp_path) is True
+
+
+# --- RC-21 / ADR-008 Decision 15: merge-durable (post-merge) detection ---
+
+
+def test_has_junior_impl_commits_post_merge_returns_true(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Case 2: branch merged into main (no longer ahead) but still carries
+    post-`since` commits → True. This is the RC-21 fix — pre-fix this returned
+    False and stalled `advance` at awaiting_junior_impl."""
+    monkeypatch.setattr("orchestrator.workflow.cli._git_branch_exists", lambda *a: True)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_log_ahead_of_main_since", lambda *a: False)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_branch_merged", lambda *a: True)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_log_branch_since", lambda *a: True)
+    assert _has_junior_impl_commits("TASK-1", _NOW, tmp_path) is True
+
+
+def test_has_junior_impl_commits_merged_but_no_post_since_returns_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Merged branch with NO commits after `since` (e.g. an old merged branch
+    being re-evaluated in a later cycle) → False. Guards against the post-merge
+    clause firing for stale branches."""
+    monkeypatch.setattr("orchestrator.workflow.cli._git_branch_exists", lambda *a: True)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_log_ahead_of_main_since", lambda *a: False)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_branch_merged", lambda *a: True)
+    monkeypatch.setattr("orchestrator.workflow.cli._git_log_branch_since", lambda *a: False)
+    assert _has_junior_impl_commits("TASK-1", _NOW, tmp_path) is False
 
 
 def test_has_junior_impl_commits_uses_correct_branch_ref(

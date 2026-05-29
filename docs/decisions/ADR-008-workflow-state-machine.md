@@ -1,6 +1,6 @@
 # ADR-008: Workflow State Machine + Automation
 
-**Status:** Accepted — 2026-05-21; Amended 2026-05-28 (W-005, Accepted — Route B + AWAITING_SENIOR_REVISION + Decision 14 cycle-boundary filter); Amended 2026-05-29 (RC-21, Proposed — Decision 15 merge-durable impl detection; see Amendments §)
+**Status:** Accepted — 2026-05-21; Amended 2026-05-28 (W-005, Accepted — Route B + AWAITING_SENIOR_REVISION + Decision 14 cycle-boundary filter); Amended 2026-05-29 (RC-21, Accepted — Decision 15 merge-durable impl detection; see Amendments §)
 **Scope:** Governs the new `.workflow/` orchestration harness that
 sequences the architect → senior → junior → reviewer workflow encoded
 in `docs/process/senior-planner.md` and `handoff.md` §16. Defines the
@@ -578,7 +578,7 @@ Both signals survive a merge, restoring symmetry with plan-stage detection. The 
 
 #### Acceptance (Decision 15)
 
-_Pending — Proposed as of 2026-05-29; architect Accepts in the landing commit after implementation + tests, per the senior-drafts-ADR discipline (draft then accept as a distinct step). RC-21 graduates from `docs/retrospectives/P1.6.5-candidates.md` (surfaced 08fdf6a) on Accept._
+**Accepted 2026-05-29** by architect (Peidong) in the RC-21 fix session, after implementation + tests landed (gates green: 904 passed). Implementation: `io.py` `_git_branch_merged` + `_git_log_branch_since`; `cli.py` `_has_junior_impl_commits` (the pre/post-merge OR) + `cmd_advance` stall-warn. Same-session draft→accept under the dev-harness exception (zero product runtime coupling; Low reversibility; tests as regression protection). RC-21 graduates from `docs/retrospectives/P1.6.5-candidates.md` (surfaced 08fdf6a) to this Accepted decision.
 
 ## References
 

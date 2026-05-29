@@ -70,6 +70,51 @@ def _git_log_ahead_of_main_since(branch_ref: str, since: datetime, repo_root: Pa
         return False
 
 
+def _git_branch_merged(branch_ref: str, base_ref: str, repo_root: Path) -> bool:
+    """Return True if branch_ref is an ancestor of base_ref (i.e. fully merged
+    into it). False on subprocess failure.
+
+    Used by the RC-21 merge-durable impl detection (ADR-008 Decision 15): once
+    an impl PR merges, the branch is no longer *ahead* of origin/main but IS an
+    ancestor of it. `git merge-base --is-ancestor A B` exits 0 iff A is an
+    ancestor of B.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", branch_ref, base_ref],
+            capture_output=True,
+            timeout=10,
+            check=False,
+            cwd=str(repo_root),
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _git_log_branch_since(branch_ref: str, since: datetime, repo_root: Path) -> bool:
+    """Return True if branch_ref has at least one commit authored after `since`
+    (regardless of whether it is ahead of or merged into main).
+
+    The merge-durable counterpart to `_git_log_ahead_of_main_since`: it does not
+    constrain to `origin/main..branch`, so it still detects the impl commits
+    after the branch has merged (RC-21 / ADR-008 Decision 15).
+    """
+    since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", f"--after={since_str}", branch_ref],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            cwd=str(repo_root),
+        )
+        return bool(result.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _read_plan_frontmatter(path: Path) -> dict[str, Any] | None:
     """Parse the YAML frontmatter of a senior-plan markdown file.
 
