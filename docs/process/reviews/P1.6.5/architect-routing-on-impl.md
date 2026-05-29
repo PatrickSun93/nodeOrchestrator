@@ -50,7 +50,7 @@ Architect ruled **不用管** — the format-only dev-harness reflow (`workflow/
 ## Absorption shape + cycle mechanics (for architect awareness)
 
 - **Y1 is doc-only** (ADR-016 + plan text; impl already correct) — pure senior absorption.
-- **Y2 is a small code change** (`DecisionMeta` field + `promotion.py` + tests) — more than a doc absorption. **Architect decides the path**: senior-absorbed same-branch fix (P1.5 R1 precedent — fix-on-branch, cycle stays at 1) **vs** junior re-dispatch (cycle-2 rework via `workflow override`). Given Y2 is ~one optional field + one metadata key + tests, the same-branch absorption (no cycle increment) is the lighter path consistent with P1.5 R1 — but the override/dispatch is the architect's call, not mine. Surfaced, not decided.
+- **Y2 is a small code change** (`DecisionMeta` field + `promotion.py` + tests) — more than a doc absorption. **Architect chose Path A (2026-05-29): same-branch absorption; cycle stays 1; do NOT run `workflow override`.** Y1 (doc) + Y2 (code) both land on `claude/P1.6.5-impl` in the revision commit(s), per the P1.5 R1 precedent (fix-on-branch, not via override — the cycle-counter-stays-1 IS the validation that the rework was a same-branch fix). Junior re-dispatch / cycle-2 was the rejected alternative. Rationale: Y2 is ~one optional field + one metadata key + tests; three consecutive clean reviews validated the surrounding code; a full cycle-2 rework is heavier than the change warrants.
 - **RC-10 verdict bumps** at absorption: `plan-vs-impl.md` Y1+Y2 → 🟢 (senior); `R0-A.md` Y1+Y2 → 🟢 + Y3 → 🟢-dismissed (architect-partner, or senior notes the dismissal). `R0-B.md` already clean.
 
 ## Cross-references
