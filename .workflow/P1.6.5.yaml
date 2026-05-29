@@ -1,6 +1,17 @@
 task_id: P1.6.5
-state: awaiting_junior_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-05-29T18:06:44.266491Z'
-override_history: []
+last_transition_at: '2026-05-29T21:04:44.396394Z'
+override_history:
+- timestamp: '2026-05-29T21:04:44.396394Z'
+  actor: architect
+  from_state: awaiting_senior_plan_vs_impl
+  to_state: closed
+  reason: 'P1.6.5 genuinely complete (impl merged 9f13861 PR#26; plan-vs-impl + R0-A
+    + R0-B all clean; gates green 904; cycle 1, zero substantive overrides). Post-merge
+    reconcile cannot cascade to closed automatically: Decision 15 (merge-durable impl
+    detection) fixed the junior_impl entry stall, but each advance bumps last_transition_at
+    to now(), and the Decision 14 cycle-boundary filter then hides the pre-merge review
+    files (committed 12:30 < bumped 20:10) — see RC-22. Override is the substantive
+    unblock, not a non-substantive workaround.'
 requires_cross_family_review: true
