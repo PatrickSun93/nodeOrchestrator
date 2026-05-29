@@ -12,7 +12,7 @@ verdict_history:
     findings_count: { red: 0, yellow: 3, green: 6 }
     note: original (impl stage) — Y1 (ADR-016 D11 + plan non-functional, guard ambiguity sharpening) + Y2 (promotion event omits user_id, sided route over R0-B accept) + Y3 (dev-harness scope-bleed).
   - verdict: clean
-    at_commit: HEAD
+    at_commit: c5c971c
     findings_count: { red: 0, yellow: 0, green: 9 }
     note: impl-stage 3rd revision (Path A) absorbed Y1 α(a) + Y2 α(a); Y3 dismissed by architect (不用管). Per architect-routing-on-impl.md. Senior-bumped per W-005 awaiting_senior_revision flow + the routing's RC-10 allowance.
 ---

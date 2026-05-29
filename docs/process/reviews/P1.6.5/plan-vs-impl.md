@@ -12,7 +12,7 @@ verdict_history:
     findings_count: { red: 0, yellow: 2, green: 9 }
     note: original — Y1 (ADR-016 D11 + plan P1.6.5-2 non-functional as written vs proxy-Y2 entry guard) + Y2 (promotion event omits confirming user_id).
   - verdict: clean
-    at_commit: HEAD
+    at_commit: c5c971c
     findings_count: { red: 0, yellow: 0, green: 11 }
     note: impl-stage 3rd revision (Path A, same-branch) absorbed both — Y1 α(a) doc-to-impl reconciliation (ADR-016 D11 + plan P1.6.5-2 → _append_body + DML-first); Y2 α(a) DecisionMeta gains user_id (required under promotion=True) + promotion.py event metadata + tests. Per architect-routing-on-impl.md. Both Y → 🟢. Gates green (896 passed).
 ---
