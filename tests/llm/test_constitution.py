@@ -251,6 +251,5 @@ def test_constitution_llm_does_not_import_memory() -> None:
 
     assert not violations, (
         "orchestrator.llm imports from orchestrator.memory — layering violation.\n"
-        "llm → memory direction is forbidden (ADR-016 Hard Requirements):\n"
-        + "\n".join(violations)
+        "llm → memory direction is forbidden (ADR-016 Hard Requirements):\n" + "\n".join(violations)
     )

@@ -128,7 +128,5 @@ def promote_hypothesis(
         )
 
     # Load and return the committed VK row.
-    row = conn.execute(
-        "SELECT * FROM verified_knowledge WHERE id = ?", (str(vk_id),)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM verified_knowledge WHERE id = ?", (str(vk_id),)).fetchone()
     return _row_to_vk(row)

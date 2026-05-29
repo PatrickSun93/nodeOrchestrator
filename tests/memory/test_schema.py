@@ -108,6 +108,7 @@ def test_hypothesis_frozen() -> None:
     with pytest.raises(ValidationError):
         h.content = "mutated"
 
+
 def test_hypothesis_extra_fields_forbidden() -> None:
     with pytest.raises(ValidationError):
         Hypothesis(  # type: ignore[call-arg]
@@ -193,6 +194,7 @@ def test_vk_frozen() -> None:
     with pytest.raises(ValidationError):
         vk.content = "mutated"
 
+
 def test_vk_extra_fields_forbidden() -> None:
     with pytest.raises(ValidationError):
         VerifiedKnowledge(  # type: ignore[call-arg]
@@ -254,6 +256,7 @@ def test_entity_frozen() -> None:
     e = _make_entity()
     with pytest.raises(ValidationError):
         e.type = EntityType.PERSON
+
 
 def test_entity_extra_fields_forbidden() -> None:
     with pytest.raises(ValidationError):

@@ -95,9 +95,7 @@ class TestInitMemorySchema:
         init_memory_schema(conn)
         tables = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert "hypothesis" in tables
         assert "verified_knowledge" in tables
@@ -150,9 +148,7 @@ class TestInitMemorySchema:
         # Memory tables exist.
         tables = {
             row[0]
-            for row in conn2.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn2.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert "hypothesis" in tables
         assert "verified_knowledge" in tables

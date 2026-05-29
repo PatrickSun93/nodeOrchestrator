@@ -203,9 +203,16 @@ def test_scenario_x_atomicity_sub_test() -> None:
                 promoted_by_user_id, promotion_event_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            "vk_" + "e" * 32, "fake", "[]", "{}", 1, "[]", "personal",
-            str(hyp1.id),           # collision
-            "fake_user", str(room1_events[0]),  # existing event FK
+            "vk_" + "e" * 32,
+            "fake",
+            "[]",
+            "{}",
+            1,
+            "[]",
+            "personal",
+            str(hyp1.id),  # collision
+            "fake_user",
+            str(room1_events[0]),  # existing event FK
         ),
     )
     conn.commit()
@@ -221,9 +228,9 @@ def test_scenario_x_atomicity_sub_test() -> None:
         )
 
     # Decision event NOT in event_store (rolled back).
-    decision_count = conn.execute(
-        "SELECT COUNT(*) FROM events WHERE type = 'decision'"
-    ).fetchone()[0]
+    decision_count = conn.execute("SELECT COUNT(*) FROM events WHERE type = 'decision'").fetchone()[
+        0
+    ]
     assert decision_count == 0, "decision event must be rolled back"
 
     # hyp1 status still PENDING.

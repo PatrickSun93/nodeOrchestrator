@@ -184,9 +184,7 @@ class TestPromoteHypothesisErrors:
     def test_rejected_status_raises(self) -> None:
         store, conn = _make_full_store()
         _rid, _eids, hyp = _seed(store, conn)
-        conn.execute(
-            "UPDATE hypothesis SET status = 'rejected' WHERE id = ?", (str(hyp.id),)
-        )
+        conn.execute("UPDATE hypothesis SET status = 'rejected' WHERE id = ?", (str(hyp.id),))
         conn.commit()
         with pytest.raises(PromotionEligibilityError):
             promote_hypothesis(hyp.id, user_id="u", scope=VKScope.PERSONAL, event_store=store)
@@ -194,9 +192,7 @@ class TestPromoteHypothesisErrors:
     def test_stale_status_raises(self) -> None:
         store, conn = _make_full_store()
         _rid, _eids, hyp = _seed(store, conn)
-        conn.execute(
-            "UPDATE hypothesis SET status = 'stale' WHERE id = ?", (str(hyp.id),)
-        )
+        conn.execute("UPDATE hypothesis SET status = 'stale' WHERE id = ?", (str(hyp.id),))
         conn.commit()
         with pytest.raises(PromotionEligibilityError):
             promote_hypothesis(hyp.id, user_id="u", scope=VKScope.PERSONAL, event_store=store)
@@ -215,7 +211,6 @@ class TestPromoteHypothesisAtomicity:
         promoted_from_hypothesis_id (UNIQUE constraint violation at VK INSERT).
         This verifies ADR-016 D11 atomicity: all three writes share one transaction.
         """
-        from orchestrator.core.event import generate_event_id as _geid
 
         store, conn = _make_full_store()
         _rid, event_ids, hyp = _seed(store, conn)
@@ -230,9 +225,16 @@ class TestPromoteHypothesisAtomicity:
                     promoted_by_user_id, promotion_event_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                fake_vk_id, "fake", "[]", "{}", 1, "[]", "personal",
+                fake_vk_id,
+                "fake",
+                "[]",
+                "{}",
+                1,
+                "[]",
+                "personal",
                 str(hyp.id),  # same promoted_from_hypothesis_id → UNIQUE violation
-                "fake_user", str(event_ids[0]),  # valid FK to events table
+                "fake_user",
+                str(event_ids[0]),  # valid FK to events table
             ),
         )
         conn.commit()
@@ -288,9 +290,7 @@ class TestPromoteHypothesisAtomicity:
         # First promotion: bypass status check by directly setting PENDING after.
         promote_hypothesis(hyp.id, user_id="u", scope=VKScope.PERSONAL, event_store=store)
         # Force status back to PENDING to bypass the eligibility check.
-        conn.execute(
-            "UPDATE hypothesis SET status = 'pending' WHERE id = ?", (str(hyp.id),)
-        )
+        conn.execute("UPDATE hypothesis SET status = 'pending' WHERE id = ?", (str(hyp.id),))
         conn.commit()
         # Second promotion: schema UNIQUE on promoted_from_hypothesis_id fires.
         with pytest.raises(sqlite3.IntegrityError):

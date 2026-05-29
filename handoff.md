@@ -238,48 +238,57 @@ agent:
 - `produce_snapshot(events, room, *, snapshot_at) -> Snapshot` — 纯函数,状态时间点快照
 - `produce_decision_log(events, room) -> DecisionLog` — 纯函数,决策类事件过滤视图
 - `summary_snapshot` 事件由 Logger agent 在 `snapshot_pending` 状态触发后写入,无独立快照表 (ADR-014 D4)
-- 跨房间记忆持久化 (promotion 逻辑、SQLite 表) 推迟至 P1.6.5/P1.7
 
-四类跨房间记忆数据类 (**schema-only, 无持久化层**),**严格分开**:
+**P1.6.5 新增 (slice B 已物化)**: 跨房间记忆持久化层 — `src/orchestrator/memory/` 包
+  (ADR-016 cross-room memory persistence + promotion)。
+  Hypothesis + VerifiedKnowledge 完整持久化;Entity schema-only stub;ProjectArchive 推迟。
+
+四类跨房间记忆数据类,**严格分开**:
 
 ```python
-# 1. 待验证 pool
+# 1. 待验证 pool — P1.6.5 物化 (hypothesis SQLite 表 + record_hypothesis API)
 class Hypothesis:
-    id: str
+    id: HypothesisId               # "hyp_<32hex>"
     content: str
-    room_id: str
-    confidence: float
-    source_event_ids: list[str]
+    room_id: RoomId
+    confidence: float              # [0.0, 1.0], required
+    source_event_ids: list[EventId]  # min_length=1; existence-checked at record time
     status: Literal["pending", "verified", "rejected", "stale"]
+    candidate_for_promotion: bool  # written by P1.7+ matcher; no auto-promote
 
-# 2. 已验证(参与跨房间检索)
+# 2. 已验证(参与跨房间检索) — P1.6.5 物化 (verified_knowledge SQLite 表 + promote_hypothesis + lookup)
 class VerifiedKnowledge:
-    id: str
+    id: VKId                       # "vk_<32hex>"
     content: str
-    topic_tags: list[str]
-    evidence: dict
-    last_validated: datetime
-    contradictions: list[str]
+    topic_tags: list[str]          # OR-semantics in lookup
+    evidence: dict[str, Any]       # JSON blob
+    last_validated: TimestampMs
+    contradictions: list[VKId]     # VK-to-VK cross-refs (ADR-016 D9); no producer P1.6.5
     scope: Literal["personal", "team", "global"]
+    promoted_from_hypothesis_id: HypothesisId  # UNIQUE (one VK per Hypothesis)
+    promoted_by_user_id: str
+    promotion_event_id: EventId    # the `decision` event id in event_store
 
-# 3. 实体
+# 3. 实体 — schema-only stub (P1.6.5; no producer/consumer API)
 class Entity:
-    id: str
+    id: EntityId                   # "ent_<32hex>"
     type: Literal["person", "project", "concept", "paper"]
-    attributes: dict
+    attributes: dict[str, Any]
 
-# 4. 项目档案
-class ProjectArchive:
-    room_id: str
-    one_line_summary: str
-    decision_log: list[DecisionLogEntry]
-    spinoff_questions: list[str]
+# 4. 项目档案 — 推迟至 P1.7+ (consumer: room re-entry experience, not yet built)
+class ProjectArchive: ...
 ```
 
-**晋升规则**:不自动晋升。需要满足一个:
-- 跨 N 个独立房间被独立得出
-- 用户显式确认
-- 外部 ground truth 验证
+**晋升规则**:不自动晋升 (ADR-016 D10 enforces). P1.6.5 ships:
+- **(b) 用户显式确认** — `promote_hypothesis(hyp_id, user_id, *, scope, event_store)` (full)
+- **(a) 跨 N 个独立房间被独立得出** — `candidate_for_promotion` column ships; matcher deferred to P1.7+
+- **(c) 外部 ground truth 验证** — deferred to P2+
+
+**Promotion atomicity** (ADR-016 D11): single SQLite transaction wraps
+VK insert + Hypothesis.status update + `decision` event append to event_store.
+
+**Cross-room lookup**: `lookup_verified_knowledge(topic_tags, scope, *, conn) -> list[VerifiedKnowledge]`
+— OR-semantics, last_validated DESC, no LLM (Principle 5).
 
 ---
 
@@ -640,7 +649,9 @@ async def select_model_and_provider(
 **事件流**:append-only 表,SQLite 起步即可
 **快照**:持久化于 `summary_snapshot` 事件的 `metadata` 字段 (ADR-014 D4); 无独立快照表
 **决策日志**:按需衍生,不物化 (ADR-015 D5); 消费者调用 `produce_decision_log(events, room)`
-**记忆系统**:四个独立的存储 (schema-only; promotion 逻辑推迟至 P1.6.5/P1.7)
+**记忆系统** (P1.6.5 slice B 已物化, ADR-016 D5): `hypothesis` + `verified_knowledge` + `entity`
+  (stub) 表与 event_store 共享同一 SQLite 文件 (同 connection 保证 promotion 原子事务)。
+  Init: `EventStore.init_schema(conn)` 先, 然后 `init_memory_schema(conn)` — in-place migration。
 **配置**:YAML 文件,可 git 版本化
 
 ---
@@ -962,7 +973,7 @@ your-orchestrator/
 │   │       └── claude_code_output.py
 │   ├── agents/                  # Agent loader、execution(P1.4)
 │   ├── tools/                   # 工具实现
-│   ├── memory/                  # 跨房间记忆(P2)
+│   ├── memory/                  # 跨房间记忆 — P1.6.5 slice B 已物化 (ADR-016)
 │   ├── autonomy/                # 自治度系统(P1.2)
 │   ├── skills/                  # Skill 加载(P1.3)
 │   └── ui/                      # GUI(P3)

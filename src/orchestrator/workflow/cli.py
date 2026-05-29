@@ -314,8 +314,8 @@ def build_artifact_snapshot(
     # matching the glob (architect-routing.md, architect-routing-on-impl.md,
     # architect-routing-deepseek.md, etc.) signals architect has routed; senior
     # begins absorption.
-    architect_routing_exists = (
-        reviews_dir.exists() and any(reviews_dir.glob("architect-routing*.md"))
+    architect_routing_exists = reviews_dir.exists() and any(
+        reviews_dir.glob("architect-routing*.md")
     )
 
     return ArtifactSnapshot(

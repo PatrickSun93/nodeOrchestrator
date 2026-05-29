@@ -177,10 +177,7 @@ def next_state(
     if current == WorkflowState.AWAITING_R0_A:
         if artifacts.r0_a_verdict == "absent":
             return None  # R0-A not yet pushed
-        both_clean = (
-            artifacts.plan_vs_impl_verdict == "clean"
-            and artifacts.r0_a_verdict == "clean"
-        )
+        both_clean = artifacts.plan_vs_impl_verdict == "clean" and artifacts.r0_a_verdict == "clean"
         if both_clean and gates.merge_clean:
             return WorkflowState.AWAITING_PR_MERGE
         # Any non-clean OR merge-conflict → architect must rule.
@@ -190,10 +187,7 @@ def next_state(
     # W-005): when architect-routing*.md is committed, the architect's
     # alpha/beta/gamma routing decision is captured; senior begins routing
     # absorption (RC-10 verdict bump). Auto-triggered on artifact appearance.
-    if (
-        current == WorkflowState.AWAITING_ARCHITECT_DECISION
-        and artifacts.architect_routing_exists
-    ):
+    if current == WorkflowState.AWAITING_ARCHITECT_DECISION and artifacts.architect_routing_exists:
         return WorkflowState.AWAITING_SENIOR_REVISION
 
     # AWAITING_SENIOR_REVISION → next (ADR-008 Amendment 2, W-005): senior has
@@ -203,10 +197,7 @@ def next_state(
     if current == WorkflowState.AWAITING_SENIOR_REVISION:
         if artifacts.r0_a_verdict == "absent" or artifacts.plan_vs_impl_verdict == "absent":
             return None  # Senior hasn't re-committed reviews yet
-        both_clean = (
-            artifacts.plan_vs_impl_verdict == "clean"
-            and artifacts.r0_a_verdict == "clean"
-        )
+        both_clean = artifacts.plan_vs_impl_verdict == "clean" and artifacts.r0_a_verdict == "clean"
         if both_clean:
             return WorkflowState.AWAITING_R0_A
         # Still non-clean → architect rules a second time.

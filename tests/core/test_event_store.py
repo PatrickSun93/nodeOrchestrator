@@ -340,9 +340,7 @@ class TestAppendInTransaction:
         with pytest.raises(RuntimeError, match="append_in_transaction"):
             store.append_in_transaction(event)
 
-    def test_call_inside_managed_txn_succeeds(
-        self, in_memory_event_store: EventStore
-    ) -> None:
+    def test_call_inside_managed_txn_succeeds(self, in_memory_event_store: EventStore) -> None:
         """Call inside a with-conn block (after prior DML) succeeds.
 
         The caller must execute at least one DML statement before calling
@@ -390,9 +388,7 @@ class TestAppendInTransaction:
         # Event must NOT be in the store (rolled back).
         assert store.get_event(event.id) is None
 
-    def test_append_wrapper_behavior_preserved(
-        self, in_memory_event_store: EventStore
-    ) -> None:
+    def test_append_wrapper_behavior_preserved(self, in_memory_event_store: EventStore) -> None:
         """The public append() method still works correctly after the split.
 
         The split must be behavior-preserving for all 6 existing callers.
@@ -406,9 +402,7 @@ class TestAppendInTransaction:
         assert returned_id == event.id
         assert store.get_event(event.id) is not None
 
-    def test_append_unknown_room_still_raises(
-        self, in_memory_event_store: EventStore
-    ) -> None:
+    def test_append_unknown_room_still_raises(self, in_memory_event_store: EventStore) -> None:
         """append() RoomNotFoundError still works after the split."""
         store = in_memory_event_store
         event = _make_event(RoomId("room_" + "0" * 32))
