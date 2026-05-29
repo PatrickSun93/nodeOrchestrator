@@ -6,12 +6,31 @@ reviews_acked:
   - architect-briefs/P1.6.5.md
   - senior-plans/P1.6.5.md
   - decisions/ADR-016-cross-room-memory-persistence.md
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 6
-  green: 4
+  yellow: 0
+  green: 10
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 3b15115
+    findings_count: { red: 0, yellow: 6, green: 4 }
+    note: original — proxy-lens R0-B surfaced 6 Y (Y1 grep miscount; Y2 append_in_transaction footgun; Y3 FK-timing; Y4 layering-set incomplete; Y5 prefix-bypass; Y6 keep-vs-defer contradictions).
+  - verdict: clean
+    at_commit: HEAD
+    findings_count: { red: 0, yellow: 0, green: 10 }
+    note: 2nd senior revision absorbed all 6 routings (architect-routing-r0b.md = α α α α α γ; Y4 package set refined 4→3 per external Y10). Y1-Y5 → 🟢 absorbed; Y6 → 🟢 keep-with-recorded-rationale (γ). Cross-reference architect-routing-r0b.md + architect-routing-r0b-external.md.
 ---
+
+> **RC-10 verdict bump (post-routing-revision)** — frontmatter as live signal. Bump applied after senior absorbed the proxy R0-B routing (`architect-routing-r0b.md`, `99f9182`) into the 2nd revision commit on this branch. Per RC-10 codification (`docs/process/reviews/README.md` §RC-10); 12th project use; original findings preserved as audit trail below.
+>
+> Absorption per finding:
+> - **Y1 → 🟢 absorbed** — §4/§5 grep corrected 5→6 callers (named `rooms/runtime.py:103`); false "Layering clean" claim struck; P1.6.5-2 behavior-preserve set + `tests/rooms/`.
+> - **Y2 → 🟢 absorbed** — `append_in_transaction` gains explicit-`RuntimeError` entry guard (ADR-016 D11 + P1.6.5-2 + test).
+> - **Y3 → 🟢 absorbed** — ADR-016 D5 + P1.6.5-2 FK enforcement corrected CREATE-time → INSERT-time (external Y8 independently confirmed).
+> - **Y4 → 🟢 absorbed** — dep-guard set 4 → 7 product packages (add autonomy/skills/llm; `workflow/` skipped per external Y10 refinement, which supersedes this finding's original 4-package recommendation).
+> - **Y5 → 🟢 absorbed** — `DecisionMeta` ID fields gain `Field(pattern=…)`; ADR-016 D8 + P1.6.5-3 + 3 prefix-bypass tests.
+> - **Y6 → 🟢 keep (γ)** — `contradictions` field kept; ADR-016 D9 records the considered-and-declined defer-option. Semantic-already-pinned (R0-A G5) outweighs deferral.
 
 ## Caveat
 

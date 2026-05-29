@@ -1,6 +1,6 @@
 # ADR-016: Cross-room memory persistence — Hypothesis + VerifiedKnowledge tables + user-confirm promotion + cross-room lookup (slice B)
 
-**Status:** Proposed — 2026-05-28 · Amended — 2026-05-28 (plan-stage R0-A-on-plan routing absorption: D2 `source_event_ids` producer-time existence-check inscription [Y2 → α (ii)], D3 promotion-event `room_id` inscription [Y5 → α (a)], D6 empty-`topic_tags` `ValueError` semantic [Y4 → α (b)], D8 code block `str | None` deliberate-duplication + `@model_validator` co-presence enforcement [Y1 → α + Y3 → α (a)], forward-amendment hooks +2 entries [Y5 cross-N-rooms attribution + Y6 record_hypothesis ↔ event atomicity] — per `docs/process/reviews/P1.6.5/architect-routing.md`).
+**Status:** Proposed — 2026-05-28 · Amended — 2026-05-28 (plan-stage R0-A-on-plan routing absorption: D2 `source_event_ids` producer-time existence-check inscription [Y2 → α (ii)], D3 promotion-event `room_id` inscription [Y5 → α (a)], D6 empty-`topic_tags` `ValueError` semantic [Y4 → α (b)], D8 code block `str | None` deliberate-duplication + `@model_validator` co-presence enforcement [Y1 → α + Y3 → α (a)], forward-amendment hooks +2 entries [Y5 cross-N-rooms attribution + Y6 record_hypothesis ↔ event atomicity] — per `docs/process/reviews/P1.6.5/architect-routing.md`) · Amended (2nd revision) — 2026-05-29 (plan-stage dual-lens R0-B routing absorption: D2 `promoted_from_hypothesis_id` `UNIQUE` constraint [external Y9 → α] + FK-timing correction to INSERT-time [proxy Y3 / external Y8 → α], D3 + D11 drop `conn` param from `promote_hypothesis` deriving from `event_store.conn` [external Y7 → α (b)] + double-promotion two-layer note + `append_in_transaction` entry-guard contract [proxy Y2 → α (b)], D5 FK-timing correction [proxy Y3], D8 `Field(pattern=…)` prefix constraints on ID fields [proxy Y5 → α (a)], D9 keep-`contradictions` considered-and-declined record [proxy Y6 → γ] — per `docs/process/reviews/P1.6.5/architect-routing-r0b.md` + `architect-routing-r0b-external.md`).
 **Scope:** Locks the schema vocabulary, producer contract, promotion contract, transaction-atomicity model, storage placement, candidate-flag column semantic, cross-room lookup contract, and VK cross-reference semantic for the `memory/` package — slice B (Hypothesis + VerifiedKnowledge primary; Entity schema-only stub; ProjectArchive deferred). Governs every future cross-room agent + UI surface consuming memory + every future producer that writes a Hypothesis row or invokes promotion. Does not govern Snapshot (ADR-014) or DecisionLog (ADR-015) derived views; those remain pure-function code-decided derivations over the event stream.
 
 ## Context
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS verified_knowledge (
     last_validated INTEGER NOT NULL,
     contradictions TEXT NOT NULL DEFAULT '[]',  -- JSON list[str]
     scope TEXT NOT NULL,
-    promoted_from_hypothesis_id TEXT NOT NULL,
+    promoted_from_hypothesis_id TEXT NOT NULL UNIQUE,  -- one VK per Hypothesis (external Y9 → α)
     promoted_by_user_id TEXT NOT NULL,
     promotion_event_id TEXT NOT NULL,
     FOREIGN KEY (promoted_from_hypothesis_id) REFERENCES hypothesis(id),
@@ -154,9 +154,11 @@ CREATE TABLE IF NOT EXISTS entity (
 
 **Why no relations to event log foreign-keyed beyond `promotion_event_id` and `source_event_ids`**: Hypothesis.source_event_ids stores a JSON list, not a FK, because SQLite FKs target single columns. The integrity guarantee is at the Pydantic layer (validators reject non-existent event_ids at producer time via lookup). **`record_hypothesis` enforces this via per-event-id `SELECT 1 FROM events WHERE id IN (...)` existence check before INSERT (P1.6.5-2 acceptance per Y2 → α (ii) routing); missing event raises `EventNotFoundError(LookupError)` from `memory/exceptions.py` and no row is written.** `promotion_event_id` IS FK-enforceable (single column) and gets the FK constraint to make orphan promotions impossible at the schema level.
 
+**Why `UNIQUE` on `promoted_from_hypothesis_id`** (external Y9 → α): one VerifiedKnowledge row per Hypothesis. The API-level gate (`promote_hypothesis` checks `status == PENDING`, sets `verified`) prevents double-promotion in the single-writer model; the schema `UNIQUE` constraint is defense-in-depth that survives any future concurrent writer / bulk-import / buggy producer — a second promotion attempt for the same hypothesis raises `sqlite3.IntegrityError` at the schema layer independent of the status check (D3 records the two-layer guarantee). Greenfield table → one word now, zero migration cost; cannot be added later without a table rebuild (no migration tooling exists). Does not conflict with deferred cross-N-rooms promotion (which reshapes the hyp→VK relation entirely — a future amendment, not a slice-B concern).
+
 **Why no `topic_tags` table normalization**: tags are denormalized as a JSON list per VK row. P1.6.5 has 1 query pattern (`scope` filter + `topic_tags` OR-match); join overhead is not justified by the single consumer. Reshape to normalized form when ≥2 distinct query patterns emerge.
 
-### 3. Promotion contract — `promote_hypothesis(hyp_id, user_id, *, evidence=None, scope, conn) -> VerifiedKnowledge`
+### 3. Promotion contract — `promote_hypothesis(hyp_id, user_id, *, scope, topic_tags=None, evidence=None, event_store) -> VerifiedKnowledge`
 
 Single function in `src/orchestrator/memory/promotion.py`. Atomic 3-step transaction (D11 pins atomicity mechanism):
 
@@ -168,7 +170,6 @@ def promote_hypothesis(
     scope: VKScope,
     topic_tags: list[str] | None = None,
     evidence: dict[str, Any] | None = None,
-    conn: sqlite3.Connection,
     event_store: EventStore,
 ) -> VerifiedKnowledge:
     """User-confirm promotion of a Hypothesis row → VerifiedKnowledge row.
@@ -177,6 +178,13 @@ def promote_hypothesis(
     event append. See D11 for the transaction-atomicity mechanism. Raises
     HypothesisNotFoundError, PromotionEligibilityError, or propagates
     EventStore errors per D7-style propagation.
+
+    NOTE (external Y7 → α (b)): there is no `conn` parameter. All three writes
+    use `event_store.conn` (the single connection EventStore wraps, exposed at
+    core/event_store.py:164). This makes the D11 same-connection atomicity
+    invariant unrepresentable-by-construction — a caller cannot pass a
+    mismatched connection, so the silent conn≠event_store.conn atomicity-loss
+    hazard cannot arise.
     """
 ```
 
@@ -184,11 +192,13 @@ Transaction sequence (per D11):
 1. Load Hypothesis row by `hyp_id`. Raise `HypothesisNotFoundError` if absent.
 2. Check eligibility: `Hypothesis.status == PENDING`. Raise `PromotionEligibilityError(reason="not_pending")` otherwise. **No other gate** — user-confirm is the eligibility. (Cross-N-rooms candidate flag (D7) is NOT a precondition in P1.6.5 — the matcher defers; user can promote any pending hypothesis.)
 3. Construct `DecisionMeta` with `based_on=hypothesis.source_event_ids`, `promotion=True`, `hypothesis_id=hyp_id`, `vk_id=<generated>` (D8).
-4. Append `decision` event via `event_store.append(...)`. The `decision` event's `based_on` cites the original source events (≥1 per `DecisionMeta` constraint at `core/event.py:144`).
-5. INSERT VK row.
-6. UPDATE Hypothesis row: `status='verified'`.
+4. Append `decision` event via `event_store.append_in_transaction(...)` inside the shared `with event_store.conn:` block (D11). The `decision` event's `based_on` cites the original source events (≥1 per `DecisionMeta` constraint at `core/event.py:144`).
+5. INSERT VK row (on `event_store.conn`).
+6. UPDATE Hypothesis row: `status='verified'` (on `event_store.conn`).
 
 All steps land in a single SQLite transaction per D11 (no partial state on any failure).
+
+**Double-promotion prevented at two layers** (external Y9 → α): the API status-check (step 2 — primary, single-writer model) + the schema-level `UNIQUE` on `verified_knowledge.promoted_from_hypothesis_id` (D2 — defense-in-depth). A second promotion attempt for an already-`verified` hypothesis raises `PromotionEligibilityError` at step 2; a producer that bypasses the status check (future concurrent writer / bulk-import / buggy path) hits `sqlite3.IntegrityError` at the VK INSERT. Both layers independent.
 
 **Promotion event `room_id` = originating Hypothesis's `room_id`** (architect-confirmed 2026-05-28 via Y5 → α (a) routing). The `decision` event constructed at step 4 uses `room_id = hypothesis.room_id` — i.e., the room where the hypothesis was first recorded. Rationale: preserves causal narrative — the room where the hypothesis was first recorded is also the room that surfaces the promotion event in its `decision_log` derived view (ADR-015 D2 filter). For future cross-N-rooms matcher promotion (deferred per D7), the originating room of the first hypothesis row in the cluster carries the promotion event; alternative shapes (dedicated `RoomType.CROSS_ROOM` pseudo-room; multiple promotion events one per source room) are forward-amendment hooks should the cross-N-rooms case need richer attribution.
 
@@ -246,9 +256,9 @@ ADR-016 D5 pins the cleaner shape:
   init_memory_schema(conn)         # hypothesis, verified_knowledge, entity
   ```
 
-- Both schema-init functions are idempotent (`CREATE TABLE IF NOT EXISTS`). Calling order is `event_store.init_schema` first (memory tables FK-reference `events` and `rooms` per D2). The FK enforcement requires the referenced tables to exist; init order matters.
+- Both schema-init functions are idempotent (`CREATE TABLE IF NOT EXISTS`). Recommended calling order is `event_store.init_schema` first (memory tables FK-reference `events` and `rooms` per D2). **FK enforcement triggers at INSERT time, not CREATE time** (proxy Y3 / external Y8 → α): SQLite records forward FK references at `CREATE TABLE` regardless of whether the referenced table exists, so `init_memory_schema` against a connection lacking `events`/`rooms` succeeds at CREATE and yields a **deferred** failure — the first INSERT into a memory table with FK refs raises `no such table`. Init order (`EventStore.init_schema` first) is therefore a recommended convention for INSERT correctness, not a CREATE-time hard requirement.
 
-**Architect-settled #4 atomicity invariant preserved**: same connection, single SQLite file, single transaction possible across event + memory writes (D11). The migration story for existing event_store DBs (e.g., from P1.6 tests on disk): on first `init_memory_schema(conn)` call against a pre-P1.6.5 DB, `CREATE TABLE IF NOT EXISTS` for the 3 memory tables succeeds; existing events/rooms/relations tables are untouched. Forward-compat clean.
+**Architect-settled #4 atomicity invariant preserved**: same connection, single SQLite file, single transaction possible across event + memory writes (D11). The migration story for existing event_store DBs (e.g., from P1.6 tests on disk): on first `init_memory_schema(conn)` call against a pre-P1.6.5 DB, `CREATE TABLE IF NOT EXISTS` for the 3 memory tables succeeds; existing events/rooms/relations tables are untouched. **Forward-compat verified by an on-disk migration test** (external Y11 → α; P1.6.5-2 acceptance): init event_store on a disk-backed DB, append rooms + events, close + reopen, run `init_memory_schema`, assert the 3 memory tables exist + events/rooms/relations row counts preserved + `record_hypothesis` / `promote_hypothesis` work against the migrated DB. P1.6.5 pins shared-DB-in-place-extend as the template every future derived-but-persisted cache inherits; the test converts D5's migration claim from asserted to verified.
 
 **Why not place memory DDL in core/event_store.py SCHEMA**:
 - `core/` already enforces no-import-from-{agents, autonomy, derived, rooms, skills} (constitutional tests). Adding `_memory` to that set is the natural extension.
@@ -305,6 +315,7 @@ Column ships in P1.6.5 schema (D2). No matcher impl in P1.6.5: no code writes th
 `DecisionMeta` at `core/event.py:135-145` is extended with three **optional defaulted** fields:
 
 ```python
+from typing import Annotated
 from pydantic import model_validator
 
 class DecisionMeta(_BaseMeta):
@@ -316,10 +327,12 @@ class DecisionMeta(_BaseMeta):
     # test_constitution_core_does_not_import_memory guard P1.6.5-1 ships):
     # core/event.py MUST NOT import from memory/schema.py. memory/promotion.py
     # constructs typed HypothesisId / VKId, calls str(hyp_id) at metadata
-    # emit time.
+    # emit time. Field(pattern=…) enforces the id-prefix shape at the schema
+    # layer (external Y5 / proxy Y5 → α (a)) — complements the co-presence
+    # validator by closing swapped-id / event-id / empty-string bypasses.
     promotion: bool = False
-    hypothesis_id: str | None = None    # semantic: HypothesisId at memory layer
-    vk_id: str | None = None            # semantic: VKId at memory layer
+    hypothesis_id: Annotated[str, Field(pattern=r"^hyp_[0-9a-f]{32}$")] | None = None  # semantic: HypothesisId
+    vk_id: Annotated[str, Field(pattern=r"^vk_[0-9a-f]{32}$")] | None = None            # semantic: VKId
 
     @model_validator(mode="after")
     def _promotion_co_presence(self) -> "DecisionMeta":
@@ -341,6 +354,8 @@ Promotion events have `promotion=True` + `hypothesis_id` + `vk_id` populated. No
 `HypothesisId` and `VKId` are `NewType` aliases in `memory/schema.py` (D2). Using them in `DecisionMeta` (which lives in `core/event.py`) would require `from orchestrator.memory.schema import HypothesisId, VKId` — violating the dep-direction layering invariant + the constitutional guard `test_constitution_core_does_not_import_memory` that P1.6.5-1 itself ships. ADR-014 D5 set the precedent (`SummarySnapshotMeta` stores serialized `dict[str, str]` instead of importing `HypothesisRef` from `derived/`); ADR-016 D8 follows it. The typed identity lives at the memory layer (`memory/promotion.py` constructs `HypothesisId` / `VKId` from the row reads); the event-layer metadata serializes them as plain strings via `str(hyp_id)` at emit time.
 
 **Co-presence enforcement** (per Y3 → α (a) routing): schema-enforced via `@model_validator(mode="after")` — `promotion=True ⇒ hypothesis_id + vk_id both set`; `promotion=False ⇒ both None`. This closes the forward-compat hazard from future producers emitting malformed promotion events (catches at `validate_metadata` step 0 inside `EventStore.append`, the earliest possible point in the writing path). Replaces the prior "runtime enforcement is `memory/promotion.py`'s responsibility" boundary — co-presence is now schema-enforced, no consumer-side defensive check needed.
+
+**Prefix-correctness enforcement** (per proxy Y5 → α (a) routing): `Field(pattern=…)` on `hypothesis_id` (`^hyp_[0-9a-f]{32}$`) + `vk_id` (`^vk_[0-9a-f]{32}$`) closes the prefix-bypass path the co-presence validator does NOT catch — swapped IDs (a `vk_…` value in `hypothesis_id`), event-ids (`evt_…`), and empty strings currently satisfy co-presence but are malformed. Because promotion events land in the canonical event stream (Principle 1 — event log is permanent truth), a malformed promotion event is a **permanent broken-ref**; closing it at the schema layer (the earliest write-path point) is worth the mild duplication of `memory/schema.py`'s id format. Complements (does not replace) the co-presence validator.
 
 **Why reuse `decision` instead of new EventType.PROMOTION** (push-back #6 lean):
 
@@ -375,6 +390,8 @@ Lean: VK-to-VK. Reasoning:
 
 P1.6.5 ships the field with the VK-ID semantic pinned; **no producer writes contradictions in P1.6.5** (promotion's only act is verification, not contradiction-detection). Field is present, defaults to `[]`, and is queryable; a future cycle (cross-room contradiction-detector — code or LLM-assisted, undetermined) writes to it.
 
+**Considered-and-declined: defer the field** (per proxy Y6 → γ routing): R0-B (proxy lens) surfaced defer-the-field-until-a-producer-exists as an option (a later SQLite-native `ADD COLUMN` is cheap, and `contradictions` has no producer this cycle — unlike `evidence`, which has one in `promote_hypothesis`'s arg). Architect routed **γ — keep**, because D9's VK-to-VK semantic is already pinned (R0-A G5 affirmed it) and deferring reopens that decision; re-litigating the semantic in a future cycle costs more than the `ADD COLUMN` it saves. Principle 9 (inscribe vocabulary before producer) is the project's standing bias and applies cleanly. The zero-producer asymmetry with `evidence` is acknowledged; the semantic-already-pinned argument carries the decision, not symmetry. The field ships empty + queryable; the first contradiction-producer cycle writes it.
+
 ### 10. "No auto-promote" invariant — code-enforced via API shape; not test-enforced
 
 `handoff.md` §4.5: "不自动晋升". The invariant: no path exists where the system promotes a Hypothesis without an explicit user call to `promote_hypothesis(...)`.
@@ -385,7 +402,7 @@ P1.6.5 enforcement:
 
 **Why no test asserts "no auto-promote anywhere in the codebase"**: senior pre-investigation considered a constitutional test along the lines of "grep all callsites of `promote_hypothesis`; assert none are from event-stream consumer modules" — finding it impractical (false positives on test fixtures; brittle across future cycles). The architect-deferral literal-reading per W-004-2 (c): the invariant stays code-enforced (only via the API shape: explicit caller, explicit user_id), supplemented by ADR-016 D10 inscription. Future cycles add stricter enforcement if a regression risk materializes.
 
-### 11. Transaction-atomicity mechanism — `EventStore.append_in_transaction(event, conn)` extension or savepoint pattern
+### 11. Transaction-atomicity mechanism — `EventStore.append_in_transaction(event)` extension (caller-managed transaction; entry-guarded)
 
 **The implementation gap** surfaced by pre-investigation: `EventStore.append` at `src/orchestrator/core/event_store.py:185-272` wraps its body in `with self.conn:` (line 211). Python sqlite3's `Connection.__exit__` issues `COMMIT` (or `ROLLBACK` on exception). Nesting `with conn: ... event_store.append(...) ...` from `memory/promotion.py` either:
 
@@ -396,10 +413,26 @@ ADR-016 D11 pins **option A — extend EventStore with a transaction-aware appen
 
 `EventStore.append_in_transaction(event: Event) -> EventId` — same validation, same INSERT, same relations extraction, but **omits** the outer `with self.conn:` wrapper. Caller is responsible for transaction lifecycle. The existing `EventStore.append(event)` becomes a thin wrapper: open `with self.conn:` + call `append_in_transaction(event)`.
 
-`memory/promotion.py` uses `append_in_transaction(...)` inside its own `with conn:`:
+**Entry guard** (per proxy Y2 → α (b) routing): `append_in_transaction` opens with an explicit transaction-state check that **raises** (not `assert` — `assert` strips under `python -O`, and this guards a silent data-loss path):
 
 ```python
-def promote_hypothesis(...) -> VerifiedKnowledge:
+def append_in_transaction(self, event: Event) -> EventId:
+    if not self.conn.in_transaction:
+        raise RuntimeError(
+            "append_in_transaction requires an enclosing `with conn:` block; "
+            "calling it bare leaves an uncommitted transaction that can "
+            "silently lose the appended event"
+        )
+    # ... validation + INSERT + relations (no outer `with self.conn:`)
+```
+
+Python sqlite3's default isolation auto-begins a transaction on DML but does not auto-commit; a bare `append_in_transaction` call would leave an open transaction that loses the event if the connection closes without commit. The guard makes D11's atomicity guarantee **mechanical** — it survives any future consumer who uses the method without reading the docstring, while preserving the public-primitive intent (a reusable cross-module atomicity primitive, not a private method).
+
+`memory/promotion.py` uses `append_in_transaction(...)` inside `with event_store.conn:` (single connection — no `conn` parameter per D3 / external Y7):
+
+```python
+def promote_hypothesis(..., *, event_store: EventStore) -> VerifiedKnowledge:
+    conn = event_store.conn                               # single connection for all 3 writes
     # ... load hypothesis, eligibility check (outside transaction) ...
     with conn:                                            # single outer transaction
         event_id = event_store.append_in_transaction(decision_event)
@@ -408,7 +441,7 @@ def promote_hypothesis(...) -> VerifiedKnowledge:
     # commit on context exit; rollback on any exception inside
 ```
 
-Atomicity guaranteed: all three SQLite writes land or none does.
+Atomicity guaranteed: all three SQLite writes land or none does. Because the connection is derived from `event_store.conn` rather than passed as a separate parameter (external Y7 → α (b)), the same-connection invariant the atomicity depends on is unrepresentable-by-construction — no caller can supply a mismatched connection.
 
 **Why option A over alternatives considered**:
 

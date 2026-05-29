@@ -7,12 +7,32 @@ reviews_acked:
   - architect-briefs/P1.6.5.md
   - senior-plans/P1.6.5.md
   - decisions/ADR-016-cross-room-memory-persistence.md
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 5
-  green: 7
+  yellow: 0
+  green: 12
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 6547eb7
+    findings_count: { red: 0, yellow: 5, green: 7 }
+    note: original — external (DeepSeek V4 Pro) R0-B surfaced 5 Y (Y7 conn-mismatch atomicity hazard; Y8 FK-timing [confirms proxy Y3]; Y9 UNIQUE constraint; Y10 layering-set incomplete [confirms proxy Y4, refines set 4→3]; Y11 untested migration template).
+  - verdict: clean
+    at_commit: HEAD
+    findings_count: { red: 0, yellow: 0, green: 12 }
+    note: 2nd senior revision absorbed Y7 α(b) + Y9 α + Y11 α; Y8 folds into proxy Y3, Y10 into proxy Y4 (set refined to 3 product packages). Per architect-routing-r0b-external.md. Y7/Y9/Y11 → 🟢 absorbed; Y8/Y10 → 🟢 confirm.
 ---
+
+> **RC-10 verdict bump (post-routing-revision)** — frontmatter as live signal. Bump applied after senior absorbed the external R0-B routing (`architect-routing-r0b-external.md`, `3a318fa`) into the 2nd revision commit on this branch. Per RC-10 codification (`docs/process/reviews/README.md` §RC-10); 13th project use; original findings preserved as audit trail below.
+>
+> Absorption per finding:
+> - **Y7 → 🟢 absorbed** (the canonical cross-family catch) — `promote_hypothesis` drops the `conn` param, derives from `event_store.conn`; conn-mismatch atomicity-loss hazard now unrepresentable-by-construction (ADR-016 D3 + D11 + P1.6.5-4 + P1.6.5-5).
+> - **Y8 → 🟢 confirm** — independently re-derived proxy Y3 (FK INSERT-time); resolved by the same absorption (ADR-016 D5 + P1.6.5-2).
+> - **Y9 → 🟢 absorbed** — `verified_knowledge.promoted_from_hypothesis_id` gains `UNIQUE`; double-promotion prevented at two layers (ADR-016 D2 + D3 + P1.6.5-2/-4 + IntegrityError test).
+> - **Y10 → 🟢 confirm + refine** — independently re-derived proxy Y4 (layering-set incomplete) + refined the package set 4→3 (add autonomy/skills/llm; drop `workflow/` as dev-harness). This refinement supersedes proxy Y4's 4-package recommendation.
+> - **Y11 → 🟢 absorbed** — on-disk migration test added; converts ADR-016 D5's migration claim from asserted to verified (ADR-016 D5 + P1.6.5-2).
+>
+> **Dual-lens economics (retro candidate)**: external independently re-derived 4 of 6 proxy findings (Y8↔proxy-Y3, Y10↔proxy-Y4, + 🟢 confirms of proxy-Y2/Y5) AND added 3 net-new (Y7/Y9/Y11) the proxy missed. Both lenses paid for themselves; neither redundant. See `architect-routing-r0b-external.md` + `3873c91` RC-20 candidate.
 
 # P1.6.5 R0-B cross-family external review (plan + ADR-016)
 
