@@ -1,6 +1,6 @@
 # ADR-016: Cross-room memory persistence — Hypothesis + VerifiedKnowledge tables + user-confirm promotion + cross-room lookup (slice B)
 
-**Status:** Accepted — 2026-05-29 (Proposed 2026-05-28; architect sign-off after plan-stage dual-lens R0-B all-clean) · Amended — 2026-05-28 (plan-stage R0-A-on-plan routing absorption: D2 `source_event_ids` producer-time existence-check inscription [Y2 → α (ii)], D3 promotion-event `room_id` inscription [Y5 → α (a)], D6 empty-`topic_tags` `ValueError` semantic [Y4 → α (b)], D8 code block `str | None` deliberate-duplication + `@model_validator` co-presence enforcement [Y1 → α + Y3 → α (a)], forward-amendment hooks +2 entries [Y5 cross-N-rooms attribution + Y6 record_hypothesis ↔ event atomicity] — per `docs/process/reviews/P1.6.5/architect-routing.md`) · Amended (2nd revision) — 2026-05-29 (plan-stage dual-lens R0-B routing absorption: D2 `promoted_from_hypothesis_id` `UNIQUE` constraint [external Y9 → α] + FK-timing correction to INSERT-time [proxy Y3 / external Y8 → α], D3 + D11 drop `conn` param from `promote_hypothesis` deriving from `event_store.conn` [external Y7 → α (b)] + double-promotion two-layer note + `append_in_transaction` entry-guard contract [proxy Y2 → α (b)], D5 FK-timing correction [proxy Y3], D8 `Field(pattern=…)` prefix constraints on ID fields [proxy Y5 → α (a)], D9 keep-`contradictions` considered-and-declined record [proxy Y6 → γ] — per `docs/process/reviews/P1.6.5/architect-routing-r0b.md` + `architect-routing-r0b-external.md`).
+**Status:** Accepted — 2026-05-29 (Proposed 2026-05-28; architect sign-off after plan-stage dual-lens R0-B all-clean) · Amended — 2026-05-28 (plan-stage R0-A-on-plan routing absorption: D2 `source_event_ids` producer-time existence-check inscription [Y2 → α (ii)], D3 promotion-event `room_id` inscription [Y5 → α (a)], D6 empty-`topic_tags` `ValueError` semantic [Y4 → α (b)], D8 code block `str | None` deliberate-duplication + `@model_validator` co-presence enforcement [Y1 → α + Y3 → α (a)], forward-amendment hooks +2 entries [Y5 cross-N-rooms attribution + Y6 record_hypothesis ↔ event atomicity] — per `docs/process/reviews/P1.6.5/architect-routing.md`) · Amended (2nd revision) — 2026-05-29 (plan-stage dual-lens R0-B routing absorption: D2 `promoted_from_hypothesis_id` `UNIQUE` constraint [external Y9 → α] + FK-timing correction to INSERT-time [proxy Y3 / external Y8 → α], D3 + D11 drop `conn` param from `promote_hypothesis` deriving from `event_store.conn` [external Y7 → α (b)] + double-promotion two-layer note + `append_in_transaction` entry-guard contract [proxy Y2 → α (b)], D5 FK-timing correction [proxy Y3], D8 `Field(pattern=…)` prefix constraints on ID fields [proxy Y5 → α (a)], D9 keep-`contradictions` considered-and-declined record [proxy Y6 → γ] — per `docs/process/reviews/P1.6.5/architect-routing-r0b.md` + `architect-routing-r0b-external.md`) · Amended (3rd revision, impl-stage) — 2026-05-29 (impl-stage R0 routing absorption: D11 example rewritten to the impl's `_append_body` factoring + DML-first caller contract + entry-guard ambiguity forward-amendment hook [senior Y1 + R0-A Y1 → α (a)], D3 + D8 promotion `decision` event carries `user_id` (DecisionMeta gains `user_id`, required under `promotion=True`) [senior Y2 + R0-A Y2 → α (a)] — per `docs/process/reviews/P1.6.5/architect-routing-on-impl.md`; impl already correct, this is doc-to-impl reconciliation [Y1] + a one-field code addition [Y2]).
 **Scope:** Locks the schema vocabulary, producer contract, promotion contract, transaction-atomicity model, storage placement, candidate-flag column semantic, cross-room lookup contract, and VK cross-reference semantic for the `memory/` package — slice B (Hypothesis + VerifiedKnowledge primary; Entity schema-only stub; ProjectArchive deferred). Governs every future cross-room agent + UI surface consuming memory + every future producer that writes a Hypothesis row or invokes promotion. Does not govern Snapshot (ADR-014) or DecisionLog (ADR-015) derived views; those remain pure-function code-decided derivations over the event stream.
 
 ## Context
@@ -191,7 +191,7 @@ def promote_hypothesis(
 Transaction sequence (per D11):
 1. Load Hypothesis row by `hyp_id`. Raise `HypothesisNotFoundError` if absent.
 2. Check eligibility: `Hypothesis.status == PENDING`. Raise `PromotionEligibilityError(reason="not_pending")` otherwise. **No other gate** — user-confirm is the eligibility. (Cross-N-rooms candidate flag (D7) is NOT a precondition in P1.6.5 — the matcher defers; user can promote any pending hypothesis.)
-3. Construct `DecisionMeta` with `based_on=hypothesis.source_event_ids`, `promotion=True`, `hypothesis_id=hyp_id`, `vk_id=<generated>` (D8).
+3. Construct `DecisionMeta` with `based_on=hypothesis.source_event_ids`, `promotion=True`, `hypothesis_id=hyp_id`, `vk_id=<generated>`, `user_id=<confirming user>` (D8; `user_id` is the canonical actor attribution per impl-stage Y2).
 4. Append `decision` event via `event_store.append_in_transaction(...)` inside the shared `with event_store.conn:` block (D11). The `decision` event's `based_on` cites the original source events (≥1 per `DecisionMeta` constraint at `core/event.py:144`).
 5. INSERT VK row (on `event_store.conn`).
 6. UPDATE Hypothesis row: `status='verified'` (on `event_store.conn`).
@@ -330,30 +330,36 @@ class DecisionMeta(_BaseMeta):
     # emit time. Field(pattern=…) enforces the id-prefix shape at the schema
     # layer (external Y5 / proxy Y5 → α (a)) — complements the co-presence
     # validator by closing swapped-id / event-id / empty-string bypasses.
+    # user_id records the confirming user of a (b) user-confirm promotion so
+    # the canonical event is self-describing (impl-stage Y2 → α (a)); author
+    # stays `system` (the subsystem executed the write).
     promotion: bool = False
     hypothesis_id: Annotated[str, Field(pattern=r"^hyp_[0-9a-f]{32}$")] | None = None  # semantic: HypothesisId
     vk_id: Annotated[str, Field(pattern=r"^vk_[0-9a-f]{32}$")] | None = None            # semantic: VKId
+    user_id: Annotated[str, Field(min_length=1)] | None = None                         # confirming user
 
     @model_validator(mode="after")
     def _promotion_co_presence(self) -> "DecisionMeta":
-        if self.promotion and (self.hypothesis_id is None or self.vk_id is None):
-            raise ValueError(
-                "promotion=True requires both hypothesis_id and vk_id"
-            )
-        if not self.promotion and (self.hypothesis_id is not None or self.vk_id is not None):
-            raise ValueError(
-                "hypothesis_id/vk_id forbidden when promotion=False"
-            )
+        if self.promotion and (
+            self.hypothesis_id is None or self.vk_id is None or self.user_id is None
+        ):
+            raise ValueError("promotion=True requires hypothesis_id, vk_id, and user_id")
+        if not self.promotion and (
+            self.hypothesis_id is not None or self.vk_id is not None or self.user_id is not None
+        ):
+            raise ValueError("hypothesis_id/vk_id/user_id forbidden when promotion=False")
         return self
 ```
 
-Promotion events have `promotion=True` + `hypothesis_id` + `vk_id` populated. Non-promotion decisions retain `promotion=False` + None for the two IDs (defaults match the pre-ADR-016 shape; existing producers and consumers unaffected).
+Promotion events have `promotion=True` + `hypothesis_id` + `vk_id` + `user_id` populated. Non-promotion decisions retain `promotion=False` + None for all three (defaults match the pre-ADR-016 shape; existing producers and consumers unaffected).
 
 **Deliberate-duplication rationale for `str | None` ID fields** (per Y1 → α routing):
 
 `HypothesisId` and `VKId` are `NewType` aliases in `memory/schema.py` (D2). Using them in `DecisionMeta` (which lives in `core/event.py`) would require `from orchestrator.memory.schema import HypothesisId, VKId` — violating the dep-direction layering invariant + the constitutional guard `test_constitution_core_does_not_import_memory` that P1.6.5-1 itself ships. ADR-014 D5 set the precedent (`SummarySnapshotMeta` stores serialized `dict[str, str]` instead of importing `HypothesisRef` from `derived/`); ADR-016 D8 follows it. The typed identity lives at the memory layer (`memory/promotion.py` constructs `HypothesisId` / `VKId` from the row reads); the event-layer metadata serializes them as plain strings via `str(hyp_id)` at emit time.
 
-**Co-presence enforcement** (per Y3 → α (a) routing): schema-enforced via `@model_validator(mode="after")` — `promotion=True ⇒ hypothesis_id + vk_id both set`; `promotion=False ⇒ both None`. This closes the forward-compat hazard from future producers emitting malformed promotion events (catches at `validate_metadata` step 0 inside `EventStore.append`, the earliest possible point in the writing path). Replaces the prior "runtime enforcement is `memory/promotion.py`'s responsibility" boundary — co-presence is now schema-enforced, no consumer-side defensive check needed.
+**Co-presence enforcement** (per Y3 → α (a) routing, extended by impl-stage Y2): schema-enforced via `@model_validator(mode="after")` — `promotion=True ⇒ hypothesis_id + vk_id + user_id all set`; `promotion=False ⇒ all three None`. This closes the forward-compat hazard from future producers emitting malformed promotion events (catches at `validate_metadata` step 0 inside `EventStore.append`, the earliest possible point in the writing path). Replaces the prior "runtime enforcement is `memory/promotion.py`'s responsibility" boundary — co-presence is now schema-enforced, no consumer-side defensive check needed.
+
+**`user_id` — canonical actor attribution** (per impl-stage Y2 → α (a)): the promotion `decision` event carries the confirming `user_id` so the canonical event stream is self-describing — an event-stream-only audit ("who promoted hypothesis X?") is answerable from the event alone, not only from the derived `verified_knowledge.promoted_by_user_id` row. `user_id` is **required under `promotion=True`** (joins `hypothesis_id` + `vk_id` in co-presence) because every (b) user-confirm promotion has a confirming user — the cycle's headline mechanism. `event.author` stays `"system"` (the subsystem executed the write; `user_id` is a free string like `"peidong"` that is not a valid `author` per `is_valid_author`); `Field(min_length=1)` rejects an empty confirming user, symmetric with `VerifiedKnowledge.promoted_by_user_id`. This satisfies Principle 1 (the canonical log records both the act and its actor) for the cycle's load-bearing decision type.
 
 **Prefix-correctness enforcement** (per proxy Y5 → α (a) routing): `Field(pattern=…)` on `hypothesis_id` (`^hyp_[0-9a-f]{32}$`) + `vk_id` (`^vk_[0-9a-f]{32}$`) closes the prefix-bypass path the co-presence validator does NOT catch — swapped IDs (a `vk_…` value in `hypothesis_id`), event-ids (`evt_…`), and empty strings currently satisfy co-presence but are malformed. Because promotion events land in the canonical event stream (Principle 1 — event log is permanent truth), a malformed promotion event is a **permanent broken-ref**; closing it at the schema layer (the earliest write-path point) is worth the mild duplication of `memory/schema.py`'s id format. Complements (does not replace) the co-presence validator.
 
@@ -411,37 +417,53 @@ P1.6.5 enforcement:
 
 ADR-016 D11 pins **option A — extend EventStore with a transaction-aware append**:
 
-`EventStore.append_in_transaction(event: Event) -> EventId` — same validation, same INSERT, same relations extraction, but **omits** the outer `with self.conn:` wrapper. Caller is responsible for transaction lifecycle. The existing `EventStore.append(event)` becomes a thin wrapper: open `with self.conn:` + call `append_in_transaction(event)`.
+`EventStore` factors a private `_append_body(event, normalized_metadata)` that performs the validation-INSERT-relations work **without** opening a transaction. Both public methods call it:
+
+- `append(event)` — self-managed: `validate_metadata` → `with self.conn: _append_body(...)`. **Calls `_append_body` directly, NOT `append_in_transaction`** — so the entry guard below never fires on the self-managed path.
+- `append_in_transaction(event)` — caller-managed: entry guard → `validate_metadata` → `_append_body(...)`. No outer `with self.conn:`; the caller owns the transaction lifecycle.
 
 **Entry guard** (per proxy Y2 → α (b) routing): `append_in_transaction` opens with an explicit transaction-state check that **raises** (not `assert` — `assert` strips under `python -O`, and this guards a silent data-loss path):
 
 ```python
+def _append_body(self, event: Event, normalized_metadata: dict) -> None:
+    # room/parent validation + INSERT event + INSERT relations. No transaction.
+    ...
+
 def append_in_transaction(self, event: Event) -> EventId:
     if not self.conn.in_transaction:
         raise RuntimeError(
-            "append_in_transaction requires an enclosing `with conn:` block; "
-            "calling it bare leaves an uncommitted transaction that can "
-            "silently lose the appended event"
+            "append_in_transaction called outside an active transaction. "
+            "Execute at least one DML on this connection first (Python sqlite3 "
+            "sets in_transaction=True only after the first DML), or use append() "
+            "for single-event self-managed writes."
         )
-    # ... validation + INSERT + relations (no outer `with self.conn:`)
+    normalized_metadata = validate_metadata(event.type, event.metadata)
+    self._append_body(event, normalized_metadata)
+    return event.id
+
+def append(self, event: Event) -> EventId:
+    normalized_metadata = validate_metadata(event.type, event.metadata)
+    with self.conn:
+        self._append_body(event, normalized_metadata)
+    return event.id
 ```
 
-Python sqlite3's default isolation auto-begins a transaction on DML but does not auto-commit; a bare `append_in_transaction` call would leave an open transaction that loses the event if the connection closes without commit. The guard makes D11's atomicity guarantee **mechanical** — it survives any future consumer who uses the method without reading the docstring, while preserving the public-primitive intent (a reusable cross-module atomicity primitive, not a private method).
-
-`memory/promotion.py` uses `append_in_transaction(...)` inside `with event_store.conn:` (single connection — no `conn` parameter per D3 / external Y7):
+**DML-first caller contract** (impl-stage Y1 → α (a) reconciliation): Python sqlite3 (default isolation) auto-begins a transaction on the first DML but does **not** auto-commit, and `conn.in_transaction` is `False` until that first DML — even inside a `with conn:` block. So a caller of `append_in_transaction` must have executed **≥1 DML on the connection before** the call, or the guard fires. The earlier draft of this D11 showed `append_in_transaction(...)` as the *first* statement inside `with conn:`; that shape raises (no DML yet → `in_transaction is False`). The correct shape — and what `memory/promotion.py` does — runs a DML first to open the transaction, then appends:
 
 ```python
 def promote_hypothesis(..., *, event_store: EventStore) -> VerifiedKnowledge:
     conn = event_store.conn                               # single connection for all 3 writes
     # ... load hypothesis, eligibility check (outside transaction) ...
     with conn:                                            # single outer transaction
-        event_id = event_store.append_in_transaction(decision_event)
-        conn.execute("INSERT INTO verified_knowledge ...")
-        conn.execute("UPDATE hypothesis SET status='verified' WHERE id=?", ...)
+        conn.execute("UPDATE hypothesis SET status='verified' WHERE id=?", ...)  # (c) DML-first: opens the txn
+        event_store.append_in_transaction(decision_event)                         # (a) in_transaction is now True
+        conn.execute("INSERT INTO verified_knowledge ...")                        # (b)
     # commit on context exit; rollback on any exception inside
 ```
 
-Atomicity guaranteed: all three SQLite writes land or none does. Because the connection is derived from `event_store.conn` rather than passed as a separate parameter (external Y7 → α (b)), the same-connection invariant the atomicity depends on is unrepresentable-by-construction — no caller can supply a mismatched connection.
+The write **ordering** within the transaction (here c→a→b) does not affect atomicity — all three land or none does, committed on context exit / rolled back on any exception. The reorder is purely to satisfy the entry guard's DML-first requirement. Because the connection is derived from `event_store.conn` rather than a separate `conn` parameter (external Y7 → α (b)), the same-connection invariant atomicity depends on is unrepresentable-by-construction — no caller can supply a mismatched connection.
+
+**Forward-amendment hook — entry-guard first-statement/bare-call ambiguity** (R0-A Y1 sharpening): the guard checks `conn.in_transaction`, which cannot distinguish a legitimate *first statement inside `with conn:`* (in_transaction False, no DML yet) from a truly-bare call *outside any transaction* (also in_transaction False). Consequences: (i) it false-positives on natural append-first usage, which is why the DML-first caller contract exists; (ii) it still *passes* a bare call that follows an earlier uncommitted DML on the same connection — the exact silent-loss case proxy-Y2 targeted. So the real atomicity guarantee is carried by the DML-first discipline, not the guard; the guard is a partial backstop (catches the truly-bare-first case). A future concurrency reshape (per the async-reshape hook below) should revisit the mechanism — e.g., a caller-set sentinel or an explicit `begin()`/context object — to close the ambiguity. The guard earns a partial keep for P1.6.5 (single-connection, sequential) where the DML-first discipline is enforced at the one call site.
 
 **Why option A over alternatives considered**:
 
@@ -449,7 +471,7 @@ Atomicity guaranteed: all three SQLite writes land or none does. Because the con
 - **Option C — SAVEPOINT** (`conn.execute("SAVEPOINT promo")` + `... append ...` + `RELEASE` / `ROLLBACK TO`): viable but fights Python sqlite3's autocommit semantics. SAVEPOINTs work but `with self.conn:` inside the savepoint scope still commits the savepoint's containing transaction unexpectedly. Higher complexity, easier to get wrong. Rejected.
 - **Option D — single inline transaction in promotion.py that bypasses `EventStore.append`'s `with self.conn:` via reaching into `EventStore.conn` directly**: ugly encapsulation break. Rejected.
 
-**Refactor scope (lands in P1.6.5-2)**: `EventStore.append` body is split into `append_in_transaction(event)` (no `with self.conn:`) + the existing public `append(event)` which becomes `with self.conn: return self.append_in_transaction(event)`. All existing callers of `EventStore.append` are unaffected (same behavior). Tests verify the split is behavior-preserving (existing test suite green) and that `promote_hypothesis` uses `append_in_transaction` correctly under both success and failure paths.
+**Refactor scope (lands in P1.6.5-2)**: `EventStore.append` body is split into a private `_append_body(event, normalized_metadata)` (no `with self.conn:`) called by both `append(event)` (self-managed `with self.conn:`) and `append_in_transaction(event)` (caller-managed + entry guard). **`append` calls `_append_body` directly, not `append_in_transaction`** — so the guard never fires on the self-managed path (the earlier "append becomes `with self.conn: return self.append_in_transaction(event)`" shape would have raised, since `in_transaction` is False at that first statement — impl-stage Y1). All 6 existing `EventStore.append` callers (incl. `rooms/runtime.py:103`) are unaffected (same behavior). Tests verify the split is behavior-preserving (existing test suite green) and that `promote_hypothesis` uses `append_in_transaction` correctly under both success and failure paths, including a bare-call `RuntimeError` guard test.
 
 **Test for atomicity**: e2e Scenario X (P1.6.5-5) includes a forced-failure case where the VK insert raises (e.g., a NOT NULL violation injected via a mocked Pydantic-passing-but-DB-rejecting row); assert the `decision` event is NOT in `event_store` post-rollback (canonical evidence that atomicity holds).
 

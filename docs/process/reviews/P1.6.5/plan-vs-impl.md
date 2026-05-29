@@ -1,12 +1,26 @@
 ---
 task_id: P1.6.5
 round: plan-vs-impl
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 9
+  yellow: 0
+  green: 11
+verdict_history:
+  - verdict: needs_architect
+    at_commit: f4156b8
+    findings_count: { red: 0, yellow: 2, green: 9 }
+    note: original — Y1 (ADR-016 D11 + plan P1.6.5-2 non-functional as written vs proxy-Y2 entry guard) + Y2 (promotion event omits confirming user_id).
+  - verdict: clean
+    at_commit: HEAD
+    findings_count: { red: 0, yellow: 0, green: 11 }
+    note: impl-stage 3rd revision (Path A, same-branch) absorbed both — Y1 α(a) doc-to-impl reconciliation (ADR-016 D11 + plan P1.6.5-2 → _append_body + DML-first); Y2 α(a) DecisionMeta gains user_id (required under promotion=True) + promotion.py event metadata + tests. Per architect-routing-on-impl.md. Both Y → 🟢. Gates green (896 passed).
 ---
+
+> **RC-10 verdict bump (impl-stage routing absorption, 2026-05-29)** — frontmatter as live signal. Per `architect-routing-on-impl.md` (Y1 α(a) · Y2 α(a) · Y3 dismissed), Path A same-branch absorption on `claude/P1.6.5-impl`; cycle stays 1. Original finding bodies preserved below as audit trail.
+> - **Y1 → 🟢 absorbed** — ADR-016 D11 example rewritten to the `_append_body` factoring (`append` calls it directly, not `append_in_transaction`) + DML-first caller contract + entry-guard-ambiguity forward-amendment hook; plan P1.6.5-2 EventStore-split block matched. Impl was already correct; this reconciles the Accepted-ADR + plan text to it.
+> - **Y2 → 🟢 absorbed** — `DecisionMeta` gains `user_id` (required under `promotion=True`, 3-way co-presence); `promote_hypothesis` adds `"user_id"` to the canonical `decision` event metadata; ADR-016 D3+D8 inscribe; tests in `test_event.py` + `test_promotion.py` + e2e. `author` stays `system`.
+> - Cleanliness note (store.py:222 dead import) remains a non-routed observation; not addressed this cycle.
 
 # Review: P1.6.5 — plan-vs-impl
 

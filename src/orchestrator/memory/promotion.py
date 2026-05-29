@@ -88,6 +88,7 @@ def promote_hypothesis(
             "promotion": True,
             "hypothesis_id": str(hyp_id),
             "vk_id": str(vk_id),
+            "user_id": user_id,  # canonical actor attribution (impl-stage Y2 → alpha-(a))
         },
     )
 

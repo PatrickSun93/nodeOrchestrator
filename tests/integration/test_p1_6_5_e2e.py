@@ -156,6 +156,8 @@ def test_scenario_x_3_room_promotion_to_query() -> None:
     assert promo_event.metadata["promotion"] is True
     assert promo_event.metadata["hypothesis_id"] == str(hyp1.id)
     assert promo_event.metadata["vk_id"] == str(vk1.id)
+    # impl-stage Y2: confirming user recorded in the canonical event metadata.
+    assert promo_event.metadata["user_id"] == "peidong"
 
     # 7e: promotion event room_id = room1.id (originating hypothesis room, ADR-016 D3).
     assert str(promo_event.room_id) == str(room1.id)

@@ -133,6 +133,9 @@ class TestPromoteHypothesisHappyPath:
         assert event.metadata["promotion"] is True
         assert event.metadata["hypothesis_id"] == str(hyp.id)
         assert event.metadata["vk_id"] == str(vk.id)
+        # impl-stage Y2: canonical event records the confirming user.
+        assert event.metadata["user_id"] == "u"
+        assert event.author == "system"  # subsystem executed; user_id is who confirmed
 
     def test_promotion_event_room_id_is_hypothesis_room(self) -> None:
         """Per ADR-016 D3 + Y5 alpha-(a): promotion event room_id = originating

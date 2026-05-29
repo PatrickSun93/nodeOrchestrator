@@ -1,12 +1,27 @@
 ---
 task_id: P1.6.5
 round: R0-A
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 3
-  green: 6
+  yellow: 0
+  green: 9
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 0212e35
+    findings_count: { red: 0, yellow: 3, green: 6 }
+    note: original (impl stage) — Y1 (ADR-016 D11 + plan non-functional, guard ambiguity sharpening) + Y2 (promotion event omits user_id, sided route over R0-B accept) + Y3 (dev-harness scope-bleed).
+  - verdict: clean
+    at_commit: HEAD
+    findings_count: { red: 0, yellow: 0, green: 9 }
+    note: impl-stage 3rd revision (Path A) absorbed Y1 α(a) + Y2 α(a); Y3 dismissed by architect (不用管). Per architect-routing-on-impl.md. Senior-bumped per W-005 awaiting_senior_revision flow + the routing's RC-10 allowance.
 ---
+
+> **RC-10 verdict bump (impl-stage routing absorption, 2026-05-29; senior-bumped)** — frontmatter as live signal. Per `architect-routing-on-impl.md`, Path A same-branch absorption on `claude/P1.6.5-impl`. Original finding bodies preserved below as audit trail.
+> - **Y1 → 🟢 absorbed** — same fix as plan-vs-impl Y1: ADR-016 D11 + plan P1.6.5-2 reconciled to the impl's `_append_body` + DML-first shape; R0-A's guard-ambiguity sharpening captured as the ADR-016 D11 forward-amendment hook.
+> - **Y2 → 🟢 absorbed** — `DecisionMeta.user_id` added (required under `promotion=True`); promotion event carries the confirming user; `author` stays `system`. R0-A's route-over-R0B-accept lean honored.
+> - **Y3 → 🟢 dismissed** — architect ruled 不用管; the format-only dev-harness reflow stays as landed (benign, semantically null, disclosed). No senior action. The pre-existing dev-harness format-debt root cause is noted, not actioned this cycle (architect discretion).
+> - G2 (Y9 UNIQUE closes the in-function check-then-act TOCTOU) + G5 (store.py:222 dead import) preserved as 🟢 observations; the dead import remains non-routed this cycle.
 
 # P1.6.5 R0-A review (architect-partner lens, impl stage)
 
