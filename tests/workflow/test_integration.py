@@ -310,9 +310,7 @@ def test_cycle_boundary_filter_stale_review_treated_as_absent(git_repo: Path) ->
 
     # State is in cycle 2: last_transition_at AFTER the cycle-1 commit.
     future = datetime.now(UTC) + timedelta(hours=1)
-    _init_state(
-        wdir, state=WorkflowState.AWAITING_R0_A, last_transition_at=future
-    )
+    _init_state(wdir, state=WorkflowState.AWAITING_R0_A, last_transition_at=future)
 
     # advance must NOT see the cycle-1 reviews; no transition fires.
     with patch("orchestrator.workflow.cli._is_pr_merged", return_value=False):

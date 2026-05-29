@@ -17,9 +17,9 @@ import re
 import time
 import uuid
 from enum import StrEnum
-from typing import Any, Literal, NewType
+from typing import Annotated, Any, Literal, NewType
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # Identifier and timestamp newtypes
@@ -139,10 +139,38 @@ class DecisionMeta(_BaseMeta):
     decision without a citation is a gut call and should be appended as
     an `utterance` instead. `trade_offs` is a free-form mapping of
     dimension -> choice (e.g., `"cost": "accepted higher to reduce risk"`).
+
+    P1.6.5 / ADR-016 D8: four optional fields for promotion-flavored decisions.
+    hypothesis_id + vk_id are `str | None` (not HypothesisId | VKId) per
+    deliberate-duplication (ADR-014 D5 precedent): core/event.py MUST NOT
+    import from memory/schema.py. Field(pattern=...) enforces id-prefix shape
+    (proxy Y5 / external Y5 → alpha-(a)). user_id records the confirming user
+    of a (b) user-confirm promotion so the canonical event is self-describing
+    for an event-stream-only audit (impl-stage Y2 → alpha-(a)); author stays
+    `system` (the subsystem executed the write); user_id is who confirmed it.
     """
 
     based_on: list[EventId] = Field(min_length=1)
     trade_offs: dict[str, str] = Field(default_factory=dict)
+    promotion: bool = False
+    hypothesis_id: Annotated[str, Field(pattern=r"^hyp_[0-9a-f]{32}$")] | None = None
+    vk_id: Annotated[str, Field(pattern=r"^vk_[0-9a-f]{32}$")] | None = None
+    user_id: Annotated[str, Field(min_length=1)] | None = None
+
+    @model_validator(mode="after")
+    def _promotion_co_presence(self) -> DecisionMeta:
+        # Co-presence (impl-stage Y2): user_id joins hypothesis_id + vk_id as a
+        # promotion-required field — every (b) user-confirm promotion has a
+        # confirming user, so the canonical decision event must record it.
+        if self.promotion and (
+            self.hypothesis_id is None or self.vk_id is None or self.user_id is None
+        ):
+            raise ValueError("promotion=True requires hypothesis_id, vk_id, and user_id")
+        if not self.promotion and (
+            self.hypothesis_id is not None or self.vk_id is not None or self.user_id is not None
+        ):
+            raise ValueError("hypothesis_id/vk_id/user_id forbidden when promotion=False")
+        return self
 
 
 class RejectionMeta(_BaseMeta):

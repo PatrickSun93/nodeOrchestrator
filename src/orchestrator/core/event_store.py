@@ -182,6 +182,98 @@ class EventStore:
 
     # -- writes ---------------------------------------------------------
 
+    def _append_body(self, event: Event, normalized_metadata: dict[str, Any]) -> None:
+        """INSERT event + relations into the current transaction.
+
+        Callers are responsible for the enclosing transaction lifecycle. Does
+        NOT open or commit a transaction itself.
+        """
+        # Step 1: room exists?
+        row = self.conn.execute("SELECT 1 FROM rooms WHERE id = ?", (event.room_id,)).fetchone()
+        if row is None:
+            raise RoomNotFoundError(f"room {event.room_id!r} does not exist")
+
+        # Step 2: parent valid?
+        if event.parent_id is not None:
+            if event.parent_id == event.id:
+                raise InvalidParentError(
+                    "self_parent",
+                    f"event {event.id!r} cannot be its own parent",
+                )
+            parent_row = self.conn.execute(
+                "SELECT room_id FROM events WHERE id = ?",
+                (event.parent_id,),
+            ).fetchone()
+            if parent_row is None:
+                raise InvalidParentError(
+                    "not_found",
+                    f"parent event {event.parent_id!r} does not exist",
+                )
+            if parent_row["room_id"] != event.room_id:
+                raise InvalidParentError(
+                    "cross_room",
+                    f"parent {event.parent_id!r} is in room "
+                    f"{parent_row['room_id']!r}, not {event.room_id!r}",
+                )
+
+        # Step 3: insert event row.
+        self.conn.execute(
+            """INSERT INTO events
+                   (id, parent_id, room_id, type, author,
+                    timestamp, content, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                event.id,
+                event.parent_id,
+                event.room_id,
+                event.type.value,
+                event.author,
+                event.timestamp,
+                event.content,
+                json.dumps(normalized_metadata),
+            ),
+        )
+
+        # Step 4: extract and insert structural relations.
+        event_normalized = event.model_copy(update={"metadata": normalized_metadata})
+        relations = extract_structural_relations(event_normalized)
+        if relations:
+            self.conn.executemany(
+                """INSERT INTO relations
+                       (event_id, relation_type, target_event_id, extracted_at)
+                   VALUES (?, ?, ?, ?)""",
+                [
+                    (r.event_id, r.relation_type.value, r.target_event_id, r.extracted_at)
+                    for r in relations
+                ],
+            )
+
+    def append_in_transaction(self, event: Event) -> EventId:
+        """Same validation + INSERT as `append`, but does NOT open a transaction.
+
+        Caller is responsible for the enclosing `with self.conn:` lifecycle and
+        must have executed at least one DML statement before calling this method
+        (Python sqlite3 only sets `in_transaction=True` after the first DML; a
+        bare call before any DML looks identical to a bare call outside any
+        context manager). Used by modules that need transaction-atomic
+        event-stream + own-table writes (e.g., memory/promotion.py ADR-016 D11).
+
+        Entry guard (proxy Y2 alpha-(b)): raises RuntimeError if `in_transaction`
+        is False. This closes the silent-data-loss path: a truly bare call
+        (outside any managed transaction context) would start an implicit
+        transaction that is never committed.
+        """
+        if not self.conn.in_transaction:
+            raise RuntimeError(
+                "append_in_transaction called outside an active transaction. "
+                "Ensure at least one DML has been executed on this connection "
+                "before calling this method, or use append() for single-event "
+                "self-managed writes."
+            )
+        normalized_metadata = validate_metadata(event.type, event.metadata)
+        self._append_body(event, normalized_metadata)
+        return event.id
+
     def append(self, event: Event) -> EventId:
         """Append an event to the log.
 
@@ -205,70 +297,9 @@ class EventStore:
         Returns:
             `event.id`.
         """
-        # Step 0: pure validation, no txn needed.
         normalized_metadata = validate_metadata(event.type, event.metadata)
-
         with self.conn:
-            # Step 1: room exists?
-            row = self.conn.execute("SELECT 1 FROM rooms WHERE id = ?", (event.room_id,)).fetchone()
-            if row is None:
-                raise RoomNotFoundError(f"room {event.room_id!r} does not exist")
-
-            # Step 2: parent valid?
-            if event.parent_id is not None:
-                if event.parent_id == event.id:
-                    raise InvalidParentError(
-                        "self_parent",
-                        f"event {event.id!r} cannot be its own parent",
-                    )
-                parent_row = self.conn.execute(
-                    "SELECT room_id FROM events WHERE id = ?",
-                    (event.parent_id,),
-                ).fetchone()
-                if parent_row is None:
-                    raise InvalidParentError(
-                        "not_found",
-                        f"parent event {event.parent_id!r} does not exist",
-                    )
-                if parent_row["room_id"] != event.room_id:
-                    raise InvalidParentError(
-                        "cross_room",
-                        f"parent {event.parent_id!r} is in room "
-                        f"{parent_row['room_id']!r}, not {event.room_id!r}",
-                    )
-
-            # Step 3: insert event row.
-            self.conn.execute(
-                """INSERT INTO events
-                       (id, parent_id, room_id, type, author,
-                        timestamp, content, metadata)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    event.id,
-                    event.parent_id,
-                    event.room_id,
-                    event.type.value,
-                    event.author,
-                    event.timestamp,
-                    event.content,
-                    json.dumps(normalized_metadata),
-                ),
-            )
-
-            # Step 4: extract and insert structural relations.
-            event_normalized = event.model_copy(update={"metadata": normalized_metadata})
-            relations = extract_structural_relations(event_normalized)
-            if relations:
-                self.conn.executemany(
-                    """INSERT INTO relations
-                           (event_id, relation_type, target_event_id, extracted_at)
-                       VALUES (?, ?, ?, ?)""",
-                    [
-                        (r.event_id, r.relation_type.value, r.target_event_id, r.extracted_at)
-                        for r in relations
-                    ],
-                )
-
+            self._append_body(event, normalized_metadata)
         return event.id
 
     def append_room(self, room: Room) -> RoomId:

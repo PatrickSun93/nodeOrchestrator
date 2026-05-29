@@ -406,3 +406,198 @@ class TestSummarySnapshotMeta:
         assert meta.event_count == 0
         assert meta.decision_count == 0
         assert meta.participants == []
+
+
+# ---------------------------------------------------------------------------
+# P1.6.5 / ADR-016 D8 — DecisionMeta promotion extension tests
+# ---------------------------------------------------------------------------
+
+
+class TestDecisionMetaPromotionExtension:
+    """Tests for the promotion fields added to DecisionMeta in P1.6.5."""
+
+    # --- Existing shape stays valid (backward compat) ---
+
+    def test_existing_decision_shape_valid(self) -> None:
+        """Pre-P1.6.5 decision shape: no promotion fields → defaults apply."""
+        m = DecisionMeta(based_on=[EventId("evt_a")])
+        assert m.promotion is False
+        assert m.hypothesis_id is None
+        assert m.vk_id is None
+
+    def test_existing_decision_with_trade_offs_valid(self) -> None:
+        m = DecisionMeta(based_on=[EventId("evt_a")], trade_offs={"cost": "x"})
+        assert m.trade_offs["cost"] == "x"
+        assert m.promotion is False
+
+    # --- Promotion=True with valid IDs ---
+
+    def test_promotion_with_valid_ids(self) -> None:
+        from orchestrator.memory.schema import generate_hypothesis_id, generate_vk_id
+
+        hyp_id = generate_hypothesis_id()
+        vk_id = generate_vk_id()
+        m = DecisionMeta(
+            based_on=[EventId("evt_a")],
+            promotion=True,
+            hypothesis_id=str(hyp_id),
+            vk_id=str(vk_id),
+            user_id="peidong",
+        )
+        assert m.promotion is True
+        assert m.hypothesis_id == str(hyp_id)
+        assert m.vk_id == str(vk_id)
+        assert m.user_id == "peidong"
+
+    # --- Co-presence validator (Y3 → alpha-(a)) — 4 combinations ---
+
+    def test_co_presence_no_promo_without_ids_valid(self) -> None:
+        """promotion=False + no IDs → valid (the base case)."""
+        m = DecisionMeta(based_on=[EventId("evt_a")], promotion=False)
+        assert m.hypothesis_id is None
+        assert m.vk_id is None
+
+    def test_co_presence_no_promo_with_ids_raises(self) -> None:
+        """promotion=False + hypothesis_id set → invalid."""
+        from orchestrator.memory.schema import generate_hypothesis_id
+
+        with pytest.raises(ValidationError):
+            DecisionMeta(
+                based_on=[EventId("evt_a")],
+                promotion=False,
+                hypothesis_id=str(generate_hypothesis_id()),
+                vk_id=None,
+            )
+
+    def test_co_presence_promo_without_ids_raises(self) -> None:
+        """promotion=True + IDs absent → invalid."""
+        with pytest.raises(ValidationError):
+            DecisionMeta(
+                based_on=[EventId("evt_a")],
+                promotion=True,
+            )
+
+    def test_co_presence_promo_with_ids_valid(self) -> None:
+        """promotion=True + both IDs + user_id → valid."""
+        from orchestrator.memory.schema import generate_hypothesis_id, generate_vk_id
+
+        m = DecisionMeta(
+            based_on=[EventId("evt_a")],
+            promotion=True,
+            hypothesis_id=str(generate_hypothesis_id()),
+            vk_id=str(generate_vk_id()),
+            user_id="peidong",
+        )
+        assert m.promotion is True
+
+    # --- user_id co-presence (impl-stage Y2 → alpha-(a)) ---
+
+    def test_co_presence_promo_without_user_id_raises(self) -> None:
+        """promotion=True + both IDs but no user_id → invalid (user_id required)."""
+        from orchestrator.memory.schema import generate_hypothesis_id, generate_vk_id
+
+        with pytest.raises(ValidationError):
+            DecisionMeta(
+                based_on=[EventId("evt_a")],
+                promotion=True,
+                hypothesis_id=str(generate_hypothesis_id()),
+                vk_id=str(generate_vk_id()),
+                user_id=None,
+            )
+
+    def test_co_presence_no_promo_with_user_id_raises(self) -> None:
+        """promotion=False + user_id set → invalid (forbidden when not promotion)."""
+        with pytest.raises(ValidationError):
+            DecisionMeta(
+                based_on=[EventId("evt_a")],
+                promotion=False,
+                user_id="peidong",
+            )
+
+    def test_user_id_empty_string_raises(self) -> None:
+        """user_id empty string under promotion → invalid (Field(min_length=1))."""
+        from orchestrator.memory.schema import generate_hypothesis_id, generate_vk_id
+
+        with pytest.raises(ValidationError):
+            DecisionMeta(
+                based_on=[EventId("evt_a")],
+                promotion=True,
+                hypothesis_id=str(generate_hypothesis_id()),
+                vk_id=str(generate_vk_id()),
+                user_id="",
+            )
+
+    # --- Prefix-bypass tests (proxy Y5 → alpha-(a)) ---
+
+    def test_prefix_bypass_wrong_prefix_raises(self) -> None:
+        """hypothesis_id with vk_ prefix → invalid (swapped IDs)."""
+        from orchestrator.memory.schema import generate_vk_id
+
+        with pytest.raises(ValidationError):
+            DecisionMeta(
+                based_on=[EventId("evt_a")],
+                promotion=True,
+                hypothesis_id=str(generate_vk_id()),  # wrong prefix
+                vk_id=str(generate_vk_id()),
+                user_id="peidong",
+            )
+
+    def test_prefix_bypass_event_id_raises(self) -> None:
+        """hypothesis_id with evt_ prefix → invalid."""
+        from orchestrator.memory.schema import generate_vk_id
+
+        with pytest.raises(ValidationError):
+            DecisionMeta(
+                based_on=[EventId("evt_a")],
+                promotion=True,
+                hypothesis_id="evt_" + "a" * 32,
+                vk_id=str(generate_vk_id()),
+                user_id="peidong",
+            )
+
+    def test_prefix_bypass_empty_string_raises(self) -> None:
+        """hypothesis_id as empty string → invalid (Field(pattern=...) rejects)."""
+        from orchestrator.memory.schema import generate_vk_id
+
+        with pytest.raises(ValidationError):
+            DecisionMeta(
+                based_on=[EventId("evt_a")],
+                promotion=True,
+                hypothesis_id="",
+                vk_id=str(generate_vk_id()),
+                user_id="peidong",
+            )
+
+    # --- Round-trip via validate_metadata ---
+
+    def test_round_trip_via_validate_metadata(self) -> None:
+        """validate_metadata normalizes a promotion decision including new fields."""
+        from orchestrator.memory.schema import generate_hypothesis_id, generate_vk_id
+
+        hyp_id = str(generate_hypothesis_id())
+        vk_id = str(generate_vk_id())
+        meta = validate_metadata(
+            EventType.DECISION,
+            {
+                "based_on": ["evt_abc123"],
+                "promotion": True,
+                "hypothesis_id": hyp_id,
+                "vk_id": vk_id,
+                "user_id": "peidong",
+            },
+        )
+        assert meta["promotion"] is True
+        assert meta["hypothesis_id"] == hyp_id
+        assert meta["vk_id"] == vk_id
+        assert meta["user_id"] == "peidong"
+
+    def test_round_trip_non_promotion_includes_defaults(self) -> None:
+        """Non-promotion decision round-trips with all 4 new fields at defaults."""
+        meta = validate_metadata(
+            EventType.DECISION,
+            {"based_on": ["evt_x"]},
+        )
+        assert meta["promotion"] is False
+        assert meta["hypothesis_id"] is None
+        assert meta["vk_id"] is None
+        assert meta["user_id"] is None

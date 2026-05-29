@@ -24,11 +24,26 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # File extensions that are binary by convention; skip the CR check.
 _BINARY_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf",
-    ".zip", ".gz", ".tar",
-    ".exe", ".dll", ".so", ".dylib",
-    ".db", ".sqlite", ".sqlite3",
-    ".woff", ".woff2", ".ttf", ".otf",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".pdf",
+    ".zip",
+    ".gz",
+    ".tar",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".otf",
 }
 
 # Files that intentionally keep CRLF (Windows-only scripts).

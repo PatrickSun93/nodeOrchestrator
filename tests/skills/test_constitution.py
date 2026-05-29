@@ -83,3 +83,32 @@ def test_constitution_core_does_not_import_skills() -> None:
         "orchestrator.core imports from orchestrator.skills — layering violation.\n"
         "core → skills direction is forbidden (ADR-009 Decision 7):\n" + "\n".join(violations)
     )
+
+
+def test_constitution_skills_does_not_import_memory() -> None:
+    """src/orchestrator/skills/ must never import from orchestrator.memory.
+
+    Per ADR-016 Hard Requirements: skills are content-generation utilities.
+    A skills → memory import would couple content generation to cross-room
+    memory state, creating a hidden dependency that the architecture
+    explicitly forbids.
+    """
+    forbidden_patterns = ["from orchestrator.memory", "import orchestrator.memory"]
+    violations: list[str] = []
+    for py_path in _SKILLS_SRC.rglob("*.py"):
+        if "__pycache__" in py_path.parts:
+            continue
+        try:
+            content = py_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rel = py_path.relative_to(_SKILLS_SRC.parent.parent)
+        for pattern in forbidden_patterns:
+            if pattern in content:
+                violations.append(f"  {rel}: {pattern!r}")
+
+    assert not violations, (
+        "orchestrator.skills imports from orchestrator.memory — layering violation.\n"
+        "skills → memory direction is forbidden (ADR-016 Hard Requirements):\n"
+        + "\n".join(violations)
+    )
