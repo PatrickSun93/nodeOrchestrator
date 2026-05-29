@@ -17,7 +17,7 @@ verdict_history:
     findings_count: { red: 0, yellow: 6, green: 4 }
     note: original — proxy-lens R0-B surfaced 6 Y (Y1 grep miscount; Y2 append_in_transaction footgun; Y3 FK-timing; Y4 layering-set incomplete; Y5 prefix-bypass; Y6 keep-vs-defer contradictions).
   - verdict: clean
-    at_commit: HEAD
+    at_commit: d54e3d2
     findings_count: { red: 0, yellow: 0, green: 10 }
     note: 2nd senior revision absorbed all 6 routings (architect-routing-r0b.md = α α α α α γ; Y4 package set refined 4→3 per external Y10). Y1-Y5 → 🟢 absorbed; Y6 → 🟢 keep-with-recorded-rationale (γ). Cross-reference architect-routing-r0b.md + architect-routing-r0b-external.md.
 ---

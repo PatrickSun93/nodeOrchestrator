@@ -18,7 +18,7 @@ verdict_history:
     findings_count: { red: 0, yellow: 5, green: 7 }
     note: original — external (DeepSeek V4 Pro) R0-B surfaced 5 Y (Y7 conn-mismatch atomicity hazard; Y8 FK-timing [confirms proxy Y3]; Y9 UNIQUE constraint; Y10 layering-set incomplete [confirms proxy Y4, refines set 4→3]; Y11 untested migration template).
   - verdict: clean
-    at_commit: HEAD
+    at_commit: d54e3d2
     findings_count: { red: 0, yellow: 0, green: 12 }
     note: 2nd senior revision absorbed Y7 α(b) + Y9 α + Y11 α; Y8 folds into proxy Y3, Y10 into proxy Y4 (set refined to 3 product packages). Per architect-routing-r0b-external.md. Y7/Y9/Y11 → 🟢 absorbed; Y8/Y10 → 🟢 confirm.
 ---
