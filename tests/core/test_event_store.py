@@ -319,3 +319,98 @@ class TestRoomStorage:
 
     def test_get_room_unknown_returns_none(self, in_memory_event_store: EventStore) -> None:
         assert in_memory_event_store.get_room(RoomId("room_x")) is None
+
+
+# ---------------------------------------------------------------------------
+# append_in_transaction (ADR-016 D11 / P1.6.5-2)
+# ---------------------------------------------------------------------------
+
+
+class TestAppendInTransaction:
+    def test_bare_call_raises_runtime_error(self, in_memory_event_store: EventStore) -> None:
+        """Calling append_in_transaction outside an active transaction raises RuntimeError.
+
+        This guards the silent-data-loss path: a bare call would start an
+        implicit transaction that is never committed (proxy Y2 alpha-(b)).
+        """
+        store = in_memory_event_store
+        room = Room(id=generate_room_id(), type=RoomType.FREE_CHAT)
+        store.append_room(room)
+        event = _make_event(room.id)
+        with pytest.raises(RuntimeError, match="append_in_transaction"):
+            store.append_in_transaction(event)
+
+    def test_call_inside_managed_txn_succeeds(
+        self, in_memory_event_store: EventStore
+    ) -> None:
+        """Call inside a with-conn block (after prior DML) succeeds.
+
+        The caller must execute at least one DML statement before calling
+        append_in_transaction (Python sqlite3 only sets in_transaction=True
+        after first DML). Here we insert a room row as the prior DML.
+        """
+        store = in_memory_event_store
+        room = Room(id=generate_room_id(), type=RoomType.FREE_CHAT)
+        room2 = Room(id=generate_room_id(), type=RoomType.RESEARCH)
+        store.append_room(room)  # seed rooms table
+        actual_event = _make_event(room.id)
+
+        with store.conn:
+            # Prior DML: insert another room to start the transaction.
+            store.conn.execute(
+                "INSERT INTO rooms (id, type, state, created_at) VALUES (?, ?, ?, ?)",
+                (str(room2.id), room2.type.value, room2.state, room2.created_at),
+            )
+            # Now in_transaction=True.
+            returned_id = store.append_in_transaction(actual_event)
+
+        assert returned_id == actual_event.id
+        assert store.get_event(actual_event.id) is not None
+        # Both rooms committed atomically.
+        assert store.get_room(room2.id) is not None
+
+    def test_rollback_on_exception(self, in_memory_event_store: EventStore) -> None:
+        """Exception inside with-conn rolls back the appended event.
+
+        The event must NOT appear in the store after rollback.
+        """
+        store = in_memory_event_store
+        room = Room(id=generate_room_id(), type=RoomType.FREE_CHAT)
+        store.append_room(room)
+        event = _make_event(room.id)
+
+        with pytest.raises(ValueError), store.conn:
+            store.conn.execute(
+                "INSERT INTO rooms (id, type, state, created_at) VALUES (?, ?, ?, ?)",
+                (str(generate_room_id()), room.type.value, "open", now_ms()),
+            )
+            store.append_in_transaction(event)
+            raise ValueError("deliberate failure")
+
+        # Event must NOT be in the store (rolled back).
+        assert store.get_event(event.id) is None
+
+    def test_append_wrapper_behavior_preserved(
+        self, in_memory_event_store: EventStore
+    ) -> None:
+        """The public append() method still works correctly after the split.
+
+        The split must be behavior-preserving for all 6 existing callers.
+        This test verifies the basic happy path is unchanged.
+        """
+        store = in_memory_event_store
+        room = Room(id=generate_room_id(), type=RoomType.FREE_CHAT)
+        store.append_room(room)
+        event = _make_event(room.id)
+        returned_id = store.append(event)
+        assert returned_id == event.id
+        assert store.get_event(event.id) is not None
+
+    def test_append_unknown_room_still_raises(
+        self, in_memory_event_store: EventStore
+    ) -> None:
+        """append() RoomNotFoundError still works after the split."""
+        store = in_memory_event_store
+        event = _make_event(RoomId("room_" + "0" * 32))
+        with pytest.raises(RoomNotFoundError):
+            store.append(event)
