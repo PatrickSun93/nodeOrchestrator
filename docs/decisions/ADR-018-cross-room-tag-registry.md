@@ -50,6 +50,8 @@ Pure function in `memory/tags.py`. The canonical form is:
 
 No punctuation stripping and no Unicode NFC normalization (push-back #1, lean = minimal + conservative): stripping punctuation would collide distinct concepts (`c++` vs `c`, `f#` vs `f`); aggressive Unicode folding is unjustified without a use case. The rule is the floor that makes the brief's worked example hold — `"LLM Cost"` → `"llm-cost"`, `"  ML "` → `"ml"`, `"Foo  Bar"` → `"foo-bar"`, `"llm-cost"` → `"llm-cost"` (idempotent on already-canonical input). Whitespace-only or empty input → `""` (the empty string; `resolve_tags` is where the empty-tag *policy* lives, D4 — `normalize_tag` itself is policy-free).
 
+**Known near-miss edge — hyphens are not collapsed** (G3, pinned): whitespace adjacent to a literal hyphen yields multiple hyphens — `"LLM - Cost"` → `"llm---cost"` (each whitespace run becomes its own `-`, and the literal `-` survives) — and `"llm cost"` / `"llm-cost"` stay distinct. This is deterministic (so cross-room consistency still holds for identical inputs) but does not collapse near-misses. It is the conservative-rule tradeoff (D3 owns it); these cases are pinned in the boundary tests so the canonical form is on the record rather than discovered later.
+
 Determinism: the function is a pure string transform with no I/O, no locale dependence beyond `str.lower()` (which is deterministic per the Unicode default casing), no randomness. Same input → same output, always.
 
 ### 4. `resolve_tags(proposed, conn) -> TagResolution` — normalize, dedup, auto-register; transaction-neutral
@@ -86,15 +88,27 @@ This pins the **column-add migration template** the project lacked: `PRAGMA tabl
 Both producers route their tags through `resolve_tags` and store the canonical strings:
 
 - `record_hypothesis(..., topic_tags=None)` (new keyword-only param, optional, default empty — preserves existing callers): inside its existing `with conn:` block, call `resolve_tags(topic_tags or [], conn)` and store `TagResolution.canonical` as the JSON `topic_tags`.
-- `promote_hypothesis(..., topic_tags=None)` (param already exists, promotion.py:42): inside the existing promotion transaction, route the VK `topic_tags` through `resolve_tags(..., conn=event_store.conn)` and store the canonical list in the VK row. Because `resolve_tags` is transaction-neutral (D4), this stays inside the single D11 transaction — atomicity preserved. Ordering note: `resolve_tags`'s `INSERT OR IGNORE` is DML, so if it runs first inside `with conn:` it satisfies the `append_in_transaction` `in_transaction` guard (ADR-016 D11) on its own; the implementer keeps the guard satisfied regardless of where in the block it runs.
+- `promote_hypothesis(..., topic_tags=None)` (param already exists, promotion.py:42): route the VK `topic_tags` through `resolve_tags(..., conn=event_store.conn)` **inside** the existing `with conn:` promotion block (promotion.py:100) — placed **after** the `UPDATE hypothesis` (line 103) and **before** the VK `INSERT` (line 112). Because `resolve_tags` is transaction-neutral (D4), its `INSERT OR IGNORE` joins the single D11 transaction and rolls back with a failed promotion — atomicity preserved. The `append_in_transaction` `in_transaction` guard is already satisfied by the existing DML-first `UPDATE`, so `resolve_tags`'s placement after it is unambiguous (it does not need to be the transaction-opening statement). NB: this is the *inside-the-block* location, not the pre-block `topic_tags or []` site at promotion.py:95.
+
+**Contract tightening — `promote_hypothesis` / `record_hypothesis` now raise `ValueError` on an empty-normalizing tag** (G3, made explicit): routing tags through `resolve_tags` (D4) means a whitespace-only / empty tag now raises `ValueError` at write, where pre-P2.1 `promote_hypothesis` stored whatever it was given. This is a deliberate fail-loud tightening of the producer contract vs ADR-016 (a tag that vanishes under normalization is a producer bug). Tested explicitly so it is not a silent behavior change.
 
 **Storage form = canonical strings, denormalized** (push-back #5, lean confirmed): `Hypothesis.topic_tags` / `VK.topic_tags` keep storing JSON string lists of canonical tags — minimal change, no schema reshape. FK-to-`tag`-id storage is heavier and has no query needing it this cycle (deferred; forward hook).
 
-### 7. Cross-room lookup refined to normalized-exact (refines ADR-016 D6; ADR-016 not edited)
+### 7. Cross-room lookup refined to normalized-exact — normalize BOTH query and stored tags at match-time (refines ADR-016 D6; ADR-016 not edited)
 
-`lookup_verified_knowledge` (lookup.py) normalizes its query `topic_tags` through `normalize_tag` before the set-intersection match, so a non-canonical query (`"LLM Cost"`) hits a canonical stored tag (`"llm-cost"`). This **refines** ADR-016 D6's "exact match" to "normalized-exact match".
+`lookup_verified_knowledge` (lookup.py) normalizes **both** the query `topic_tags` **and** each row's stored `topic_tags` through `normalize_tag` at match-time, before the set-intersection:
 
-**The refinement is recorded here and cross-links ADR-016 D6; ADR-016 is NOT edited in place** (push-back #2, lean confirmed). Two reasons: (a) ADR-016 is already accepted and closed — recording the refinement in the active ADR keeps the audit trail where the change is decided; (b) editing ADR-016's prose risks the RC-23 accept-gate trap (`_parse_adr_status` whole-file substring scan) near its status region. ADR-016 D6's other semantics are unchanged: empty query `topic_tags` still raises `ValueError`; OR-semantics, `last_validated DESC, id ASC` ordering, no-LLM all hold. Only the query tags are now normalized before matching.
+```python
+query_set = {normalize_tag(t) for t in topic_tags}          # query side
+row_tags  = {normalize_tag(t) for t in json.loads(row["topic_tags"])}  # stored side
+if query_set & row_tags: ...
+```
+
+So a non-canonical query (`"LLM Cost"`) hits a canonical stored tag (`"llm-cost"`) **and** a legacy raw-stored tag (`"LLM Cost"`) — both normalize to `"llm-cost"` at read time. This **refines** ADR-016 D6's "exact match" to "normalized-exact match on both sides".
+
+**Why both sides, not just the query** (Y1 → α, plan-stage R0-A routing): normalizing only the query silently assumes stored tags are already canonical — but D8 (no backfill) guarantees that pre-P2.1 VK rows are **not** (the old `promote_hypothesis` stored `topic_tags or []` un-normalized; `promotion.py:120`). Query-only normalization would make `lookup(["LLM Cost"])` miss a row stored raw as `["LLM Cost"]` — a regression vs pre-P2.1 exact-match. Normalizing **both** sides makes legacy raw rows and new canonical rows both findable, so D8's no-backfill is sound rather than a latent edge. Cost: one `normalize_tag` per stored tag per scanned row — negligible (ADR-016 D6 already assumes small per-scope row counts + a Python post-filter scan).
+
+**The refinement is recorded here and cross-links ADR-016 D6; ADR-016 is NOT edited in place** (push-back #2, lean confirmed). Two reasons: (a) ADR-016 is already accepted and closed — recording the refinement in the active ADR keeps the audit trail where the change is decided; (b) editing ADR-016's prose risks the RC-23 accept-gate trap (`_parse_adr_status` whole-file substring scan) near its status region. ADR-016 D6's other semantics are unchanged: empty query `topic_tags` still raises `ValueError`; OR-semantics, `last_validated DESC, id ASC` ordering, no-LLM all hold. Only the match-time normalization (both sides) is added.
 
 ### 8. Emergent-only; no backfill; no synonym/alias merging
 
