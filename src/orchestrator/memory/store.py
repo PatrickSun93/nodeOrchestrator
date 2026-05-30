@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS hypothesis (
     source_event_ids TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     candidate_for_promotion INTEGER NOT NULL DEFAULT 0,
+    topic_tags TEXT NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL,
     FOREIGN KEY (room_id) REFERENCES rooms(id)
 );
@@ -69,6 +70,11 @@ CREATE TABLE IF NOT EXISTS entity (
     attributes TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tag (
+    canonical TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+);
 """
 
 
@@ -77,16 +83,31 @@ CREATE TABLE IF NOT EXISTS entity (
 # ---------------------------------------------------------------------------
 
 
-def init_memory_schema(conn: sqlite3.Connection) -> None:
-    """Create hypothesis + verified_knowledge + entity tables + indexes.
+def _ensure_hypothesis_topic_tags(conn: sqlite3.Connection) -> None:
+    """Idempotent ALTER-TABLE guard for the topic_tags column (ADR-018 D5).
 
-    Idempotent (CREATE TABLE IF NOT EXISTS). Per ADR-016 D5: call AFTER
-    EventStore.init_schema(conn). FK enforcement is INSERT-time, so
-    CREATE succeeds even if events/rooms tables don't exist yet; the first
-    INSERT into a FK-referencing column against a missing table raises
-    "no such table".
+    Called after executescript(_MEMORY_SCHEMA) in init_memory_schema.
+    Fresh DBs already have the column via CREATE TABLE; pre-P2.1 DBs need
+    the ALTER. SQLite backfills the DEFAULT '[]' constant into existing rows.
+    """
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(hypothesis)")}
+    if "topic_tags" not in cols:
+        conn.execute(
+            "ALTER TABLE hypothesis ADD COLUMN topic_tags TEXT NOT NULL DEFAULT '[]'"
+        )
+
+
+def init_memory_schema(conn: sqlite3.Connection) -> None:
+    """Create hypothesis + verified_knowledge + entity + tag tables + indexes.
+
+    Idempotent (CREATE TABLE IF NOT EXISTS + ALTER TABLE guard). Per ADR-016
+    D5 + ADR-018 D5: call AFTER EventStore.init_schema(conn). FK enforcement
+    is INSERT-time, so CREATE succeeds even if events/rooms tables don't exist
+    yet; the first INSERT into a FK-referencing column against a missing table
+    raises "no such table".
     """
     conn.executescript(_MEMORY_SCHEMA)
+    _ensure_hypothesis_topic_tags(conn)
     conn.commit()
 
 
@@ -214,6 +235,7 @@ def _row_to_hypothesis(row: sqlite3.Row) -> Hypothesis:
         source_event_ids=[EventId(e) for e in json.loads(row["source_event_ids"])],
         status=HypothesisStatus(row["status"]),
         candidate_for_promotion=bool(row["candidate_for_promotion"]),
+        topic_tags=json.loads(row["topic_tags"]),
         created_at=TimestampMs(row["created_at"]),
     )
 

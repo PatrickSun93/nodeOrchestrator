@@ -91,6 +91,7 @@ class Hypothesis(BaseModel):
     source_event_ids: list[EventId] = Field(min_length=1)
     status: HypothesisStatus = HypothesisStatus.PENDING
     candidate_for_promotion: bool = False
+    topic_tags: list[str] = Field(default_factory=list)
     created_at: TimestampMs
 
 

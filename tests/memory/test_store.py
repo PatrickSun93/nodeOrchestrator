@@ -100,6 +100,108 @@ class TestInitMemorySchema:
         assert "hypothesis" in tables
         assert "verified_knowledge" in tables
         assert "entity" in tables
+        assert "tag" in tables
+
+    def test_tag_table_pk_is_canonical(self) -> None:
+        conn = _make_conn()
+        store = EventStore(conn)
+        store.init_schema()
+        init_memory_schema(conn)
+        conn.execute("INSERT INTO tag (canonical, created_at) VALUES (?, ?)", ("llm-cost", 1))
+        conn.commit()
+        # Duplicate INSERT OR IGNORE is a no-op (PK = UNIQUE).
+        conn.execute(
+            "INSERT OR IGNORE INTO tag (canonical, created_at) VALUES (?, ?)", ("llm-cost", 2)
+        )
+        conn.commit()
+        rows = conn.execute("SELECT * FROM tag WHERE canonical = 'llm-cost'").fetchall()
+        assert len(rows) == 1
+        assert rows[0]["created_at"] == 1  # first registration preserved
+
+    def test_hypothesis_topic_tags_column_exists_fresh_db(self) -> None:
+        conn = _make_conn()
+        store = EventStore(conn)
+        store.init_schema()
+        init_memory_schema(conn)
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(hypothesis)")}
+        assert "topic_tags" in cols
+
+    def test_column_add_migration_round_trip(self, tmp_path: Path) -> None:
+        """Pre-P2.1 hypothesis table (no topic_tags) gains the column on migration.
+
+        Per ADR-018 D5 column-add migration template: PRAGMA table_info guard +
+        ALTER TABLE ... ADD COLUMN ... NOT NULL DEFAULT '[]'.
+        """
+        db_path = tmp_path / "migration_test.db"
+
+        # Phase 1: create event store + OLD hypothesis schema (without topic_tags).
+        old_ddl = """
+            CREATE TABLE rooms (
+                id TEXT PRIMARY KEY, type TEXT NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE events (
+                id TEXT PRIMARY KEY, room_id TEXT NOT NULL, type TEXT NOT NULL,
+                author TEXT NOT NULL, timestamp INTEGER NOT NULL, content TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE hypothesis (
+                id TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                room_id TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                source_event_ids TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                candidate_for_promotion INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            );
+        """
+        conn1 = sqlite3.connect(str(db_path))
+        conn1.row_factory = sqlite3.Row
+        conn1.executescript(old_ddl)
+        conn1.execute(
+            "INSERT INTO rooms (id, type) VALUES (?, ?)", ("room_old", "research")
+        )
+        conn1.execute(
+            """INSERT INTO hypothesis
+                   (id, content, room_id, confidence, source_event_ids, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("hyp_old", "pre-migration claim", "room_old", 0.5, '["evt_x"]', 1000),
+        )
+        conn1.commit()
+        old_count = conn1.execute("SELECT COUNT(*) FROM hypothesis").fetchone()[0]
+        conn1.close()
+
+        # Phase 2: reopen + run init_memory_schema (simulates P2.1 migration).
+        conn2 = sqlite3.connect(str(db_path))
+        conn2.row_factory = sqlite3.Row
+        init_memory_schema(conn2)
+
+        # topic_tags column present.
+        cols = {row["name"] for row in conn2.execute("PRAGMA table_info(hypothesis)")}
+        assert "topic_tags" in cols
+
+        # Old row backfilled with default '[]'.
+        row = conn2.execute("SELECT * FROM hypothesis WHERE id = 'hyp_old'").fetchone()
+        assert row is not None
+        assert row["topic_tags"] == "[]"
+
+        # Row count preserved.
+        new_count = conn2.execute("SELECT COUNT(*) FROM hypothesis").fetchone()[0]
+        assert new_count == old_count
+
+        # Idempotent: second init_memory_schema is a no-op.
+        init_memory_schema(conn2)
+        final_count = conn2.execute("SELECT COUNT(*) FROM hypothesis").fetchone()[0]
+        assert final_count == old_count
+
+        # tag table also present.
+        tables = {
+            row[0]
+            for row in conn2.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        assert "tag" in tables
+        conn2.close()
 
     def test_insert_time_fk_enforcement(self) -> None:
         """FK enforcement is INSERT-time, not CREATE-time (ADR-016 D5).
