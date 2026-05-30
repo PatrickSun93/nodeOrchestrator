@@ -196,14 +196,16 @@ class TestLookupBothSidesNormalization:
         )
         fake_vk_id = generate_vk_id()
         fake_event_id = generate_event_id()
-        store.append(Event(
-            id=fake_event_id,
-            room_id=room.id,
-            type=EventType.UTTERANCE,  # any valid event type satisfies the FK
-            author="system",
-            timestamp=TimestampMs(now_ms() + 1),
-            content="legacy promotion marker",
-        ))
+        store.append(
+            Event(
+                id=fake_event_id,
+                room_id=room.id,
+                type=EventType.UTTERANCE,  # any valid event type satisfies the FK
+                author="system",
+                timestamp=TimestampMs(now_ms() + 1),
+                content="legacy promotion marker",
+            )
+        )
         conn.execute("UPDATE hypothesis SET status = 'verified' WHERE id = ?", (str(hyp.id),))
         conn.execute(
             """INSERT INTO verified_knowledge

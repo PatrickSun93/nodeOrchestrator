@@ -159,9 +159,7 @@ class TestInitMemorySchema:
         conn1 = sqlite3.connect(str(db_path))
         conn1.row_factory = sqlite3.Row
         conn1.executescript(old_ddl)
-        conn1.execute(
-            "INSERT INTO rooms (id, type) VALUES (?, ?)", ("room_old", "research")
-        )
+        conn1.execute("INSERT INTO rooms (id, type) VALUES (?, ?)", ("room_old", "research"))
         conn1.execute(
             """INSERT INTO hypothesis
                    (id, content, room_id, confidence, source_event_ids, created_at)
@@ -485,9 +483,7 @@ class TestRecordHypothesisTopicTags:
             conn=conn,
             topic_tags=["ML Cost"],
         )
-        row = conn.execute(
-            "SELECT canonical FROM tag WHERE canonical = 'ml-cost'"
-        ).fetchone()
+        row = conn.execute("SELECT canonical FROM tag WHERE canonical = 'ml-cost'").fetchone()
         assert row is not None
 
     def test_default_empty_topic_tags_backward_compat(self) -> None:

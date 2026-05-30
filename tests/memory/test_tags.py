@@ -9,6 +9,7 @@ import sqlite3
 
 import pytest
 
+from orchestrator.core.event import TimestampMs
 from orchestrator.memory.store import init_memory_schema
 from orchestrator.memory.tags import normalize_tag, resolve_tags
 
@@ -110,8 +111,7 @@ class TestResolveTags:
         with conn:
             result = resolve_tags(["LLM Cost", "ml"], conn)
         registered = {
-            row["canonical"]
-            for row in conn.execute("SELECT canonical FROM tag").fetchall()
+            row["canonical"] for row in conn.execute("SELECT canonical FROM tag").fetchall()
         }
         assert "llm-cost" in registered
         assert "ml" in registered
@@ -121,10 +121,10 @@ class TestResolveTags:
     def test_existing_tags_not_in_newly_registered(self) -> None:
         conn = _make_store_conn()
         with conn:
-            resolve_tags(["llm-cost"], conn, now=1000)
+            resolve_tags(["llm-cost"], conn, now=TimestampMs(1000))
         # Second call: tag already exists.
         with conn:
-            result = resolve_tags(["llm-cost"], conn, now=2000)
+            result = resolve_tags(["llm-cost"], conn, now=TimestampMs(2000))
         assert result.canonical == ["llm-cost"]
         assert result.newly_registered == []
         # created_at preserved from first registration.
@@ -141,7 +141,7 @@ class TestResolveTags:
     def test_mixed_existing_and_new(self) -> None:
         conn = _make_store_conn()
         with conn:
-            resolve_tags(["existing-tag"], conn, now=100)
+            resolve_tags(["existing-tag"], conn, now=TimestampMs(100))
         with conn:
             result = resolve_tags(["existing-tag", "new-tag"], conn)
         assert result.canonical == ["existing-tag", "new-tag"]
@@ -160,9 +160,9 @@ class TestResolveTags:
         """Concurrent-insert simulation: INSERT OR IGNORE for same tag is idempotent."""
         conn = _make_store_conn()
         with conn:
-            r1 = resolve_tags(["llm-cost"], conn, now=1)
+            r1 = resolve_tags(["llm-cost"], conn, now=TimestampMs(1))
         with conn:
-            r2 = resolve_tags(["llm-cost"], conn, now=2)
+            r2 = resolve_tags(["llm-cost"], conn, now=TimestampMs(2))
         assert r1.canonical == ["llm-cost"]
         assert r1.newly_registered == ["llm-cost"]
         assert r2.canonical == ["llm-cost"]
@@ -190,8 +190,7 @@ class TestResolveTags:
             result = resolve_tags(["  LLM Cost  ", "ML"], conn)
         assert result.canonical == ["llm-cost", "ml"]
         canonicals = {
-            row["canonical"]
-            for row in conn.execute("SELECT canonical FROM tag").fetchall()
+            row["canonical"] for row in conn.execute("SELECT canonical FROM tag").fetchall()
         }
         assert "llm-cost" in canonicals
         assert "ml" in canonicals

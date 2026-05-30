@@ -321,6 +321,7 @@ class TestPromoteHypothesisTopicTagsWiring:
             "SELECT topic_tags FROM verified_knowledge WHERE id = ?", (str(vk.id),)
         ).fetchone()
         import json
+
         assert json.loads(row["topic_tags"]) == ["llm-cost"]
 
     def test_tag_registered_on_promotion(self) -> None:
@@ -333,9 +334,7 @@ class TestPromoteHypothesisTopicTagsWiring:
             topic_tags=["cross-room"],
             event_store=store,
         )
-        row = conn.execute(
-            "SELECT canonical FROM tag WHERE canonical = 'cross-room'"
-        ).fetchone()
+        row = conn.execute("SELECT canonical FROM tag WHERE canonical = 'cross-room'").fetchone()
         assert row is not None
 
     def test_tag_registration_rolls_back_with_vk_insert_failure(self) -> None:

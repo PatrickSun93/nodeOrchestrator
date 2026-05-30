@@ -93,9 +93,7 @@ def _ensure_hypothesis_topic_tags(conn: sqlite3.Connection) -> None:
     """
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(hypothesis)")}
     if "topic_tags" not in cols:
-        conn.execute(
-            "ALTER TABLE hypothesis ADD COLUMN topic_tags TEXT NOT NULL DEFAULT '[]'"
-        )
+        conn.execute("ALTER TABLE hypothesis ADD COLUMN topic_tags TEXT NOT NULL DEFAULT '[]'")
 
 
 def init_memory_schema(conn: sqlite3.Connection) -> None:

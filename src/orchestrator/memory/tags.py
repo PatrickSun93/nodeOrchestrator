@@ -64,9 +64,7 @@ def resolve_tags(
     for raw in proposed:
         canonical = normalize_tag(raw)
         if canonical == "":
-            raise ValueError(
-                f"tag {raw!r} normalizes to empty string — producer bug (ADR-018 D4)"
-            )
+            raise ValueError(f"tag {raw!r} normalizes to empty string — producer bug (ADR-018 D4)")
         seen[canonical] = None
 
     canonical_list = list(seen)
