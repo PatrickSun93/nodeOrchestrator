@@ -135,3 +135,112 @@ class TestLookupVerifiedKnowledge:
         _seed_and_promote(store, conn, content="room2-claim", topic_tags=["cross"])
         results = lookup_verified_knowledge(["cross"], VKScope.PERSONAL, conn=conn)
         assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
+# D6 refinement — both-sides normalization (P2.1-5, ADR-018 D7)
+# ---------------------------------------------------------------------------
+
+
+class TestLookupBothSidesNormalization:
+    def test_non_canonical_query_hits_canonical_stored_tag(self) -> None:
+        """ADR-018 D7 AC#2: query "LLM Cost" hits VK stored canonical "llm-cost"."""
+        store, conn = _make_full_store()
+        _seed_and_promote(store, conn, content="canonical stored", topic_tags=["llm-cost"])
+        results = lookup_verified_knowledge(["LLM Cost"], VKScope.PERSONAL, conn=conn)
+        assert len(results) == 1
+        assert results[0].content == "canonical stored"
+
+    def test_legacy_raw_stored_row_found_by_normalized_query(self) -> None:
+        """ADR-018 D7 AC#3: legacy raw-stored topic_tags found via both-sides normalization.
+
+        Simulates a pre-P2.1 VK row with un-normalized stored tags (never
+        through resolve_tags). Both-sides normalization makes it findable
+        without backfill (ADR-018 D8).
+        """
+        import json as _json
+
+        from orchestrator.core.event import (
+            Event,
+            EventType,
+            TimestampMs,
+            generate_event_id,
+            now_ms,
+        )
+        from orchestrator.core.room import Room, RoomType
+        from orchestrator.memory.schema import generate_vk_id
+        from orchestrator.memory.store import record_hypothesis
+
+        store, conn = _make_full_store()
+        _seed_and_promote(store, conn, content="canonical-row", topic_tags=["llm-cost"])
+
+        # Directly insert a legacy raw-stored VK row (simulates pre-P2.1).
+        room = Room(id=generate_room_id(), type=RoomType.RESEARCH)
+        store.append_room(room)
+        evt = Event(
+            id=generate_event_id(),
+            room_id=room.id,
+            type=EventType.UTTERANCE,
+            author="user",
+            timestamp=TimestampMs(now_ms()),
+            content="legacy",
+        )
+        store.append(evt)
+
+        hyp = record_hypothesis(
+            content="legacy hypothesis",
+            room_id=room.id,
+            source_event_ids=[evt.id],
+            confidence=0.8,
+            conn=conn,
+        )
+        fake_vk_id = generate_vk_id()
+        fake_event_id = generate_event_id()
+        store.append(Event(
+            id=fake_event_id,
+            room_id=room.id,
+            type=EventType.UTTERANCE,  # any valid event type satisfies the FK
+            author="system",
+            timestamp=TimestampMs(now_ms() + 1),
+            content="legacy promotion marker",
+        ))
+        conn.execute("UPDATE hypothesis SET status = 'verified' WHERE id = ?", (str(hyp.id),))
+        conn.execute(
+            """INSERT INTO verified_knowledge
+                   (id, content, topic_tags, evidence, last_validated,
+                    contradictions, scope, promoted_from_hypothesis_id,
+                    promoted_by_user_id, promotion_event_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(fake_vk_id),
+                "legacy raw-stored row",
+                _json.dumps(["LLM Cost"]),  # raw, non-canonical — pre-P2.1 style
+                "{}",
+                999,
+                "[]",
+                "personal",
+                str(hyp.id),
+                "legacy_user",
+                str(fake_event_id),
+            ),
+        )
+        conn.commit()
+
+        # Both-sides normalization: "llm cost" query normalizes to "llm-cost";
+        # stored "LLM Cost" also normalizes to "llm-cost" → match.
+        results = lookup_verified_knowledge(["llm cost"], VKScope.PERSONAL, conn=conn)
+        contents = {r.content for r in results}
+        assert "legacy raw-stored row" in contents, (
+            "legacy raw-stored row must be findable via both-sides normalization (no backfill)"
+        )
+
+    def test_d6_other_semantics_unchanged(self) -> None:
+        """ADR-018 D7 AC#5: OR-semantics, ordering, empty-query ValueError unchanged."""
+        store, conn = _make_full_store()
+        with pytest.raises(ValueError):
+            lookup_verified_knowledge([], VKScope.PERSONAL, conn=conn)
+        _seed_and_promote(store, conn, content="t1", topic_tags=["tag-x"], last_validated_ts=2000)
+        _seed_and_promote(store, conn, content="t2", topic_tags=["tag-y"], last_validated_ts=1000)
+        results = lookup_verified_knowledge(["tag-x", "tag-y"], VKScope.PERSONAL, conn=conn)
+        assert len(results) == 2
+        assert results[0].last_validated == 2000  # DESC ordering preserved

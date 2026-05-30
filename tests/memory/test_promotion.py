@@ -298,3 +298,77 @@ class TestPromoteHypothesisAtomicity:
         # Second promotion: schema UNIQUE on promoted_from_hypothesis_id fires.
         with pytest.raises(sqlite3.IntegrityError):
             promote_hypothesis(hyp.id, user_id="u", scope=VKScope.PERSONAL, event_store=store)
+
+
+# ---------------------------------------------------------------------------
+# VK write-path wiring + atomicity (P2.1-5, ADR-018 D6 + D4)
+# ---------------------------------------------------------------------------
+
+
+class TestPromoteHypothesisTopicTagsWiring:
+    def test_topic_tags_stored_canonical(self) -> None:
+        store, conn = _make_full_store()
+        _rid, _eids, hyp = _seed(store, conn)
+        vk = promote_hypothesis(
+            hyp.id,
+            user_id="u",
+            scope=VKScope.PERSONAL,
+            topic_tags=["LLM Cost"],
+            event_store=store,
+        )
+        assert vk.topic_tags == ["llm-cost"]
+        row = conn.execute(
+            "SELECT topic_tags FROM verified_knowledge WHERE id = ?", (str(vk.id),)
+        ).fetchone()
+        import json
+        assert json.loads(row["topic_tags"]) == ["llm-cost"]
+
+    def test_tag_registered_on_promotion(self) -> None:
+        store, conn = _make_full_store()
+        _rid, _eids, hyp = _seed(store, conn)
+        promote_hypothesis(
+            hyp.id,
+            user_id="u",
+            scope=VKScope.PERSONAL,
+            topic_tags=["cross-room"],
+            event_store=store,
+        )
+        row = conn.execute(
+            "SELECT canonical FROM tag WHERE canonical = 'cross-room'"
+        ).fetchone()
+        assert row is not None
+
+    def test_tag_registration_rolls_back_with_vk_insert_failure(self) -> None:
+        """Tag registration inside promotion transaction rolls back on VK INSERT failure."""
+        from unittest.mock import patch
+
+        store, conn = _make_full_store()
+        _rid, _eids, hyp = _seed(store, conn)
+
+        with (
+            patch.object(store, "append_in_transaction", side_effect=RuntimeError("inject")),
+            pytest.raises(RuntimeError),
+        ):
+            promote_hypothesis(
+                hyp.id,
+                user_id="u",
+                scope=VKScope.PERSONAL,
+                topic_tags=["should-rollback"],
+                event_store=store,
+            )
+
+        tag_count = conn.execute("SELECT COUNT(*) FROM tag").fetchone()[0]
+        assert tag_count == 0, "tag registration must roll back with the transaction"
+
+    def test_whitespace_only_topic_tag_raises_value_error(self) -> None:
+        """Contract tightening (G3): empty-normalizing tag raises ValueError."""
+        store, conn = _make_full_store()
+        _rid, _eids, hyp = _seed(store, conn)
+        with pytest.raises(ValueError, match="normalizes to empty string"):
+            promote_hypothesis(
+                hyp.id,
+                user_id="u",
+                scope=VKScope.PERSONAL,
+                topic_tags=["   "],
+                event_store=store,
+            )
