@@ -1,6 +1,6 @@
 # ADR-018: Shared cross-room tag registry — canonical tag vocabulary for memory/
 
-**Status:** Proposed — 2026-05-29 (senior-drafted per P2.1 brief; awaiting architect accept)
+**Status:** Accepted — 2026-05-29 (architect sign-off after R0-A-on-plan Y1→α absorbed; Proposed 2026-05-29, senior-drafted per P2.1 brief)
 
 **Scope:** Locks the shared, canonical tag vocabulary for `memory/`: the `tag` table, the `normalize_tag` canonicalization contract, the `resolve_tags` auto-register semantic, the Hypothesis/VerifiedKnowledge shared-vocabulary decision (both resolve their `topic_tags` through one registry), the `Hypothesis.topic_tags` schema addition + the first ALTER-TABLE column-add migration template for `memory/`, and the refinement of cross-room lookup to normalized-exact matching. Governs the vocabulary substrate that the P2.2 matcher (cross-room rule (a)) and `lookup_verified_knowledge` both ride on. Does NOT govern matching/consumption (P2.2), agent-side tag-proposal wiring (a later content-gen slice), promotion eligibility or the no-auto-promote invariant (ADR-016 D3/D10 — unchanged), or FK-normalized tag storage (deferred).
 
