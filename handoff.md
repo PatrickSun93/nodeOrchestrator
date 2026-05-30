@@ -254,13 +254,14 @@ class Hypothesis:
     confidence: float              # [0.0, 1.0], required
     source_event_ids: list[EventId]  # min_length=1; existence-checked at record time
     status: Literal["pending", "verified", "rejected", "stale"]
-    candidate_for_promotion: bool  # written by P1.7+ matcher; no auto-promote
+    candidate_for_promotion: bool  # written by P2.2+ matcher; no auto-promote
+    topic_tags: list[str]          # P2.1 shared vocabulary; normalized via resolve_tags
 
 # 2. 已验证(参与跨房间检索) — P1.6.5 物化 (verified_knowledge SQLite 表 + promote_hypothesis + lookup)
 class VerifiedKnowledge:
     id: VKId                       # "vk_<32hex>"
     content: str
-    topic_tags: list[str]          # OR-semantics in lookup
+    topic_tags: list[str]          # OR-semantics in lookup; normalized via resolve_tags (P2.1)
     evidence: dict[str, Any]       # JSON blob
     last_validated: TimestampMs
     contradictions: list[VKId]     # VK-to-VK cross-refs (ADR-016 D9); no producer P1.6.5
@@ -279,16 +280,23 @@ class Entity:
 class ProjectArchive: ...
 ```
 
+**P2.1 新增 (tag registry 已物化, ADR-018)**: 共享规范标签词汇表 — `tag` SQLite 表 +
+`memory/tags.py` (`normalize_tag` + `resolve_tags`)。Hypothesis 与 VerifiedKnowledge 共享
+同一词汇表 (record→promote lifecycle 全程 canonical strings)。lookup 两侧都 normalize
+(query + stored), 兼容 pre-P2.1 raw-stored rows (无需 backfill, ADR-018 D8)。
+
 **晋升规则**:不自动晋升 (ADR-016 D10 enforces). P1.6.5 ships:
 - **(b) 用户显式确认** — `promote_hypothesis(hyp_id, user_id, *, scope, event_store)` (full)
-- **(a) 跨 N 个独立房间被独立得出** — `candidate_for_promotion` column ships; matcher deferred to P1.7+
+- **(a) 跨 N 个独立房间被独立得出** — `candidate_for_promotion` column ships; matcher deferred to P2.2
 - **(c) 外部 ground truth 验证** — deferred to P2+
 
 **Promotion atomicity** (ADR-016 D11): single SQLite transaction wraps
 VK insert + Hypothesis.status update + `decision` event append to event_store.
+P2.1: tag registrations ride the same transaction (resolve_tags is transaction-neutral).
 
 **Cross-room lookup**: `lookup_verified_knowledge(topic_tags, scope, *, conn) -> list[VerifiedKnowledge]`
 — OR-semantics, last_validated DESC, no LLM (Principle 5).
+P2.1 refinement (ADR-018 D7): both query AND stored tags normalized at match-time.
 
 ---
 
@@ -649,9 +657,14 @@ async def select_model_and_provider(
 **事件流**:append-only 表,SQLite 起步即可
 **快照**:持久化于 `summary_snapshot` 事件的 `metadata` 字段 (ADR-014 D4); 无独立快照表
 **决策日志**:按需衍生,不物化 (ADR-015 D5); 消费者调用 `produce_decision_log(events, room)`
-**记忆系统** (P1.6.5 slice B 已物化, ADR-016 D5): `hypothesis` + `verified_knowledge` + `entity`
-  (stub) 表与 event_store 共享同一 SQLite 文件 (同 connection 保证 promotion 原子事务)。
+**记忆系统** (P1.6.5 slice B 已物化, ADR-016 D5; P2.1 tag registry 已物化, ADR-018):
+  `hypothesis` + `verified_knowledge` + `entity` (stub) + `tag` 表与 event_store 共享同一
+  SQLite 文件 (同 connection 保证 promotion 原子事务)。
   Init: `EventStore.init_schema(conn)` 先, 然后 `init_memory_schema(conn)` — in-place migration。
+  **Column-add migration template (P2.1, ADR-018 D5)**: `PRAGMA table_info` guard +
+  `ALTER TABLE ... ADD COLUMN ... NOT NULL DEFAULT <const>` — idempotent, SQLite 自动
+  backfill existing rows with the constant default。此为 memory/ 首个 ALTER-not-CREATE migration,
+  后续列添加遵循同一模板。
 **配置**:YAML 文件,可 git 版本化
 
 ---

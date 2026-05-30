@@ -11,6 +11,7 @@ import sqlite3
 
 from orchestrator.memory.schema import VerifiedKnowledge, VKScope
 from orchestrator.memory.store import _row_to_vk
+from orchestrator.memory.tags import normalize_tag
 
 
 def lookup_verified_knowledge(
@@ -37,11 +38,14 @@ def lookup_verified_knowledge(
         (scope.value,),
     ).fetchall()
 
-    tag_set = set(topic_tags)
+    # Normalize BOTH query and stored tags at match-time (ADR-018 D7, refines ADR-016 D6).
+    # Both sides normalization ensures legacy raw-stored rows (pre-P2.1, not backfilled)
+    # are found by normalized queries — making no-backfill (ADR-018 D8) sound.
+    query_set = {normalize_tag(t) for t in topic_tags}
     results: list[VerifiedKnowledge] = []
     for row in rows:
-        row_tags = set(json.loads(row["topic_tags"]))
-        if tag_set & row_tags:
+        row_tags = {normalize_tag(t) for t in json.loads(row["topic_tags"])}
+        if query_set & row_tags:
             results.append(_row_to_vk(row))
 
     return results

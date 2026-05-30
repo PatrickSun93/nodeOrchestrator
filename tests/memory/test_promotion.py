@@ -298,3 +298,96 @@ class TestPromoteHypothesisAtomicity:
         # Second promotion: schema UNIQUE on promoted_from_hypothesis_id fires.
         with pytest.raises(sqlite3.IntegrityError):
             promote_hypothesis(hyp.id, user_id="u", scope=VKScope.PERSONAL, event_store=store)
+
+
+# ---------------------------------------------------------------------------
+# VK write-path wiring + atomicity (P2.1-5, ADR-018 D6 + D4)
+# ---------------------------------------------------------------------------
+
+
+class TestPromoteHypothesisTopicTagsWiring:
+    def test_topic_tags_stored_canonical(self) -> None:
+        store, conn = _make_full_store()
+        _rid, _eids, hyp = _seed(store, conn)
+        vk = promote_hypothesis(
+            hyp.id,
+            user_id="u",
+            scope=VKScope.PERSONAL,
+            topic_tags=["LLM Cost"],
+            event_store=store,
+        )
+        assert vk.topic_tags == ["llm-cost"]
+        row = conn.execute(
+            "SELECT topic_tags FROM verified_knowledge WHERE id = ?", (str(vk.id),)
+        ).fetchone()
+        import json
+
+        assert json.loads(row["topic_tags"]) == ["llm-cost"]
+
+    def test_tag_registered_on_promotion(self) -> None:
+        store, conn = _make_full_store()
+        _rid, _eids, hyp = _seed(store, conn)
+        promote_hypothesis(
+            hyp.id,
+            user_id="u",
+            scope=VKScope.PERSONAL,
+            topic_tags=["cross-room"],
+            event_store=store,
+        )
+        row = conn.execute("SELECT canonical FROM tag WHERE canonical = 'cross-room'").fetchone()
+        assert row is not None
+
+    def test_tag_registration_rolls_back_with_vk_insert_failure(self) -> None:
+        """Tag registered by resolve_tags rolls back when the VK INSERT fails (A->alpha fix).
+
+        The failure must fire AT/AFTER the VK INSERT (promotion.py:118) so that
+        resolve_tags (promotion.py:114) has ALREADY registered the tag before the
+        rollback — otherwise the assertion is vacuous. The prior version injected
+        at append_in_transaction (line 109), which runs BEFORE resolve_tags, so no
+        tag was ever registered and `tag_count == 0` was trivially true (senior
+        plan-vs-impl Y1 = R0-B Y2 = architect routing A -> alpha).
+
+        Mechanism: trip the UNIQUE on verified_knowledge.promoted_from_hypothesis_id
+        (ADR-016 D2 Y9 backstop) at the VK INSERT — a natural constraint violation
+        after resolve_tags, mirroring the record_hypothesis counterpart
+        test_store.py:504 (which trips an FK violation after resolve_tags).
+        """
+        store, conn = _make_full_store()
+        _rid, _eids, hyp = _seed(store, conn)
+
+        # First promotion (no tags) creates a VK row referencing hyp; then force
+        # status back to PENDING so the SECOND promotion reaches its transaction.
+        promote_hypothesis(hyp.id, user_id="u", scope=VKScope.PERSONAL, event_store=store)
+        conn.execute("UPDATE hypothesis SET status = 'pending' WHERE id = ?", (str(hyp.id),))
+        conn.commit()
+
+        # Second promotion: resolve_tags (line 114) registers "should-rollback",
+        # THEN the VK INSERT (line 118) trips the UNIQUE → IntegrityError → the
+        # whole transaction (incl. the just-registered tag) rolls back.
+        with pytest.raises(sqlite3.IntegrityError):
+            promote_hypothesis(
+                hyp.id,
+                user_id="u",
+                scope=VKScope.PERSONAL,
+                topic_tags=["should-rollback"],
+                event_store=store,
+            )
+
+        # The tag registered at promotion.py:114 must be gone — genuine rollback.
+        row = conn.execute(
+            "SELECT canonical FROM tag WHERE canonical = 'should-rollback'"
+        ).fetchone()
+        assert row is None, "tag registered before the failing VK INSERT must roll back"
+
+    def test_whitespace_only_topic_tag_raises_value_error(self) -> None:
+        """Contract tightening (G3): empty-normalizing tag raises ValueError."""
+        store, conn = _make_full_store()
+        _rid, _eids, hyp = _seed(store, conn)
+        with pytest.raises(ValueError, match="normalizes to empty string"):
+            promote_hypothesis(
+                hyp.id,
+                user_id="u",
+                scope=VKScope.PERSONAL,
+                topic_tags=["   "],
+                event_store=store,
+            )

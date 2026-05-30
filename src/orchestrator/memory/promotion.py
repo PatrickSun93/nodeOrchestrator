@@ -32,6 +32,7 @@ from orchestrator.memory.schema import (
     generate_vk_id,
 )
 from orchestrator.memory.store import _row_to_vk, get_hypothesis_by_id
+from orchestrator.memory.tags import resolve_tags
 
 
 def promote_hypothesis(
@@ -107,6 +108,11 @@ def promote_hypothesis(
         # 4a: append decision event (in_transaction=True now).
         event_store.append_in_transaction(decision_event)
 
+        # 4d: resolve + register VK tags inside the transaction (ADR-018 D6 + D4).
+        # Transaction-neutral: does NOT commit; rolls back with any failure below.
+        # Placed after UPDATE (transaction open) and before VK INSERT (per ADR-018 D6).
+        resolution = resolve_tags(topic_tags_list, conn, now=ts)
+
         # 4b: INSERT VK row (UNIQUE on promoted_from_hypothesis_id — Y9 backstop).
         conn.execute(
             """INSERT INTO verified_knowledge
@@ -117,7 +123,7 @@ def promote_hypothesis(
             (
                 str(vk_id),
                 hyp.content,
-                json.dumps(topic_tags_list),
+                json.dumps(resolution.canonical),
                 json.dumps(evidence_dict),
                 ts,
                 json.dumps([]),
