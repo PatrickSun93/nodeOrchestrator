@@ -338,16 +338,33 @@ class TestPromoteHypothesisTopicTagsWiring:
         assert row is not None
 
     def test_tag_registration_rolls_back_with_vk_insert_failure(self) -> None:
-        """Tag registration inside promotion transaction rolls back on VK INSERT failure."""
-        from unittest.mock import patch
+        """Tag registered by resolve_tags rolls back when the VK INSERT fails (A->alpha fix).
 
+        The failure must fire AT/AFTER the VK INSERT (promotion.py:118) so that
+        resolve_tags (promotion.py:114) has ALREADY registered the tag before the
+        rollback — otherwise the assertion is vacuous. The prior version injected
+        at append_in_transaction (line 109), which runs BEFORE resolve_tags, so no
+        tag was ever registered and `tag_count == 0` was trivially true (senior
+        plan-vs-impl Y1 = R0-B Y2 = architect routing A -> alpha).
+
+        Mechanism: trip the UNIQUE on verified_knowledge.promoted_from_hypothesis_id
+        (ADR-016 D2 Y9 backstop) at the VK INSERT — a natural constraint violation
+        after resolve_tags, mirroring the record_hypothesis counterpart
+        test_store.py:504 (which trips an FK violation after resolve_tags).
+        """
         store, conn = _make_full_store()
         _rid, _eids, hyp = _seed(store, conn)
 
-        with (
-            patch.object(store, "append_in_transaction", side_effect=RuntimeError("inject")),
-            pytest.raises(RuntimeError),
-        ):
+        # First promotion (no tags) creates a VK row referencing hyp; then force
+        # status back to PENDING so the SECOND promotion reaches its transaction.
+        promote_hypothesis(hyp.id, user_id="u", scope=VKScope.PERSONAL, event_store=store)
+        conn.execute("UPDATE hypothesis SET status = 'pending' WHERE id = ?", (str(hyp.id),))
+        conn.commit()
+
+        # Second promotion: resolve_tags (line 114) registers "should-rollback",
+        # THEN the VK INSERT (line 118) trips the UNIQUE → IntegrityError → the
+        # whole transaction (incl. the just-registered tag) rolls back.
+        with pytest.raises(sqlite3.IntegrityError):
             promote_hypothesis(
                 hyp.id,
                 user_id="u",
@@ -356,8 +373,11 @@ class TestPromoteHypothesisTopicTagsWiring:
                 event_store=store,
             )
 
-        tag_count = conn.execute("SELECT COUNT(*) FROM tag").fetchone()[0]
-        assert tag_count == 0, "tag registration must roll back with the transaction"
+        # The tag registered at promotion.py:114 must be gone — genuine rollback.
+        row = conn.execute(
+            "SELECT canonical FROM tag WHERE canonical = 'should-rollback'"
+        ).fetchone()
+        assert row is None, "tag registered before the failing VK INSERT must roll back"
 
     def test_whitespace_only_topic_tag_raises_value_error(self) -> None:
         """Contract tightening (G3): empty-normalizing tag raises ValueError."""

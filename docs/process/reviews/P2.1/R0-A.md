@@ -1,7 +1,9 @@
 ---
 task_id: P2.1
 round: R0-A
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 1🟡 4🟢); Y1 → B → γ dismissed (cross-family-caught false positive), bumped per RC-10
 findings_count:
   red: 0
   yellow: 1
@@ -88,3 +90,9 @@ ruff ✓ · mypy ✓ (31 files) · **981 passed** · `tests/memory/test_constitu
 2. **Greens** are affirmations; G3's column-order comment is an optional one-liner the junior can fold with the Y1 fix.
 
 R0-A does not change state. **R0-B (cross-family) is still owed this cycle** (architect dispatch); I'll synthesize R0-A + R0-B + senior plan-vs-impl for routing once they land. ADR-018's contract is well-served by this impl modulo Y1.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+This review's Y1 (`record_hypothesis` resolves tags *outside* its `with conn:` block → tag-registration leak on a post-resolve validation failure) was routed **B → γ — dismissed** (`architect-routing-on-impl.md`, 2026-05-30): a **false positive caught cross-family** (R0-B Y1). The code-trace refutes it — `resolve_tags` has been *inside* `record_hypothesis`'s `with conn:` block since the first P2.1-4 commit (`bc27e88`; store.py:178), and the validation-failure path is unreachable (`Hypothesis(...)` constructs at store.py:149, *before* the block, so a `ValidationError` exits before `resolve_tags` is ever reached). The cited "empirical probe" was not reproducible (it crashed at `Event(...)` construction and never executed `record_hypothesis`). No action — a fix would be a no-op on already-correct code; the invariant is genuinely covered by `test_store.py:504`. **Recorded as dismissed-on-cross-family-evidence, not silently dropped.** Verdict → **clean**. (Meta: a clean RC-20 dual-lens datapoint — cross-family *corrected* an in-family false positive before it churned the impl; flagged for P2.1 retro.)

@@ -3,7 +3,9 @@ task_id: P2.1
 round: plan-vs-impl
 reviewer: senior
 impl_commit: 6d9cf7d
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 1🟡 3🟢); Y1 → A → α absorbed, bumped per RC-10
 findings_count:
   red: 0
   yellow: 1
@@ -79,3 +81,9 @@ All six push-backs land where the plan/ADR said; spot-verified cites (promotion.
 2. **Greens** are affirmations + optional hardenings (G2 e2e-constitution cleanup, docstring) the junior can absorb without an architect call.
 
 Per ADR-008 Amendment 1 (Route B), state auto-advances to `awaiting_R0_A` regardless of this verdict; R0-A fires, then joint-verdict evaluation. This 🟡 makes the joint verdict non-clean → `awaiting_architect_decision` for routing.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+Architect routed this review's Y1 as **A → α** (`architect-routing-on-impl.md`, 2026-05-30; A = senior Y1 = R0-B Y2, two-reviewer confirmation incl. cross-family). Absorbed in the senior revision: `test_promotion.py::test_tag_registration_rolls_back_with_vk_insert_failure` is re-pointed to trip the `UNIQUE` on `verified_knowledge.promoted_from_hypothesis_id` at the VK INSERT (promotion.py:118) — which runs **after** `resolve_tags` (promotion.py:114) — so a tag is genuinely registered then rolled back (mirrors the `record_hypothesis` counterpart `test_store.py:504`). The test now fails if the tag survives; the false-confidence gap is closed. **Test-only; no `src/` change** (the impl was atomically correct on every traced path — all three reviews concur). Gates green: ruff ✓ · mypy --strict ✓ (18 files) · pytest ✓ (memory + integration). Verdict → **clean**.

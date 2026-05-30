@@ -2,7 +2,9 @@
 task_id: P2.1
 round: R0-B
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 2🟡 3🟢); Y1 → B → γ dismissed, Y2 → A → α absorbed, bumped per RC-10
 findings_count:
   red: 0
   yellow: 2
@@ -49,3 +51,14 @@ No 🔴 findings. The implementation is structurally correct across all runtime/
 1. **Y1 (🟡):** R0-A Y1 is a false positive — the code at `bc27e88` onward has `resolve_tags` inside `with conn:`. The architect should close (not route α/β) this finding. The `record_hypothesis` tag-rollback test (`test_store.py:504`) already genuinely covers the invariant.
 2. **Y2 (🟡):** Senior Y1 confirmed — the promotion tag-rollback test is vacuous. Lean mirrors the senior's: re-point the injection to fire after `resolve_tags` (at the VK INSERT), modeled on `test_store.py:504`.
 3. **Greens** are affirmations; no action needed.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+Both yellows resolved per `architect-routing-on-impl.md` (2026-05-30):
+
+- **Y1 (B → γ — dismissed):** R0-B correctly identified R0-A Y1 as a false positive (`resolve_tags` is inside `record_hypothesis`'s `with conn:` from `bc27e88`); the architect dismissed R0-A Y1 on this cross-family evidence. No action.
+- **Y2 (A → α — absorbed):** the vacuous promotion tag-rollback test is fixed — re-pointed to trip the `UNIQUE` on `promoted_from_hypothesis_id` at the VK INSERT (after `resolve_tags`), so a tag is genuinely registered then rolled back, mirroring `test_store.py:504`. Test-only, no `src/` change.
+
+Gates green: ruff ✓ · mypy --strict ✓ · pytest ✓. Verdict → **clean**.
