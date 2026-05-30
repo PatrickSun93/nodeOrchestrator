@@ -24,6 +24,7 @@ from orchestrator.memory.schema import (
     VKId,
     generate_hypothesis_id,
 )
+from orchestrator.memory.tags import resolve_tags
 
 # ---------------------------------------------------------------------------
 # Memory schema DDL
@@ -124,12 +125,17 @@ def record_hypothesis(
     *,
     conn: sqlite3.Connection,
     now: TimestampMs | None = None,
+    topic_tags: list[str] | None = None,
 ) -> Hypothesis:
     """Insert a new Hypothesis row. Pure producer — does NOT touch event_store.
 
     Caller chooses whether to also emit a `hypothesis` event into the
     event stream (if at all). Memory table and event stream are NOT
     auto-synced. Per ADR-016 D4.
+
+    topic_tags (optional, keyword-only): proposed tags. Normalized + auto-
+    registered via resolve_tags inside the write transaction (ADR-018 D4 +
+    D6). Existing callers omit this and get topic_tags=[].
 
     Raises:
         pydantic.ValidationError: if any field fails schema validation
@@ -138,6 +144,7 @@ def record_hypothesis(
         EventNotFoundError: if any source_event_id is absent from the
             event store (per ADR-016 D2 producer-time existence check,
             Y2 alpha-(ii) routing).
+        ValueError: if any proposed tag normalizes to "" (ADR-018 D4 D6).
         MemoryStoreError: on unexpected SQLite failure.
     """
     ts = now if now is not None else now_ms()
@@ -170,11 +177,12 @@ def record_hypothesis(
 
     try:
         with conn:
+            resolution = resolve_tags(topic_tags or [], conn, now=ts)
             conn.execute(
                 """INSERT INTO hypothesis
                        (id, content, room_id, confidence, source_event_ids,
-                        status, candidate_for_promotion, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        status, candidate_for_promotion, topic_tags, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     hyp.id,
                     hyp.content,
@@ -183,13 +191,14 @@ def record_hypothesis(
                     json.dumps(list(hyp.source_event_ids)),
                     hyp.status.value,
                     int(hyp.candidate_for_promotion),
+                    json.dumps(resolution.canonical),
                     hyp.created_at,
                 ),
             )
     except sqlite3.Error as exc:
         raise MemoryStoreError(f"failed to insert hypothesis: {exc}") from exc
 
-    return hyp
+    return hyp.model_copy(update={"topic_tags": resolution.canonical})
 
 
 # ---------------------------------------------------------------------------

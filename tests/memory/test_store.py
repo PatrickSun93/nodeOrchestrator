@@ -449,3 +449,88 @@ class TestGetters:
         loaded = get_hypothesis_by_id(hyp.id, conn=conn)
         assert loaded is not None
         assert loaded == hyp
+
+
+# ---------------------------------------------------------------------------
+# record_hypothesis — topic_tags wiring (P2.1-4, ADR-018 D6)
+# ---------------------------------------------------------------------------
+
+
+class TestRecordHypothesisTopicTags:
+    def test_topic_tags_normalized_and_stored(self) -> None:
+        store, conn = _make_store_with_memory()
+        room_id, event_ids = _seed_room_and_events(store, conn)
+        hyp = record_hypothesis(
+            content="tagged claim",
+            room_id=room_id,
+            source_event_ids=event_ids,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["LLM Cost"],
+        )
+        assert hyp.topic_tags == ["llm-cost"]
+        # Verify stored canonical form.
+        loaded = get_hypothesis_by_id(hyp.id, conn=conn)
+        assert loaded is not None
+        assert loaded.topic_tags == ["llm-cost"]
+
+    def test_tag_registered_in_tag_table(self) -> None:
+        store, conn = _make_store_with_memory()
+        room_id, event_ids = _seed_room_and_events(store, conn)
+        record_hypothesis(
+            content="tag registry test",
+            room_id=room_id,
+            source_event_ids=event_ids,
+            confidence=0.7,
+            conn=conn,
+            topic_tags=["ML Cost"],
+        )
+        row = conn.execute(
+            "SELECT canonical FROM tag WHERE canonical = 'ml-cost'"
+        ).fetchone()
+        assert row is not None
+
+    def test_default_empty_topic_tags_backward_compat(self) -> None:
+        store, conn = _make_store_with_memory()
+        room_id, event_ids = _seed_room_and_events(store, conn)
+        hyp = record_hypothesis(
+            content="no tags",
+            room_id=room_id,
+            source_event_ids=event_ids,
+            confidence=0.5,
+            conn=conn,
+        )
+        assert hyp.topic_tags == []
+        loaded = get_hypothesis_by_id(hyp.id, conn=conn)
+        assert loaded is not None
+        assert loaded.topic_tags == []
+
+    def test_tag_registration_rolls_back_with_failed_insert(self) -> None:
+        """Tag registration is inside the hypothesis write transaction (ADR-018 D4)."""
+        store, conn = _make_store_with_memory()
+        _room_id, event_ids = _seed_room_and_events(store, conn)
+        bad_room = RoomId("room_" + "z" * 32)  # FK violation
+        with pytest.raises((MemoryStoreError, sqlite3.IntegrityError)):
+            record_hypothesis(
+                content="will fail",
+                room_id=bad_room,
+                source_event_ids=event_ids,
+                confidence=0.5,
+                conn=conn,
+                topic_tags=["rollback-tag"],
+            )
+        count = conn.execute("SELECT COUNT(*) FROM tag").fetchone()[0]
+        assert count == 0, "tag must be rolled back with the failed hypothesis insert"
+
+    def test_whitespace_only_tag_raises_value_error(self) -> None:
+        store, conn = _make_store_with_memory()
+        room_id, event_ids = _seed_room_and_events(store, conn)
+        with pytest.raises(ValueError, match="normalizes to empty string"):
+            record_hypothesis(
+                content="x",
+                room_id=room_id,
+                source_event_ids=event_ids,
+                confidence=0.5,
+                conn=conn,
+                topic_tags=["   "],
+            )
