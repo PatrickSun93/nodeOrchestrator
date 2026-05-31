@@ -54,6 +54,8 @@ No punctuation stripping and no Unicode NFC normalization (push-back #1, lean = 
 
 Determinism: the function is a pure string transform with no I/O, no locale dependence beyond `str.lower()` (which is deterministic per the Unicode default casing), no randomness. Same input → same output, always.
 
+**Cross-reference — idempotency is a load-bearing downstream property** (added 2026-05-31 per P2.2 G2 routing; body-note only, ADR-018 remains accepted): `normalize_tag` is **idempotent** (`normalize_tag(normalize_tag(x)) == normalize_tag(x)` — the output has no leading/trailing whitespace, is all-lowercase, has no whitespace runs, so a second pass changes nothing). ADR-017 (cross-room hypothesis matcher) **depends on this**: its normalize-at-read (ADR-017 D2) re-normalizes already-canonical stored tags, which is a no-op only if idempotency holds — otherwise the matcher's group key diverges from the registry's stored canonical. Any future amendment to this D3 rule (the "richer normalization" forward hook — punctuation/Unicode/stemming) **must preserve idempotency**, or it silently breaks ADR-017's cross-slice equivalence with the registry.
+
 ### 4. `resolve_tags(proposed, conn) -> TagResolution` — normalize, dedup, auto-register; transaction-neutral
 
 Pure-code function in `memory/tags.py`:
