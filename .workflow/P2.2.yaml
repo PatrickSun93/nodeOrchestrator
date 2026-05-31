@@ -1,6 +1,15 @@
 task_id: P2.2
-state: awaiting_junior_impl
+state: awaiting_PR_merge
 cycle: 1
-last_transition_at: '2026-05-31T19:11:50.486235Z'
-override_history: []
+last_transition_at: '2026-05-31T20:10:43.427223Z'
+override_history:
+- timestamp: '2026-05-31T20:10:43.427223Z'
+  actor: architect
+  from_state: awaiting_R0_A
+  to_state: awaiting_PR_merge
+  reason: 'All 3 impl-stage verdicts clean (plan-vs-impl b64e4ee + R0-A ecb88f3 +
+    R0-B bd8f921). State stalled at awaiting_R0_A on RC-22 (2nd hit): the cycle-boundary
+    filter hides the noon-committed R0-A/R0-B relative to the evening advance timestamp,
+    so awaiting_R0_A reads r0_a_verdict as absent. Work is genuinely complete; override
+    is the substantive unblock. RC-22 cycle-relative-boundary fix queued for W-series.'
 requires_cross_family_review: true
