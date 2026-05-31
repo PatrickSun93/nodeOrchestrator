@@ -1,7 +1,9 @@
 ---
 task_id: P2.2
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 2🟡 5🟢); Y1→A→α + Y2→B→α absorbed, bumped per RC-10
 findings_count:
   red: 0
   yellow: 2
@@ -89,3 +91,14 @@ Advisory-only is well-preserved: ADR-016 D3/D10 cited unchanged, no canonical ev
 3. **Greens** are affirmations + two optional test-clarity notes (G4 determinism-test intent) the junior can fold without an architect call.
 
 ADR-017 is accept-worthy once Y1/Y2 are routed (both are test-approach fixes; the design is sound). R0-A-on-plan does not change state (RC-9 manual dispatch). Branch left checked out clean for the R0-B pass.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+This review's two yellows were routed and absorbed in the senior revision (`architect-routing-on-plan.md`, 2026-05-31; both Y's were also raised by R0-B-cross-family — two-lens confirmation):
+- **Y1 → A → α** (untagged-across-rooms exclusion untested): added a `matcher.py` unit test (plan P2.2-2 AC#11) + an e2e line (P2.2-4 AC#1/#3) asserting untagged `[]`-tag rows across ≥`min_rooms` rooms flag zero — guarding the dominant dormant-until-fed case. Test-only, no `src/` change.
+- **Y2 → B → α** (orthogonality guard substring fragility): the guard is now spec'd as a real call/import **AST check** (code, not comments), not a whole-file substring scan (plan P2.2-4 Where; ADR-017 cross-ref) — closes the RC-23-family fragility.
+- **G4 fold-in**: the determinism test's record-order shuffle is now stated as the scan-order-independence proxy (P2.2-4 AC#5).
+
+No `src/` design change (the matcher design was sound on every traced invariant). RC-23 re-verified gate-safe (ADR-017 has no `status: accepted` substring). Verdict → **clean**.

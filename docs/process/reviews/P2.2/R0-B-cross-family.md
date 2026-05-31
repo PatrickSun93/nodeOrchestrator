@@ -2,7 +2,9 @@
 task_id: P2.2
 round: R0-B-cross-family
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 2🟡 5🟢); Y1→A→α + Y2→B→α absorbed, G2→α-small inscribed, bumped per RC-10
 findings_count:
   red: 0
   yellow: 2
@@ -53,3 +55,14 @@ No 🔴. The matcher design is correct across all invariants probed. Both 🟡 a
 2. **Y2 (🟡):** R0-A Y2 confirmed — implement the structural orthogonality guard as a real call/import check (or at minimum strip comments/docstrings before the substring scan), not a naive whole-file substring scan. Prevents the RC-23 fragility recurrence. No design change.
 3. **G2 (🟢):** Optional — inscribe `normalize_tag` idempotency as an explicit property in ADR-017 D2 (one sentence: "normalize_tag is idempotent — re-normalizing an already-canonical stored tag is a guaranteed no-op — so normalize-at-read is safe for both raw-inserted AND registry-canonical rows"). ADR-018 D3 could also carry a cross-reference note. Not required for Accept — the property is already tested.
 4. **Remaining greens** are affirmations; no action.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+Both yellows + the G2 green were routed and absorbed in the senior revision (`architect-routing-on-plan.md`, 2026-05-31; both Y's were two-lens-confirmed with R0-A-on-plan, zero divergence):
+- **Y1 → A → α** (empty/`[]`-tag-set exclusion untested): unit test (plan P2.2-2 AC#11) + e2e line (P2.2-4 AC#1/#3) — untagged rows across rooms flag zero. Test-only.
+- **Y2 → B → α** (orthogonality guard whole-file-substring fragility): re-spec'd as a real call/import **AST check** (code, not comments) — closes the RC-23-family recurrence (the wider whole-file-substring-scan audit is RC-24, a retro candidate, not bundled here).
+- **G2 → α-small** (cross-family structural contribution): `normalize_tag` idempotency inscribed as a required property in ADR-017 D2 + a cross-reference note in ADR-018 D3 — so a future `normalize_tag` amendment cannot silently break the matcher's normalize-at-read equivalence with the registry.
+
+No `src/` design change. Verdict → **clean**. (This cross-family pass added a genuine net-new structural inscription (G2) and two-lens-confirmed both test gaps — a clean dual-lens datapoint.)
