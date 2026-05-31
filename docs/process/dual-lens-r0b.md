@@ -78,6 +78,31 @@ surface). Architect-routed `skip` on dual-lens; relied on in-family R0-A
 plan-vs-impl** (not by R0-A; not by any R0-B). Stakes-vs-cost calculus
 worked out: skipping dual-lens didn't cost the project on P1.5.
 
+### Correction-mode: cross-family / a second lens corrects in-family *errors*, not just adds net-new (RC-20)
+
+The dispatch ROI above is framed as **net-new** findings. But a second
+lens also earns its keep in **correction mode** — catching a finding the
+in-family reviewer got *wrong*, including fabricated claims. Two instances
+graduate this (RC-20):
+
+- **P2.1**: the cross-family R0-B (DeepSeek) traced the code and found
+  the architect-partner's own R0-A Y1 was a **false positive** — it
+  described an execution path that did not exist, resting on a probe that
+  never ran. The cross-family lens didn't add a new bug; it *removed* a
+  spurious one before it could drive a needless fix.
+- **P2.2**: the architect-partner R0-A again surfaced a fabricated-probe
+  false positive, self-corrected to `clean` after re-tracing — the same
+  error class on the immediately adjacent slice.
+
+**Implication for dispatch judgment**: a cycle where the in-family
+reviewer recently made an empirical-claim error is itself a reason to
+dispatch a second lens, *independent* of the RC-15 net-new criteria — the
+correction value is highest exactly when in-family confidence is
+miscalibrated. RC-20 also notes the inverse caution: on low-runtime-
+surface cycles, external net-new co-varies *down* with runtime surface
+(external may add little beyond proxy), so weigh correction-mode value,
+not just net-new, when the mechanical RC-15 read is below the bar.
+
 ---
 
 ## When to dispatch (architect judgment per task)

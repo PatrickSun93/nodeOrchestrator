@@ -148,6 +148,28 @@ Required when ANY of the following apply (matches
 - §5: A validator constrains a list/sequence field
 - §6: A new Pydantic model is added to `src/`
 
+### Q5. Does each new/changed test actually fail on the defect it guards?
+
+A test is only a guard if it can fail when the thing it names is broken.
+For any test added or changed to cover a specific defect/invariant,
+confirm it is **discriminating** — that you saw (or can reason precisely
+that) it fails when the guarded behavior is wrong, not just that it passes
+today.
+
+This is the **"test that can't fail its own bug"** anti-pattern, graduated
+after three instances (RC-25): P1.6.5 vacuous tag-rollback atomicity test
+(injected the failure before the registration it claimed to guard), P2.1
+vacuous promotion-atomicity test (same shape), P2.2 non-discriminating
+determinism test (asserted a property that held by construction regardless
+of scan order, so it could not catch a scan-order regression). All three
+passed green while guarding nothing.
+
+Cheapest check: for a rollback/error-path test, the failure must be
+injected *after* the state the test asserts was rolled back exists; for a
+"property X holds under condition Y" test, seed a case where X would be
+violated if the code were wrong and assert the discriminating outcome
+(not a by-construction tautology).
+
 ## Architecture decisions (ADRs)
 
 Decisions that change the shape of the system live in `docs/decisions/`
