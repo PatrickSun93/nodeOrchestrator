@@ -24,6 +24,7 @@ import pytest
 
 from orchestrator.workflow.cli import (
     _has_junior_impl_commits,
+    _parse_adr_status,
     _read_adr_status,
     build_parser,
     cmd_advance,
@@ -402,6 +403,43 @@ def _patch_git_show_from_disk(monkeypatch: pytest.MonkeyPatch, repo_root: Path) 
         return None
 
     monkeypatch.setattr("orchestrator.workflow.io._git_show", _fake_git_show)
+
+
+# --- _parse_adr_status: header-only parse (W-006-2 / RC-24/RC-23 fix) ---
+
+
+def test_parse_adr_status_header_accepted() -> None:
+    assert _parse_adr_status("# ADR-x\n\n**Status:** Accepted — 2026-01-01\n\nbody") == "accepted"
+
+
+def test_parse_adr_status_header_proposed() -> None:
+    assert _parse_adr_status("# ADR-x\n\n**Status:** Proposed\n\nbody") == "proposed"
+
+
+def test_parse_adr_status_amended_header_accepted_wins() -> None:
+    # Amended-ADR header: 'Accepted ...; Amended ... Proposed' → accepted.
+    line = "**Status:** Accepted — 2026-05-21; Amended 2026-05-31 (Proposed pending)\n"
+    assert _parse_adr_status(line) == "accepted"
+
+
+def test_parse_adr_status_body_quote_does_not_false_positive() -> None:
+    """RC-24/RC-23 fix: an ADR whose OWN header is Proposed but whose BODY
+    quotes another ADR's 'Status: Accepted' must parse as proposed — the
+    whole-file substring scan used to (wrongly) return accepted here, which
+    is what forced the 'no status: accepted substring' constraint on every
+    ADR author (ADR-014/016/017/018)."""
+    content = (
+        "# ADR-099\n\n"
+        "**Status:** Proposed\n\n"
+        "## Context\n"
+        "This builds on ADR-016, whose **Status:** Accepted state we rely on.\n"
+        "Per ADR-018 (status: accepted), the registry is merge-durable.\n"
+    )
+    assert _parse_adr_status(content) == "proposed"
+
+
+def test_parse_adr_status_no_header_returns_none() -> None:
+    assert _parse_adr_status("# ADR-x\n\nno status header here\n") == "none"
 
 
 def test_read_adr_status_via_plan_frontmatter_accepted(

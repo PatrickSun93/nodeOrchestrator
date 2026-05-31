@@ -134,11 +134,31 @@ def _safe_load_verdict_cycle_filtered(
 
 
 def _parse_adr_status(content: str) -> Literal["proposed", "accepted", "none"]:
-    lowered = content.lower()
-    if "status: accepted" in lowered or "**status:** accepted" in lowered:
-        return "accepted"
-    if "status: proposed" in lowered or "**status:** proposed" in lowered:
-        return "proposed"
+    """Read an ADR's status from its **Status:** header line only.
+
+    W-006-2 (RC-24/RC-23): this used to lower()-scan the WHOLE file for the
+    substring 'status: accepted', which false-positives when an ADR quotes
+    another ADR's status in prose — the exact fragility RC-23 surfaced and
+    that forced every ADR author to grep-verify the substring was absent
+    (the ADR-014/016/017/018 'RC-23 constraint'). Now we read only the first
+    Status header line (the canonical `**Status:** ...` / `Status: ...` at the
+    top of the ADR), so quoting another ADR's accepted state in the body is
+    harmless. The header's accepted/proposed verdict is what the accept-gate
+    keys on; later 'Amended ...; Accepted ...' clauses on the same header line
+    are matched too (accepted wins, matching the prior behavior for amended ADRs).
+    """
+    for raw in content.splitlines():
+        line = raw.strip()
+        # The Status header: `**Status:** ...` or `Status: ...`, case-insensitive.
+        low = line.lower()
+        if low.startswith("**status:**") or low.startswith("status:"):
+            # Accepted wins if the header mentions it (covers
+            # 'Accepted — ...; Amended ... Proposed' amended-ADR headers).
+            if "accepted" in low:
+                return "accepted"
+            if "proposed" in low:
+                return "proposed"
+            return "none"
     return "none"
 
 
