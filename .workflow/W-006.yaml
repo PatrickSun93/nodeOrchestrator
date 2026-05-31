@@ -1,6 +1,17 @@
 task_id: W-006
-state: awaiting_senior_plan
+state: closed
 cycle: 1
-last_transition_at: '2026-05-31T20:24:51.574779Z'
-override_history: []
+last_transition_at: '2026-05-31T20:57:38.881611Z'
+cycle_started_at: null
+override_history:
+- timestamp: '2026-05-31T20:57:38.881611Z'
+  actor: architect
+  from_state: awaiting_senior_plan
+  to_state: closed
+  reason: 'Dev-harness task implemented directly by the orchestrator per the dev-harness
+    exception (CLAUDE.md Scope: product vs dev harness) — no senior-plan / junior-impl
+    / review chain. W-006-1 RC-22 cycle-relative boundary + ADR-008 Decision 16 (3b9f984),
+    W-006-2 RC-24 _parse_adr_status header-only (e050cdc), W-006-3 RC-20/25/G6 graduation
+    (8f02edd). Gates green 973. State machine doesn''t model dev-harness tasks; override
+    is the close path.'
 requires_cross_family_review: false
