@@ -16,6 +16,8 @@ import json
 import sqlite3
 from dataclasses import dataclass
 
+from orchestrator.memory.schema import Hypothesis
+from orchestrator.memory.store import _row_to_hypothesis
 from orchestrator.memory.tags import normalize_tag
 
 
@@ -106,3 +108,19 @@ def run_matcher(
         groups_inspected=groups_inspected,
         rows_newly_flagged=rows_newly_flagged,
     )
+
+
+def list_promotion_candidates(conn: sqlite3.Connection) -> list[Hypothesis]:
+    """Return PENDING hypotheses flagged as cross-room corroborated.
+
+    Per ADR-017 D6. Returns status='pending' AND candidate_for_promotion=True
+    rows as frozen Hypothesis models, ordered by id ASC (deterministic).
+    Covered by idx_hypothesis_status_candidate (store.py:48).
+    No scope argument (Hypothesis has no scope field — schema.py:87-95).
+    """
+    rows = conn.execute(
+        "SELECT * FROM hypothesis"
+        " WHERE status = 'pending' AND candidate_for_promotion = 1"
+        " ORDER BY id ASC"
+    ).fetchall()
+    return [_row_to_hypothesis(row) for row in rows]

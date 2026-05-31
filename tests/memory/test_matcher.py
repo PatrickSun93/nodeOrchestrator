@@ -364,3 +364,129 @@ class TestRunMatcherInvariants:
         }
         # Both stores have the same COUNT flagged (same structure, different IDs).
         assert len(flagged1) == len(flagged2) == 3
+
+
+# ---------------------------------------------------------------------------
+# list_promotion_candidates reader (P2.2-3, ADR-017 D6)
+# ---------------------------------------------------------------------------
+
+
+class TestListPromotionCandidates:
+    def test_returns_empty_before_any_flagging(self) -> None:
+        from orchestrator.memory.matcher import list_promotion_candidates
+
+        _store, conn = _make_full_store()
+        assert list_promotion_candidates(conn) == []
+
+    def test_returns_flagged_pending_rows(self) -> None:
+        from orchestrator.memory.matcher import list_promotion_candidates
+
+        store, conn = _make_full_store()
+        room1, evts1 = _make_room_with_events(store)
+        room2, evts2 = _make_room_with_events(store)
+        h1 = record_hypothesis(
+            content="c1", room_id=room1, source_event_ids=evts1, confidence=0.8,
+            conn=conn, topic_tags=["ml"],
+        )
+        h2 = record_hypothesis(
+            content="c2", room_id=room2, source_event_ids=evts2, confidence=0.8,
+            conn=conn, topic_tags=["ml"],
+        )
+        run_matcher(conn)
+        candidates = list_promotion_candidates(conn)
+        ids = {c.id for c in candidates}
+        assert h1.id in ids
+        assert h2.id in ids
+        assert len(candidates) == 2
+
+    def test_excludes_non_flagged_rows(self) -> None:
+        from orchestrator.memory.matcher import list_promotion_candidates
+
+        store, conn = _make_full_store()
+        room1, evts1 = _make_room_with_events(store)
+        room2, evts2 = _make_room_with_events(store)
+        room3, evts3 = _make_room_with_events(store)
+        h_cluster1 = record_hypothesis(
+            content="cross-room", room_id=room1, source_event_ids=evts1, confidence=0.8,
+            conn=conn, topic_tags=["cluster"],
+        )
+        h_cluster2 = record_hypothesis(
+            content="cross-room", room_id=room2, source_event_ids=evts2, confidence=0.8,
+            conn=conn, topic_tags=["cluster"],
+        )
+        h_singleton = record_hypothesis(
+            content="solo", room_id=room3, source_event_ids=evts3, confidence=0.8,
+            conn=conn, topic_tags=["unique-tag"],
+        )
+        run_matcher(conn)
+        candidates = list_promotion_candidates(conn)
+        ids = {c.id for c in candidates}
+        assert h_cluster1.id in ids
+        assert h_cluster2.id in ids
+        assert h_singleton.id not in ids
+
+    def test_excludes_verified_even_if_flag_set(self) -> None:
+        """status='pending' filter — VERIFIED rows not returned even if flagged."""
+        from orchestrator.memory.matcher import list_promotion_candidates
+
+        store, conn = _make_full_store()
+        room1, evts1 = _make_room_with_events(store)
+        room2, evts2 = _make_room_with_events(store)
+        h1 = record_hypothesis(
+            content="c", room_id=room1, source_event_ids=evts1, confidence=0.8,
+            conn=conn, topic_tags=["t"],
+        )
+        h2 = record_hypothesis(
+            content="c", room_id=room2, source_event_ids=evts2, confidence=0.8,
+            conn=conn, topic_tags=["t"],
+        )
+        run_matcher(conn)
+        # Manually mark h2 as verified.
+        conn.execute("UPDATE hypothesis SET status = 'verified' WHERE id = ?", (str(h2.id),))
+        conn.commit()
+        candidates = list_promotion_candidates(conn)
+        assert len(candidates) == 1
+        assert candidates[0].id == h1.id
+
+    def test_ordered_by_id_asc(self) -> None:
+        from orchestrator.memory.matcher import list_promotion_candidates
+
+        store, conn = _make_full_store()
+        room1, evts1 = _make_room_with_events(store, n_events=3)
+        room2, evts2 = _make_room_with_events(store, n_events=3)
+        hyps = []
+        for i in range(3):
+            h = record_hypothesis(
+                content=f"c{i}",
+                room_id=room1 if i % 2 == 0 else room2,
+                source_event_ids=[evts1[i] if i % 2 == 0 else evts2[i]],
+                confidence=0.8,
+                conn=conn,
+                topic_tags=["ordered"],
+            )
+            hyps.append(h)
+        run_matcher(conn)
+        candidates = list_promotion_candidates(conn)
+        ids = [c.id for c in candidates]
+        assert ids == sorted(ids)
+
+    def test_returns_hypothesis_models(self) -> None:
+        from orchestrator.memory.matcher import list_promotion_candidates
+        from orchestrator.memory.schema import Hypothesis
+
+        store, conn = _make_full_store()
+        room1, evts1 = _make_room_with_events(store)
+        room2, evts2 = _make_room_with_events(store)
+        record_hypothesis(
+            content="c", room_id=room1, source_event_ids=evts1, confidence=0.8,
+            conn=conn, topic_tags=["t"],
+        )
+        record_hypothesis(
+            content="c", room_id=room2, source_event_ids=evts2, confidence=0.8,
+            conn=conn, topic_tags=["t"],
+        )
+        run_matcher(conn)
+        candidates = list_promotion_candidates(conn)
+        for c in candidates:
+            assert isinstance(c, Hypothesis)
+            assert c.candidate_for_promotion is True
