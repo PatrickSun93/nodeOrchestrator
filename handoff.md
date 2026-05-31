@@ -287,7 +287,7 @@ class ProjectArchive: ...
 
 **晋升规则**:不自动晋升 (ADR-016 D10 enforces). P1.6.5 ships:
 - **(b) 用户显式确认** — `promote_hypothesis(hyp_id, user_id, *, scope, event_store)` (full)
-- **(a) 跨 N 个独立房间被独立得出** — `candidate_for_promotion` column ships; matcher deferred to P2.2
+- **(a) 跨 N 个独立房间被独立得出** — **P2.2 物化** (ADR-017): `run_matcher(conn, *, min_rooms=2)` groups PENDING hypotheses by canonical tag-set equality (via `normalize_tag`); flips `candidate_for_promotion=True` for groups spanning ≥ `min_rooms` distinct rooms. Advisory only — never promotes. `list_promotion_candidates(conn)` reads the flagged PENDING rows. `memory/matcher.py`.
 - **(c) 外部 ground truth 验证** — deferred to P2+
 
 **Promotion atomicity** (ADR-016 D11): single SQLite transaction wraps

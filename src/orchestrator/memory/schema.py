@@ -77,9 +77,8 @@ class Hypothesis(BaseModel):
     """A candidate claim awaiting promotion to VerifiedKnowledge.
 
     Per ADR-016 D2. Status lifecycle: PENDING → VERIFIED | REJECTED | STALE.
-    candidate_for_promotion is written by the future cross-N-rooms matcher
-    (ADR-016 D7); it is False by default and is NOT a promotion precondition
-    in P1.6.5.
+    candidate_for_promotion is written by run_matcher (ADR-017, P2.2);
+    it is False by default and is NOT a promotion precondition (ADR-016 D3/D10).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

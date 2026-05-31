@@ -42,9 +42,7 @@ def _make_full_store() -> tuple[EventStore, sqlite3.Connection]:
     return store, conn
 
 
-def _make_room_with_events(
-    store: EventStore, *, n_events: int = 1
-) -> tuple[RoomId, list[EventId]]:
+def _make_room_with_events(store: EventStore, *, n_events: int = 1) -> tuple[RoomId, list[EventId]]:
     room = Room(id=generate_room_id(), type=RoomType.RESEARCH)
     store.append_room(room)
     ids: list[EventId] = []
@@ -96,12 +94,20 @@ class TestRunMatcherContract:
         room1, evts1 = _make_room_with_events(store)
         room2, evts2 = _make_room_with_events(store)
         h1 = record_hypothesis(
-            content="claim", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=["llm-cost"],
+            content="claim",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["llm-cost"],
         )
         h2 = record_hypothesis(
-            content="claim", room_id=room2, source_event_ids=evts2, confidence=0.8,
-            conn=conn, topic_tags=["llm-cost"],
+            content="claim",
+            room_id=room2,
+            source_event_ids=evts2,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["llm-cost"],
         )
         # Manually set h2 to verified — should be excluded.
         conn.execute("UPDATE hypothesis SET status = 'verified' WHERE id = ?", (str(h2.id),))
@@ -125,12 +131,20 @@ class TestRunMatcherGrouping:
         room1, evts1 = _make_room_with_events(store)
         room2, evts2 = _make_room_with_events(store)
         h1 = record_hypothesis(
-            content="c1", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=["llm-cost"],
+            content="c1",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["llm-cost"],
         )
         h2 = record_hypothesis(
-            content="c2", room_id=room2, source_event_ids=evts2, confidence=0.8,
-            conn=conn, topic_tags=["llm-cost"],
+            content="c2",
+            room_id=room2,
+            source_event_ids=evts2,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["llm-cost"],
         )
         result = run_matcher(conn)
         assert result.rows_newly_flagged == 2
@@ -143,8 +157,12 @@ class TestRunMatcherGrouping:
         store, conn = _make_full_store()
         room1, evts1 = _make_room_with_events(store)
         h = record_hypothesis(
-            content="solo", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=["ml-ops"],
+            content="solo",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["ml-ops"],
         )
         result = run_matcher(conn)
         assert result.rows_newly_flagged == 0
@@ -157,12 +175,20 @@ class TestRunMatcherGrouping:
         store, conn = _make_full_store()
         room1, evts1 = _make_room_with_events(store, n_events=2)
         h1 = record_hypothesis(
-            content="a", room_id=room1, source_event_ids=[evts1[0]], confidence=0.8,
-            conn=conn, topic_tags=["solo-topic"],
+            content="a",
+            room_id=room1,
+            source_event_ids=[evts1[0]],
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["solo-topic"],
         )
         h2 = record_hypothesis(
-            content="b", room_id=room1, source_event_ids=[evts1[1]], confidence=0.8,
-            conn=conn, topic_tags=["solo-topic"],
+            content="b",
+            room_id=room1,
+            source_event_ids=[evts1[1]],
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["solo-topic"],
         )
         result = run_matcher(conn, min_rooms=2)
         assert result.rows_newly_flagged == 0
@@ -177,12 +203,20 @@ class TestRunMatcherGrouping:
         room1, evts1 = _make_room_with_events(store)
         room2, evts2 = _make_room_with_events(store)
         h1 = record_hypothesis(
-            content="c1", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=["LLM Cost"],  # stores canonical "llm-cost"
+            content="c1",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["LLM Cost"],  # stores canonical "llm-cost"
         )
         h2 = record_hypothesis(
-            content="c2", room_id=room2, source_event_ids=evts2, confidence=0.8,
-            conn=conn, topic_tags=["llm cost"],  # stores canonical "llm-cost"
+            content="c2",
+            room_id=room2,
+            source_event_ids=evts2,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["llm cost"],  # stores canonical "llm-cost"
         )
         result = run_matcher(conn)
         assert result.rows_newly_flagged == 2
@@ -197,12 +231,20 @@ class TestRunMatcherGrouping:
         room1, evts1 = _make_room_with_events(store)
         room2, evts2 = _make_room_with_events(store)
         h1 = record_hypothesis(
-            content="c1", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=[],
+            content="c1",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=[],
         )
         h2 = record_hypothesis(
-            content="c2", room_id=room2, source_event_ids=evts2, confidence=0.8,
-            conn=conn, topic_tags=[],
+            content="c2",
+            room_id=room2,
+            source_event_ids=evts2,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=[],
         )
         result = run_matcher(conn, min_rooms=2)
         assert result.groups_inspected == 0
@@ -247,8 +289,12 @@ class TestRunMatcherGrouping:
         rooms = [_make_room_with_events(store) for _ in range(2)]
         hyps = [
             record_hypothesis(
-                content="c", room_id=room_id, source_event_ids=evts, confidence=0.8,
-                conn=conn, topic_tags=["ml"],
+                content="c",
+                room_id=room_id,
+                source_event_ids=evts,
+                confidence=0.8,
+                conn=conn,
+                topic_tags=["ml"],
             )
             for room_id, evts in rooms
         ]
@@ -263,8 +309,12 @@ class TestRunMatcherGrouping:
         # Add a third room.
         room3, evts3 = _make_room_with_events(store)
         record_hypothesis(
-            content="c", room_id=room3, source_event_ids=evts3, confidence=0.8,
-            conn=conn, topic_tags=["ml"],
+            content="c",
+            room_id=room3,
+            source_event_ids=evts3,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["ml"],
         )
         result2 = run_matcher(conn, min_rooms=3)
         assert result2.rows_newly_flagged == 3
@@ -281,12 +331,20 @@ class TestRunMatcherInvariants:
         room1, evts1 = _make_room_with_events(store)
         room2, evts2 = _make_room_with_events(store)
         record_hypothesis(
-            content="c", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=["llm"],
+            content="c",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["llm"],
         )
         record_hypothesis(
-            content="c", room_id=room2, source_event_ids=evts2, confidence=0.8,
-            conn=conn, topic_tags=["llm"],
+            content="c",
+            room_id=room2,
+            source_event_ids=evts2,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["llm"],
         )
         r1 = run_matcher(conn)
         r2 = run_matcher(conn)
@@ -298,12 +356,20 @@ class TestRunMatcherInvariants:
         room1, evts1 = _make_room_with_events(store)
         room2, evts2 = _make_room_with_events(store)
         h1 = record_hypothesis(
-            content="c", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=["tag"],
+            content="c",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["tag"],
         )
         record_hypothesis(
-            content="c", room_id=room2, source_event_ids=evts2, confidence=0.8,
-            conn=conn, topic_tags=["tag"],
+            content="c",
+            room_id=room2,
+            source_event_ids=evts2,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["tag"],
         )
         run_matcher(conn)
         loaded = get_hypothesis_by_id(h1.id, conn=conn)
@@ -330,7 +396,7 @@ class TestRunMatcherInvariants:
             store: EventStore, conn: sqlite3.Connection, insert_order: list[int]
         ) -> list[str]:
             rooms = [_make_room_with_events(store) for _ in range(3)]
-            hyps = []
+            hyps: list[str] = []
             for i in insert_order:
                 room_id, evts = rooms[i % len(rooms)]
                 h = record_hypothesis(
@@ -385,12 +451,20 @@ class TestListPromotionCandidates:
         room1, evts1 = _make_room_with_events(store)
         room2, evts2 = _make_room_with_events(store)
         h1 = record_hypothesis(
-            content="c1", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=["ml"],
+            content="c1",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["ml"],
         )
         h2 = record_hypothesis(
-            content="c2", room_id=room2, source_event_ids=evts2, confidence=0.8,
-            conn=conn, topic_tags=["ml"],
+            content="c2",
+            room_id=room2,
+            source_event_ids=evts2,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["ml"],
         )
         run_matcher(conn)
         candidates = list_promotion_candidates(conn)
@@ -407,16 +481,28 @@ class TestListPromotionCandidates:
         room2, evts2 = _make_room_with_events(store)
         room3, evts3 = _make_room_with_events(store)
         h_cluster1 = record_hypothesis(
-            content="cross-room", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=["cluster"],
+            content="cross-room",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["cluster"],
         )
         h_cluster2 = record_hypothesis(
-            content="cross-room", room_id=room2, source_event_ids=evts2, confidence=0.8,
-            conn=conn, topic_tags=["cluster"],
+            content="cross-room",
+            room_id=room2,
+            source_event_ids=evts2,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["cluster"],
         )
         h_singleton = record_hypothesis(
-            content="solo", room_id=room3, source_event_ids=evts3, confidence=0.8,
-            conn=conn, topic_tags=["unique-tag"],
+            content="solo",
+            room_id=room3,
+            source_event_ids=evts3,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["unique-tag"],
         )
         run_matcher(conn)
         candidates = list_promotion_candidates(conn)
@@ -433,12 +519,20 @@ class TestListPromotionCandidates:
         room1, evts1 = _make_room_with_events(store)
         room2, evts2 = _make_room_with_events(store)
         h1 = record_hypothesis(
-            content="c", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=["t"],
+            content="c",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["t"],
         )
         h2 = record_hypothesis(
-            content="c", room_id=room2, source_event_ids=evts2, confidence=0.8,
-            conn=conn, topic_tags=["t"],
+            content="c",
+            room_id=room2,
+            source_event_ids=evts2,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["t"],
         )
         run_matcher(conn)
         # Manually mark h2 as verified.
@@ -478,12 +572,20 @@ class TestListPromotionCandidates:
         room1, evts1 = _make_room_with_events(store)
         room2, evts2 = _make_room_with_events(store)
         record_hypothesis(
-            content="c", room_id=room1, source_event_ids=evts1, confidence=0.8,
-            conn=conn, topic_tags=["t"],
+            content="c",
+            room_id=room1,
+            source_event_ids=evts1,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["t"],
         )
         record_hypothesis(
-            content="c", room_id=room2, source_event_ids=evts2, confidence=0.8,
-            conn=conn, topic_tags=["t"],
+            content="c",
+            room_id=room2,
+            source_event_ids=evts2,
+            confidence=0.8,
+            conn=conn,
+            topic_tags=["t"],
         )
         run_matcher(conn)
         candidates = list_promotion_candidates(conn)
