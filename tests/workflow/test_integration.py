@@ -76,13 +76,21 @@ def _init_state(
     task_id: str = _TASK,
     state: WorkflowState = WorkflowState.AWAITING_BRIEF,
     last_transition_at: datetime = _PAST,
+    cycle_started_at: datetime | None = None,
+    cycle: int = 1,
 ) -> None:
-    """Write a state file with a known past last_transition_at."""
+    """Write a state file with a known past last_transition_at.
+
+    cycle_started_at defaults to None (legacy state file — callers fall back to
+    last_transition_at, the pre-W-006 RC-22-buggy boundary). Pass it explicitly
+    to exercise the ADR-008 Decision 16 cycle-relative boundary.
+    """
     s = TaskState(
         task_id=task_id,
         state=state,
-        cycle=1,
+        cycle=cycle,
         last_transition_at=last_transition_at,
+        cycle_started_at=cycle_started_at,
     )
     write_state(s, wdir / f"{task_id}.yaml")
 
@@ -348,6 +356,117 @@ def test_cycle_boundary_filter_fresh_review_counts(git_repo: Path) -> None:
     rc = _advance(git_repo)
     assert rc == 0
     assert read_state(wdir / f"{_TASK}.yaml").state == WorkflowState.AWAITING_R0_A
+
+
+# ---------------------------------------------------------------------------
+# RC-22 cycle-relative boundary (ADR-008 Decision 16 / W-006)
+# Reviews filter against cycle_started_at (stamped only at cycle-boundary),
+# NOT last_transition_at (bumped per-advance) — so a delayed/multi-step
+# advance over a completed cycle cascades with NO override. Both directions
+# tested (arch FM#4): (i) the fix cascades cycle-1 to closed; (ii) Decision 14's
+# original purpose still holds (cycle-2 ignores cycle-1 reviews).
+# ---------------------------------------------------------------------------
+
+
+def _commit_all(repo: Path, msg: str) -> None:
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-m", msg], check=True, capture_output=True)
+
+
+def test_rc22_delayed_advance_cascades_with_cycle_started_at(git_repo: Path) -> None:
+    """Direction (i) — the P2.1/P2.2 stall, fixed. Reviews committed in-cycle
+    but BEFORE last_transition_at (a delayed advance bumped it past them) still
+    cascade, because the filter keys off the stable cycle_started_at instead.
+    Drives all the way to closed (arch FM#5 — exercise the full cascade)."""
+    wdir = _wdir(git_repo)
+
+    cycle_start = datetime.now(UTC)  # cycle boundary
+    # Reviews committed shortly after the cycle started (the real in-cycle case).
+    _make_review(git_repo, "plan-vs-impl.md", "clean")
+    _make_review(git_repo, "R0-A.md", "clean")
+    _commit_all(git_repo, "in-cycle reviews")
+
+    # The bug condition: last_transition_at is LATER than the review commits
+    # (a delayed / multi-step advance bumped it), but cycle_started_at is the
+    # stable boundary BEFORE the reviews.
+    late = datetime.now(UTC) + timedelta(hours=2)
+    _init_state(
+        wdir,
+        state=WorkflowState.AWAITING_SENIOR_PLAN_VS_IMPL,
+        last_transition_at=late,
+        cycle_started_at=cycle_start,
+    )
+
+    # Pre-W-006 this stalled (filter hid the reviews vs `late`); now it cascades.
+    with (
+        patch("orchestrator.workflow.cli._is_pr_merged", return_value=True),
+        patch("orchestrator.workflow.cli.evaluate_merge_clean", return_value=True),
+    ):
+        for _ in range(6):
+            if _advance(git_repo) != 0:
+                break
+            if read_state(wdir / f"{_TASK}.yaml").state == WorkflowState.CLOSED:
+                break
+
+    assert read_state(wdir / f"{_TASK}.yaml").state == WorkflowState.CLOSED
+
+
+def test_rc22_cycle2_still_ignores_cycle1_reviews(git_repo: Path) -> None:
+    """Direction (ii) — Decision 14's original purpose preserved. In cycle 2
+    (cycle_started_at re-stamped at rework, AFTER the cycle-1 reviews), the
+    cycle-1 reviews are before the boundary → filtered to 'absent' → they do
+    NOT drive a transition. Guards against the fix reopening the P1.6 bug."""
+    wdir = _wdir(git_repo)
+
+    # Cycle-1 reviews committed first.
+    _make_review(git_repo, "plan-vs-impl.md", "clean")
+    _make_review(git_repo, "R0-A.md", "clean")
+    _commit_all(git_repo, "cycle-1 reviews")
+
+    # Cycle 2 began AFTER those reviews (rework re-stamped cycle_started_at).
+    cycle2_start = datetime.now(UTC) + timedelta(hours=1)
+    _init_state(
+        wdir,
+        state=WorkflowState.AWAITING_R0_A,
+        last_transition_at=cycle2_start,
+        cycle_started_at=cycle2_start,
+        cycle=2,
+    )
+
+    with patch("orchestrator.workflow.cli._is_pr_merged", return_value=False):
+        rc = _advance(git_repo)
+    assert rc == 0
+    # Cycle-1 reviews are pre-boundary → invisible → no transition.
+    assert read_state(wdir / f"{_TASK}.yaml").state == WorkflowState.AWAITING_R0_A
+
+
+def test_rc22_rework_override_restamps_cycle_started_at(git_repo: Path) -> None:
+    """The stamping invariant: a rework override (architect_decision →
+    junior_impl) re-stamps cycle_started_at; other transitions never do."""
+    import argparse
+
+    from orchestrator.workflow.cli import cmd_override
+
+    wdir = _wdir(git_repo)
+    old_start = _PAST
+    _init_state(
+        wdir,
+        state=WorkflowState.AWAITING_ARCHITECT_DECISION,
+        last_transition_at=_PAST,
+        cycle_started_at=old_start,
+    )
+    args = argparse.Namespace(
+        workflow_dir=str(wdir),
+        task_id=_TASK,
+        to_state="awaiting_junior_impl",
+        reason="rework: re-stamp cycle boundary",
+        actor="architect",
+    )
+    assert cmd_override(args) == 0
+    result = read_state(wdir / f"{_TASK}.yaml")
+    assert result.cycle == 2
+    assert result.cycle_started_at is not None
+    assert result.cycle_started_at > old_start  # re-stamped to the override time
 
 
 # ---------------------------------------------------------------------------

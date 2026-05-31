@@ -51,6 +51,15 @@ class TaskState(BaseModel):
     state: WorkflowState
     cycle: int = Field(default=1, ge=1)  # rework counter; see Decision 11
     last_transition_at: datetime
+    # ADR-008 Decision 16 (W-006, RC-22): the cycle-relative boundary for the
+    # cycle artifact filter (Decision 14) + merge-durable impl detection
+    # (Decision 15). Stamped ONLY at cycle-boundary events — `init` and a
+    # rework override → awaiting_junior_impl — NEVER on a normal advance. This
+    # is the load-bearing invariant: stamping it per-advance (like
+    # last_transition_at) would reincarnate RC-22. None = legacy state file
+    # written before W-006; callers fall back to last_transition_at (the old,
+    # RC-22-buggy boundary) for those — documented migration tradeoff.
+    cycle_started_at: datetime | None = None
     override_history: list[OverrideEntry] = Field(default_factory=list)
     # Schema hook for stub §5.1 — leaves room for future cross-family
     # R0-B gate without forcing it now. Default False = current behavior.

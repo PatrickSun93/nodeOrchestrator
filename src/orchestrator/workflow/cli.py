@@ -310,17 +310,23 @@ def build_artifact_snapshot(
     senior_plan_path = repo_root / "docs" / "process" / "senior-plans" / f"{task_id}.md"
     senior_plan_exists = senior_plan_path.exists()
     adr_status = _read_adr_status(task_id, repo_root)
-    junior_impl_commit_present = _has_junior_impl_commits(
-        task_id, state.last_transition_at, repo_root
-    )
-    # W-005 Decision 14: cycle-boundary filter — review files only count if
-    # touched by a commit since state.last_transition_at. Prevents cycle-2
-    # advance from cascading through cycle-1 artifacts (P1.6 c2b7a12 incident).
+
+    # ADR-008 Decision 16 (W-006, RC-22): the cycle-relative boundary. Use
+    # cycle_started_at — stable across a cascade because it's stamped only at
+    # cycle-boundary events (init / rework), never per-advance. Falls back to
+    # last_transition_at for legacy state files written before W-006 (those
+    # retain the old RC-22-buggy behavior). Unified (arch lean): BOTH the
+    # Decision 14 review filter AND the Decision 15 merge-durable impl detection
+    # key off this one boundary, so the harness has a single cycle-boundary
+    # concept rather than two.
+    cycle_since = state.cycle_started_at or state.last_transition_at
+
+    junior_impl_commit_present = _has_junior_impl_commits(task_id, cycle_since, repo_root)
     plan_vs_impl_verdict = _safe_load_verdict_cycle_filtered(
-        reviews_dir / "plan-vs-impl.md", state.last_transition_at, repo_root
+        reviews_dir / "plan-vs-impl.md", cycle_since, repo_root
     )
     r0_a_verdict = _safe_load_verdict_cycle_filtered(
-        reviews_dir / "R0-A.md", state.last_transition_at, repo_root
+        reviews_dir / "R0-A.md", cycle_since, repo_root
     )
     pr_merged = _is_pr_merged(repo_root)
 
@@ -411,11 +417,15 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 1
 
     wdir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
     state = TaskState(
         task_id=args.task_id,
         state=workflow_state,
         cycle=1,
-        last_transition_at=datetime.now(UTC),
+        last_transition_at=now,
+        # ADR-008 Decision 16 (W-006): stamp the cycle-relative boundary at
+        # init (cycle 1 start). Re-stamped only on a rework override thereafter.
+        cycle_started_at=now,
     )
     try:
         write_state(state, path)

@@ -227,11 +227,23 @@ def record_override(state: TaskState, override: OverrideEntry) -> TaskState:
     # Rework path: awaiting_architect_decision → awaiting_junior_impl increments cycle.
     # Both from_state AND to_state must match — the P1.3 bug was gating on to_state only
     # (ADR-008 Decision 11: cycle increments only on rework transitions).
-    if (
+    is_rework = (
         override.from_state == WorkflowState.AWAITING_ARCHITECT_DECISION
         and override.to_state == WorkflowState.AWAITING_JUNIOR_IMPL
-    ):
+    )
+    update: dict[str, object] = {
+        "state": override.to_state,
+        "last_transition_at": override.timestamp,
+        "override_history": [*state.override_history, override],
+    }
+    if is_rework:
         new_cycle = state.cycle + 1
+        update["cycle"] = new_cycle
+        # ADR-008 Decision 16 (W-006): a rework starts a NEW cycle, so re-stamp
+        # the cycle-relative boundary. This is the ONLY override that re-stamps
+        # it (init is the other stamp site); all other overrides + every advance
+        # leave cycle_started_at untouched.
+        update["cycle_started_at"] = override.timestamp
         if new_cycle >= 4:
             print(
                 f"WARNING: task {state.task_id!r} is entering cycle {new_cycle}. "
@@ -240,14 +252,7 @@ def record_override(state: TaskState, override: OverrideEntry) -> TaskState:
                 file=sys.stderr,
             )
 
-    return state.model_copy(
-        update={
-            "state": override.to_state,
-            "cycle": new_cycle,
-            "last_transition_at": override.timestamp,
-            "override_history": [*state.override_history, override],
-        }
-    )
+    return state.model_copy(update=update)
 
 
 # ---------------------------------------------------------------------------

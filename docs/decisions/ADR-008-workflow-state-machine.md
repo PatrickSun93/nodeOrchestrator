@@ -1,6 +1,6 @@
 # ADR-008: Workflow State Machine + Automation
 
-**Status:** Accepted — 2026-05-21; Amended 2026-05-28 (W-005, Accepted — Route B + AWAITING_SENIOR_REVISION + Decision 14 cycle-boundary filter); Amended 2026-05-29 (RC-21, Accepted — Decision 15 merge-durable impl detection; see Amendments §)
+**Status:** Accepted — 2026-05-21; Amended 2026-05-28 (W-005, Accepted — Route B + AWAITING_SENIOR_REVISION + Decision 14 cycle-boundary filter); Amended 2026-05-29 (RC-21, Accepted — Decision 15 merge-durable impl detection); Amended 2026-05-31 (W-006/RC-22, Accepted — Decision 16 cycle-relative boundary; see Amendments §)
 **Scope:** Governs the new `.workflow/` orchestration harness that
 sequences the architect → senior → junior → reviewer workflow encoded
 in `docs/process/senior-planner.md` and `handoff.md` §16. Defines the
@@ -579,6 +579,30 @@ Both signals survive a merge, restoring symmetry with plan-stage detection. The 
 #### Acceptance (Decision 15)
 
 **Accepted 2026-05-29** by architect (Peidong) in the RC-21 fix session, after implementation + tests landed (gates green: 904 passed). Implementation: `io.py` `_git_branch_merged` + `_git_log_branch_since`; `cli.py` `_has_junior_impl_commits` (the pre/post-merge OR) + `cmd_advance` stall-warn. Same-session draft→accept under the dev-harness exception (zero product runtime coupling; Low reversibility; tests as regression protection). RC-21 graduates from `docs/retrospectives/P1.6.5-candidates.md` (surfaced 08fdf6a) to this Accepted decision.
+
+### 2026-05-31 (W-006 / RC-22) — Status: Accepted
+
+**New Decision 16 — Cycle-relative boundary (replaces `last_transition_at` as the cycle artifact-filter reference).**
+
+**Problem.** The Decision 14 cycle-boundary filter and the Decision 15 merge-durable impl detection both key "in this cycle" off `state.last_transition_at`. But `cmd_advance` bumps `last_transition_at` to `now()` on **every** transition. So a delayed or multi-step `advance` over a completed review cycle bumps the boundary *past* already-committed reviews → the next step reads their verdict as `absent` → the cascade stalls → the architect must override. Hit **twice** (P2.1 close override; P2.2 close override `d54df3c`), each inflating `override_history` with a non-substantive entry — the opposite of the Decision 10 audit-signal intent.
+
+**Decision.** Add `cycle_started_at: datetime | None` to `TaskState`. It is the cycle-relative boundary, **stamped ONLY at cycle-boundary events** — `init` (cycle 1 start) and a rework override (`awaiting_architect_decision → awaiting_junior_impl`, which begins a new cycle) — and **never** on a normal `advance`. `build_artifact_snapshot` filters BOTH the Decision 14 review verdicts AND the Decision 15 impl detection against `cycle_started_at` (falling back to `last_transition_at` when it is `None`, i.e. for legacy pre-W-006 state files).
+
+**The load-bearing invariant (arch FM#1, "stamping-on-replay trap").** `cycle_started_at` must be stamped only at cycle boundaries. Stamping it per-advance (like `last_transition_at`) would reincarnate RC-22 exactly. This is why the stamp lives in `cmd_init` + the rework branch of `record_override`, and nowhere in the advance path.
+
+**Unify (arch lean, architect-accepted).** Both boundaries (review filter + impl detection) use the single `cycle_started_at`, so the harness has ONE cycle-boundary concept, not two. (The alternative — reviews-only, leaving impl detection on `last_transition_at` — was rejected to avoid a latent dual-boundary inconsistency for a future RC.)
+
+**Honest ceiling (arch FM#3).** This makes the boundary *stable across a cascade*; it does not make it *topology-aware*. The comparison is still "review committer-date vs a stored wall-clock," so clock skew or a rebase that moves a review's committer-date past `cycle_started_at` can still misfilter. Decision 16 *reduces* the timestamp-fragility class (same family as RC-21/RC-22); a topology check ("is this review reachable from the current cycle's impl HEAD?") would eliminate it but at much larger surface — deferred.
+
+**Migration (arch FM#6).** Legacy state files lacking `cycle_started_at` fall back to `last_transition_at` (the old RC-22-buggy boundary). All P-series + W-series tasks through P2.2 are closed, so only tasks initialized post-W-006 carry the field; the fallback is a documented, bounded tradeoff, not a silent regression.
+
+**Implementation.** `schema.py` `TaskState.cycle_started_at`; `cli.py` `cmd_init` (stamp at init) + `build_artifact_snapshot` (`cycle_since = cycle_started_at or last_transition_at`, used for both filters); `transitions.py` `record_override` (re-stamp on rework only). Tests (`tests/workflow/test_integration.py`): both directions per arch FM#4 — (i) `test_rc22_delayed_advance_cascades_with_cycle_started_at` drives a delayed-advance cycle-1 all the way to `closed` with no override (arch FM#5); (ii) `test_rc22_cycle2_still_ignores_cycle1_reviews` proves Decision 14's original P1.6 purpose still holds; plus `test_rc22_rework_override_restamps_cycle_started_at` for the stamp invariant.
+
+**Reversibility.** Low — drop the field + revert the filter to `last_transition_at`; RC-22 (and the per-close override burden) returns.
+
+#### Acceptance (Decision 16)
+
+**Accepted 2026-05-31** by architect (Peidong) — arch ran the design discussion (remedy (a-i) cycle_started_at, unify-both, stamp-at-init), architect accepted both leans, the orchestrator implemented. Same-session draft→accept under the dev-harness exception (gates green: 968 passed). RC-22 graduates from `docs/retrospectives/P1.6.5-candidates.md` (surfaced) to this Accepted decision.
 
 ## References
 
