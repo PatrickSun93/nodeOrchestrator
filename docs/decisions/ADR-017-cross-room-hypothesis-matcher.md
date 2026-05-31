@@ -1,6 +1,6 @@
 # ADR-017: Cross-room hypothesis matcher — promotion rule (a), structural on the registry vocabulary, advisory-only
 
-**Status:** Proposed — 2026-05-30 (senior-drafted per P2.2 brief; awaiting architect accept)
+**Status:** Accepted — 2026-05-31 (architect sign-off after R0-A-on-plan + R0-B-cross-family clean, A→α/B→α/G2→α-small absorbed at d9003a7; Proposed 2026-05-30, senior-drafted per P2.2 brief)
 
 **Scope:** Locks the cross-room hypothesis matcher for promotion rule (a): the `run_matcher` contract (grouping predicate over the registry's canonical tag vocabulary, distinct-room threshold, eligibility, determinism, idempotency, monotonicity), the normalize-at-read decision, the advisory-only orthogonality to promotion, and the `list_promotion_candidates` reader. Activates the `candidate_for_promotion` column + `idx_hypothesis_status_candidate` index (shipped unused by ADR-016) on top of the P2.1 tag registry (ADR-018). Governs every downstream memory-intelligence + UI promotion-candidate surface that consumes rule (a). Does NOT re-decide the tag schema/migration (inherited from ADR-018 — D7 below), promotion eligibility or the no-auto-promote invariant (ADR-016 D3/D10 — unchanged), semantic/embeddings matching (deferred), relaxed predicates / un-flagging / cluster-identity / auto-tagging (deferred forward hooks).
 
