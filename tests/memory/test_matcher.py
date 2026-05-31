@@ -382,54 +382,70 @@ class TestRunMatcherInvariants:
         assert reloaded.candidate_for_promotion is True
 
     def test_determinism_scan_order_independence(self) -> None:
-        """Flagged id-set is stable regardless of INSERT / scan order (AC#5).
+        """Flagged SET (not count) is stable across insert order (AC#5, Y1 alpha).
 
-        Shuffled record order is the proxy for SQLite scan-order independence.
-        Flag correctness is by-construction via set operations; the sort is only
-        for stable MatcherResult reporting.
+        Discriminating: a single store seeded with a MIX — a cross-room cluster
+        (2 distinct rooms, same canonical tag) + a singleton (1 room) + a
+        same-room duplicate (2 rows, 1 room, same tag). Only the cross-room
+        cluster must flag. Rows are identified by STABLE content labels (not
+        random ids), so the assertion is on flag *identity*, not count; and a
+        different insert order must yield the SAME flag decision. An order-
+        dependent set-membership regression (same count, different rows) would
+        fail this test — unlike the prior count-only/all-one-cluster version.
+
+        The matcher is deterministic by construction (matcher.py scans
+        ORDER BY id ASC + groups by frozenset / set-of-distinct-rooms); this
+        test can now fail if that ever regresses.
         """
-        store1, conn1 = _make_full_store()
-        store2, conn2 = _make_full_store()
+        # content label -> (room name, tag). Cluster spans rooms A+B (same
+        # canonical "topic-x" via different surface forms); singleton in C;
+        # the dup pair is both in room A (1 distinct room → not cross-room).
+        specs: dict[str, tuple[str, str]] = {
+            "cluster-a": ("A", "Topic X"),    # canonical "topic-x"
+            "cluster-b": ("B", "topic x"),    # canonical "topic-x" (different surface)
+            "singleton": ("C", "unique-y"),   # 1 room
+            "dup-1": ("A", "dup-z"),          # same-room dup (room A)
+            "dup-2": ("A", "dup-z"),          # ... both room A → 1 distinct room
+        }
+        expected_flagged = {"cluster-a", "cluster-b"}
 
-        # Room + event setup for both stores.
-        def _seed(
-            store: EventStore, conn: sqlite3.Connection, insert_order: list[int]
-        ) -> list[str]:
-            rooms = [_make_room_with_events(store) for _ in range(3)]
-            hyps: list[str] = []
-            for i in insert_order:
-                room_id, evts = rooms[i % len(rooms)]
-                h = record_hypothesis(
-                    content=f"c{i}",
+        def _run(order: list[str]) -> set[str]:
+            store, conn = _make_full_store()
+            rooms = {name: _make_room_with_events(store) for name in ("A", "B", "C")}
+            for label in order:
+                room_name, tag = specs[label]
+                room_id, evts = rooms[room_name]
+                record_hypothesis(
+                    content=label,
                     room_id=room_id,
                     source_event_ids=evts,
                     confidence=0.8,
                     conn=conn,
-                    topic_tags=["cluster-tag"],
+                    topic_tags=[tag],
                 )
-                hyps.append(h.id)
-            return hyps
+            run_matcher(conn, min_rooms=2)
+            return {
+                row["content"]
+                for row in conn.execute(
+                    "SELECT content FROM hypothesis WHERE candidate_for_promotion = 1"
+                ).fetchall()
+            }
 
-        _seed(store1, conn1, insert_order=[0, 1, 2])
-        _seed(store2, conn2, insert_order=[2, 0, 1])  # shuffled
+        order1 = ["cluster-a", "cluster-b", "singleton", "dup-1", "dup-2"]
+        order2 = ["dup-2", "singleton", "cluster-b", "dup-1", "cluster-a"]  # shuffled
 
-        run_matcher(conn1)
-        run_matcher(conn2)
+        flagged_order1 = _run(order1)
+        flagged_order2 = _run(order2)
 
-        flagged1 = {
-            row["id"]
-            for row in conn1.execute(
-                "SELECT id FROM hypothesis WHERE candidate_for_promotion = 1"
-            ).fetchall()
-        }
-        flagged2 = {
-            row["id"]
-            for row in conn2.execute(
-                "SELECT id FROM hypothesis WHERE candidate_for_promotion = 1"
-            ).fetchall()
-        }
-        # Both stores have the same COUNT flagged (same structure, different IDs).
-        assert len(flagged1) == len(flagged2) == 3
+        # Exact flag DECISION by stable content label: only the cross-room cluster.
+        assert flagged_order1 == expected_flagged, (
+            f"order1 flagged {flagged_order1}, expected {expected_flagged}"
+        )
+        # Different insert order → identical flag decision (not just same count).
+        assert flagged_order2 == expected_flagged, (
+            f"order2 flagged {flagged_order2}, expected {expected_flagged}"
+        )
+        assert flagged_order1 == flagged_order2
 
 
 # ---------------------------------------------------------------------------

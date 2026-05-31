@@ -3,7 +3,9 @@ task_id: P2.2
 round: plan-vs-impl
 reviewer: senior
 impl_commit: a7f529d
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 1🟡 3🟢); Y1 → α absorbed (determinism test strengthened), bumped per RC-10
 findings_count:
   red: 0
   yellow: 1
@@ -74,3 +76,11 @@ No schema/ALTER work (correctly inherited from ADR-018 — the biggest rebase de
 2. **Greens** are affirmations; the G3 AST-guard `.append`-receiver nuance is an optional hardening the junior can absorb without an architect call.
 
 Per ADR-008 Amendment 1 (Route B), state auto-advances to `awaiting_R0_A` regardless of this verdict; R0-A (+ R0-B, dual-lens dispatched) fire, then joint-verdict evaluation. This 🟡 makes the joint verdict non-clean → `awaiting_architect_decision` for routing.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+Architect routed Y1 → α (`architect-routing-on-impl.md`, 2026-05-31; R0-A + R0-B both clean — the senior plan-vs-impl was the lone finding, architect-partner-verified real before routing). Absorbed in the senior revision: `tests/memory/test_matcher.py::test_determinism_scan_order_independence` is rewritten into a **discriminating** test — a single store seeded with a MIX (cross-room cluster + singleton + same-room dup), asserting the **exact flagged set == the cluster rows by stable `content` labels** (not count, not random id), and that a **different insert order yields the same flag decision**. It now fails on an order-dependent flagged-*set* regression (the prior count-only/all-one-cluster version could not). **Test-only; no `src/` change** (the matcher is deterministic by construction — `ORDER BY id ASC` + frozenset grouping). Gates green: ruff ✓ · mypy --strict ✓ (21 files) · pytest ✓ (memory + integration). Verdict → **clean**.
+
+(R0-B G6 forward-notes — `run_matcher` self-commit / COUNT-then-UPDATE / private-helper reuse — are surface-only RC-25 candidates, deferred to a possible future ADR-017 amendment; the optional AST-guard `.append`-receiver hardening was left unbundled. Neither is routed this cycle.)
