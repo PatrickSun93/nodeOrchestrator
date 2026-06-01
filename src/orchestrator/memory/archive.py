@@ -98,7 +98,5 @@ def list_project_archives(
             (scope.value,),
         ).fetchall()
     else:
-        rows = conn.execute(
-            "SELECT * FROM project_archive ORDER BY room_id ASC"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM project_archive ORDER BY room_id ASC").fetchall()
     return [_row_to_project_archive(row) for row in rows]

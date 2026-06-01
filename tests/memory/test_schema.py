@@ -16,9 +16,11 @@ from orchestrator.core.event import (
 )
 from orchestrator.memory.schema import (
     Entity,
+    EntityScope,
     EntityType,
     Hypothesis,
     HypothesisStatus,
+    ProjectArchive,
     VerifiedKnowledge,
     VKScope,
     generate_entity_id,
@@ -77,6 +79,14 @@ def test_entity_type_enum_values() -> None:
     assert EntityType.PROJECT.value == "project"
     assert EntityType.CONCEPT.value == "concept"
     assert EntityType.PAPER.value == "paper"
+    assert EntityType.PREFERENCE.value == "preference"
+
+
+def test_entity_scope_enum_values() -> None:
+    assert EntityScope.PERSONAL.value == "personal"
+    assert EntityScope.TEAM.value == "team"
+    assert EntityScope.PROJECT.value == "project"
+    assert EntityScope.GLOBAL.value == "global"
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +285,95 @@ def test_entity_required_field_absent() -> None:
             # type missing
             created_at=TimestampMs(1_700_000_000_000),
         )
+
+
+def test_entity_scope_defaults_to_personal() -> None:
+    e = _make_entity()
+    assert e.scope == EntityScope.PERSONAL
+
+
+def test_entity_evidence_defaults_to_empty() -> None:
+    e = _make_entity()
+    assert e.evidence == {}
+
+
+def test_entity_scope_and_evidence_round_trip() -> None:
+    e = _make_entity(
+        scope=EntityScope.PROJECT,
+        evidence={"declared_by": "peidong"},
+    )
+    assert e.scope == EntityScope.PROJECT
+    assert e.evidence == {"declared_by": "peidong"}
+
+
+# ---------------------------------------------------------------------------
+# ProjectArchive model — §6 schema invariants
+# ---------------------------------------------------------------------------
+
+
+def _make_archive(**overrides: object) -> ProjectArchive:
+    defaults: dict[str, object] = {
+        "room_id": generate_room_id(),
+        "title": "Test Project",
+        "duration_ms": 3600000,
+        "one_line_summary": "A project about testing.",
+        "created_at": TimestampMs(1_700_000_000_000),
+    }
+    defaults.update(overrides)
+    return ProjectArchive(**defaults)  # type: ignore[arg-type]
+
+
+def test_archive_valid_construction() -> None:
+    a = _make_archive()
+    assert a.decision_log == []
+    assert a.spinoff_questions == []
+    assert a.scope == EntityScope.PROJECT
+    assert a.evidence == {}
+
+
+def test_archive_frozen() -> None:
+    a = _make_archive()
+    with pytest.raises(ValidationError):
+        a.title = "mutated"
+
+
+def test_archive_extra_fields_forbidden() -> None:
+    with pytest.raises(ValidationError):
+        ProjectArchive(  # type: ignore[call-arg]
+            room_id=generate_room_id(),
+            title="T",
+            duration_ms=0,
+            one_line_summary="S",
+            created_at=TimestampMs(1_700_000_000_000),
+            unexpected="x",
+        )
+
+
+def test_archive_required_field_absent() -> None:
+    with pytest.raises(ValidationError):
+        ProjectArchive(  # type: ignore[call-arg]
+            room_id=generate_room_id(),
+            title="T",
+            # duration_ms missing
+            one_line_summary="S",
+            created_at=TimestampMs(1_700_000_000_000),
+        )
+
+
+def test_archive_duration_ms_non_negative() -> None:
+    a = _make_archive(duration_ms=0)
+    assert a.duration_ms == 0
+    with pytest.raises(ValidationError):
+        _make_archive(duration_ms=-1)
+
+
+def test_archive_decision_log_and_spinoff_round_trip() -> None:
+    a = _make_archive(
+        decision_log=[{"decision": "use sqlite", "rationale": "simple"}],
+        spinoff_questions=["What about Postgres?"],
+    )
+    assert a.decision_log == [{"decision": "use sqlite", "rationale": "simple"}]
+    assert a.spinoff_questions == ["What about Postgres?"]
 
 
 # ---------------------------------------------------------------------------

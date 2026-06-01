@@ -1,4 +1,5 @@
-"""Constitutional tests for memory/: no-LLM + matcher advisory orthogonality.
+"""Constitutional tests for memory/: no-LLM + matcher advisory orthogonality
++ Principle-11 EntityType.PREFERENCE usage guard.
 
 Per ADR-016 Hard Requirements + handoff.md §3.1 (Principle 5):
 promotion eligibility is code, not LLM judgment. No LLM SDK or
@@ -10,8 +11,14 @@ The orthogonality guard uses a real AST call/import check (B routing,
 plan P2.2-4) rather than a whole-file substring scan, so the matcher's
 own orthogonality docstring does NOT trip the guard.
 
-If either test fails: do NOT fix the test. Investigate whether the
-invariant must change, then write an ADR.
+Per ADR-020 D5 (Y1 → alpha): EntityType.PREFERENCE may be constructed/used
+ONLY inside entity.py's record_preference, record_entity, and list_preferences.
+The guard uses real AST Attribute nodes (not substring — RC-24) so it catches
+any future memory/ module that constructs Entity(type=EntityType.PREFERENCE)
+without going through the user_id-required path.
+
+If any test fails: do NOT fix the test. Investigate whether the invariant
+must change, then write an ADR.
 """
 
 from __future__ import annotations
@@ -197,4 +204,84 @@ def test_matcher_advisory_orthogonality_ast_guard() -> None:
     assert not violations, (
         "matcher.py contains forbidden promotion/event-append references "
         "(ADR-017 advisory orthogonality violated):\n" + "\n".join(violations)
+    )
+
+
+def test_principle_11_preference_ast_guard() -> None:
+    """EntityType.PREFERENCE may only be used in entity.py's record_preference,
+    record_entity, and list_preferences.
+
+    Per ADR-020 D5 (Y1 → alpha): any other memory/ module constructing
+    Entity(type=EntityType.PREFERENCE) would bypass the user_id-required path
+    and violate Principle 11 (no LLM-inferred preferences). This guard uses
+    real AST Attribute nodes (not substring — RC-24, mirror
+    test_matcher_advisory_orthogonality_ast_guard's idiom).
+
+    The enum definition in schema.py (`PREFERENCE = "preference"`) is an
+    ast.Assign, not an ast.Attribute access, so it is NOT flagged.
+    _row_to_entity's EntityType(row["type"]) is an ast.Call, not ast.Attribute,
+    so it is NOT flagged either.
+
+    Discriminating: adding EntityType.PREFERENCE as an ast.Attribute reference
+    in a non-allowed file (e.g. store.py or a new archive2.py) would fail
+    this test even if the function name is in the allowed set but the filename
+    is not entity.py.
+    """
+    _allowed: frozenset[tuple[str, str]] = frozenset(
+        {
+            ("entity.py", "record_preference"),
+            ("entity.py", "record_entity"),
+            ("entity.py", "list_preferences"),
+        }
+    )
+
+    class _PreferenceRefCollector(ast.NodeVisitor):
+        def __init__(self, filepath: Path) -> None:
+            self.filepath = filepath
+            self._fn_stack: list[str] = []
+            self.violations: list[str] = []
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self._fn_stack.append(node.name)
+            self.generic_visit(node)
+            self._fn_stack.pop()
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self._fn_stack.append(node.name)
+            self.generic_visit(node)
+            self._fn_stack.pop()
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            if (
+                node.attr == "PREFERENCE"
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "EntityType"
+            ):
+                fn_name = self._fn_stack[-1] if self._fn_stack else "<module-level>"
+                filename = self.filepath.name
+                if (filename, fn_name) not in _allowed:
+                    self.violations.append(
+                        f"  {self.filepath.relative_to(_MEMORY_SRC.parent.parent)}: "
+                        f"line {node.lineno}: EntityType.PREFERENCE in "
+                        f"{filename}:{fn_name} (not in allowed set)"
+                    )
+            self.generic_visit(node)
+
+    all_violations: list[str] = []
+    for py_path in _MEMORY_SRC.rglob("*.py"):
+        if "__pycache__" in py_path.parts:
+            continue
+        try:
+            source = py_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        tree = ast.parse(source, filename=str(py_path))
+        collector = _PreferenceRefCollector(py_path)
+        collector.visit(tree)
+        all_violations.extend(collector.violations)
+
+    assert not all_violations, (
+        "EntityType.PREFERENCE referenced outside the allowed set "
+        "{entity.py: record_preference/record_entity/list_preferences} "
+        "(ADR-020 D5 Principle-11 structural guard violated):\n" + "\n".join(all_violations)
     )
