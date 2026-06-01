@@ -33,11 +33,13 @@ from orchestrator.core.event import (
     TYPED_METADATA,
     Event,
     EventType,
+    ExternalValidationMeta,
     StateTransitionMeta,
     build_author,
     generate_event_id,
     generate_room_id,
     now_ms,
+    validate_metadata,
 )
 from orchestrator.llm.types import AgentAutonomyThresholds, AgentLLMConfig, ModelId
 
@@ -606,3 +608,149 @@ def test_agent_applies_to_custom_override() -> None:
     )
     assert a.applies_to.room_types == ["research"]
     assert a.applies_to.room_states == ["exploration"]
+
+
+# ===========================================================================
+# ExternalValidationMeta (core/event.py P2.3-2) — §4 exception payloads + §5 boundary validators
+# ===========================================================================
+
+_VALID_HYP_ID = "hyp_" + "a" * 32
+
+
+def test_external_validation_meta_in_typed_metadata() -> None:
+    assert TYPED_METADATA[EventType.EXTERNAL_VALIDATION] is ExternalValidationMeta
+
+
+def test_external_validation_meta_accepts_valid_confirmed() -> None:
+    m = ExternalValidationMeta(
+        source="ci",
+        verdict="confirmed",
+        validated_hypothesis_id=_VALID_HYP_ID,
+    )
+    assert m.verdict == "confirmed"
+    assert m.evidence_ref is None
+
+
+def test_external_validation_meta_accepts_all_verdict_values() -> None:
+    for v in ("confirmed", "refuted", "inconclusive"):
+        m = ExternalValidationMeta(
+            source="doi-resolver",
+            verdict=v,
+            validated_hypothesis_id=_VALID_HYP_ID,
+        )
+        assert m.verdict == v
+
+
+def test_external_validation_meta_accepts_evidence_ref() -> None:
+    m = ExternalValidationMeta(
+        source="ci",
+        verdict="confirmed",
+        validated_hypothesis_id=_VALID_HYP_ID,
+        evidence_ref="https://example.com/run/42",
+    )
+    assert m.evidence_ref == "https://example.com/run/42"
+
+
+def test_external_validation_meta_missing_source_raises() -> None:
+    with pytest.raises(ValidationError):
+        ExternalValidationMeta(
+            verdict="confirmed",
+            validated_hypothesis_id=_VALID_HYP_ID,
+        )  # type: ignore[call-arg]
+
+
+def test_external_validation_meta_empty_source_raises() -> None:
+    with pytest.raises(ValidationError):
+        ExternalValidationMeta(
+            source="", verdict="confirmed", validated_hypothesis_id=_VALID_HYP_ID
+        )
+
+
+def test_external_validation_meta_invalid_verdict_raises() -> None:
+    with pytest.raises(ValidationError):
+        ExternalValidationMeta(
+            source="ci",
+            verdict="unknown",  # type: ignore[arg-type]
+            validated_hypothesis_id=_VALID_HYP_ID,
+        )
+
+
+def test_external_validation_meta_bad_hyp_id_pattern_raises() -> None:
+    with pytest.raises(ValidationError):
+        ExternalValidationMeta(
+            source="ci",
+            verdict="confirmed",
+            validated_hypothesis_id="notahypid",
+        )
+
+
+def test_external_validation_meta_wrong_prefix_raises() -> None:
+    with pytest.raises(ValidationError):
+        ExternalValidationMeta(
+            source="ci",
+            verdict="confirmed",
+            validated_hypothesis_id="vk_" + "a" * 32,  # vk_ prefix, not hyp_
+        )
+
+
+def test_external_validation_meta_extra_forbid() -> None:
+    with pytest.raises(ValidationError):
+        ExternalValidationMeta(
+            source="ci",
+            verdict="confirmed",
+            validated_hypothesis_id=_VALID_HYP_ID,
+            unknown_field="x",  # type: ignore[call-arg]
+        )
+
+
+def test_external_validation_meta_frozen() -> None:
+    m = ExternalValidationMeta(
+        source="ci",
+        verdict="confirmed",
+        validated_hypothesis_id=_VALID_HYP_ID,
+    )
+    with pytest.raises((ValidationError, TypeError)):
+        m.verdict = "refuted"
+
+
+def test_validate_metadata_external_validation_wellformed() -> None:
+    result = validate_metadata(
+        EventType.EXTERNAL_VALIDATION,
+        {
+            "source": "ci",
+            "verdict": "confirmed",
+            "validated_hypothesis_id": _VALID_HYP_ID,
+        },
+    )
+    assert result["verdict"] == "confirmed"
+    assert result["evidence_ref"] is None
+
+
+def test_validate_metadata_external_validation_missing_field_raises() -> None:
+    from orchestrator.core.event import MetadataValidationError
+
+    with pytest.raises(MetadataValidationError):
+        validate_metadata(
+            EventType.EXTERNAL_VALIDATION,
+            {"source": "ci", "verdict": "confirmed"},  # missing validated_hypothesis_id
+        )
+
+
+def test_validate_metadata_external_validation_bad_verdict_raises() -> None:
+    from orchestrator.core.event import MetadataValidationError
+
+    with pytest.raises(MetadataValidationError):
+        validate_metadata(
+            EventType.EXTERNAL_VALIDATION,
+            {"source": "ci", "verdict": "bad_value", "validated_hypothesis_id": _VALID_HYP_ID},
+        )
+
+
+def test_validate_metadata_external_validation_bad_hyp_id_raises() -> None:
+    from orchestrator.core.event import MetadataValidationError
+
+    with pytest.raises(MetadataValidationError):
+        validate_metadata(
+            EventType.EXTERNAL_VALIDATION,
+            {"source": "ci", "verdict": "confirmed", "validated_hypothesis_id": "bad-id"},
+        )
