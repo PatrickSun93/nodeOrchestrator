@@ -13,7 +13,7 @@ P2.5 is the first place all the read-side memory surfaces are *consumed and comp
 
 The clean structural expression of this boundary (D3/D4): **`assemble_reentry(...)` is pure code and makes no LLM call; `render_reentry_prose(...)` makes the only LLM call, over the frozen digest `assemble_reentry` already produced.** Selection and phrasing are separate functions; a constitutional AST guard enforces that the assembly path is LLM-free (D6).
 
-This ADR governs: Principle 5 (no LLM in `memory/`; the consumer is outside `memory/` and its LLM use is content-gen render only), Principle 11 (no LLM selection/ranking/ordering — deterministic code), determinism (the code-assembled digest is deterministic; only the prose varies), and the dependency direction (`memory/`/`core/` MUST NOT import the consumer).
+This ADR governs: Principle 5 (no LLM in `memory/`; the consumer is outside `memory/` and its LLM use is content-gen render only), Principle 11 (no LLM selection/ranking/ordering — deterministic code), determinism (the code-assembled digest is deterministic; only the prose varies), and the dependency direction (no upstream layer — `core/`/`memory/`/`derived/`/`llm/` — imports the consumer).
 
 ## Decisions
 
@@ -27,7 +27,7 @@ The catch-up consumer composes `memory/` readers + `derived/` (snapshot) + `llm/
 - `reentry/schema.py` — `ReentryDigest` + sub-models (D7).
 - `reentry/store.py` — the `reentry_marker` table + `init_reentry_schema` (D5).
 
-**Dependency direction**: `reentry/` imports `memory/` + `derived/` + `core/` + `llm/`. **`memory/` and `core/` MUST NOT import `reentry/`** — a new constitutional import guard (`test_constitution_*_does_not_import_reentry`, AST/import check mirroring the existing `core`-no-import guards). `reentry/` is the consumer; nothing upstream depends on it.
+**Dependency direction**: `reentry/` imports `memory/` + `derived/` + `core/` + `llm/`. **No upstream layer may import `reentry/`** — the constitutional import guard asserts that **`core/`, `memory/`, `derived/`, AND `llm/`** (every layer `reentry/` consumes) do not import `reentry/` (Y2 → α — not just `memory/`+`core/`; a real-AST/import check, mirroring the existing `core`-no-import guards). `reentry/` is the leaf consumer; nothing upstream depends on it.
 
 ### 2. One slice — re-entry assembly + leave-time generation together (architect-decided)
 
@@ -70,37 +70,56 @@ CREATE TABLE IF NOT EXISTS reentry_marker (
 
 Upserted at leave-time (`record_leave_marker(room_id, user_id, ts, conn)` — one row per `(room_id, user_id)`, latest-wins, mirroring the P2.4 preference upsert posture), read at return for the diff. It lives in `reentry/store.py` (the consumer owns it; co-located in the same SQLite file via `init_reentry_schema`, per ADR-016 D5's same-file pattern) — **not** in `memory/` (the marker is consumer infrastructure, not a cross-room domain fact). A new event type for the marker was considered and rejected: an `EventType` is for canonical domain facts (Principle 1), and a per-user last-seen pointer is consumer state, not a domain event — a core-vocabulary expansion would be overkill here.
 
+**Leave-time ProjectArchive generation — the second content-gen surface, in P2.5** (Y1 → α; architect-ruled in-scope, not deferred to P2.6). At leave/close, `reentry/leave.py` **genuinely generates** the archive's semantic fields — `one_line_summary` and `spinoff_questions` — from the room's facts via a real LLM call, using a **second, distinct content-gen purpose `LLMPurpose.ARCHIVE_SUMMARY_RENDER`** (D9; **not** `REENTRY_DIGEST_RENDER` — different surface, different prompt; reusing it would be the `SNAPSHOT_SEMANTIC`-style semantic-mismatch this ADR warns against). The code-derived fields (`decision_log` via `produce_decision_log`, `duration_ms`) are composed in code; the semantic fields are content-gen; the whole archive is then persisted via `record_project_archive` (ADR-020 D3). This is still Principle-5-clean: the generation happens in `reentry/` (outside `memory/`), and the purpose is content-gen (rendering the room's facts into a narrative), never selection/judgment — `ARCHIVE_SUMMARY_RENDER` is one of exactly two LLM call sites, both content-gen render, both forbidden in the selection functions by the LLM-free guard (D6).
+
 ### 6. Tag-derivation — `derive_query_tags(room_id, *, conn) -> list[str]` (code; the Principle-11 boundary)
 
 `lookup_verified_knowledge` *requires* a non-empty `topic_tags` set (ADR-016 D6 raises on empty). So the catch-up must **code-derive which tags to query** — it must NOT let an LLM guess "what's relevant to this user" (Principle 11). The rule: `derive_query_tags` returns the **union of canonical `topic_tags` from the room's recorded hypotheses** (a deterministic code function over `hypothesis WHERE room_id = ?` — via a thin `memory/` reader `list_room_topic_tags(room_id, *, conn)` so `memory/` stays the owner of its table). The room's own topic vocabulary determines which cross-room VK is relevant. If the union is empty (an untagged / first-visit room), `derive_query_tags` returns `[]` and the consumer **skips** the VK lookup (it does not pass `[]` to `lookup` — D9).
 
-The structural guard that the assembly path is LLM-free (D1/D3): a constitutional **AST guard** asserts that `reentry/digest.py`'s assembly + selection functions (`assemble_reentry`, `derive_query_tags`, the diff) reference no `LLMRequest` / `llm_router` / `.call(` — the LLM is confined to `render.py::render_reentry_prose`. This is the Principle-11 "no LLM in selection" enforcement (real AST, not substring — RC-24; mirrors the matcher/validation/preference guards).
+`derive_query_tags` lives in **`reentry/digest.py`** (with `assemble_reentry` — it feeds the VK lookup during assembly, a re-entry concern, not a leave-time one; this is the canonical location, used consistently in the plan).
+
+The structural guard that the assembly path is LLM-free (D1/D3): a constitutional **AST guard** scoped **by named selection function, not by file** (Y1-fix → α). It asserts that the selection/assembly functions — **`assemble_reentry`, `derive_query_tags`, and the marker diff** — reference no `LLMRequest` / `llm_router` / `.call(`, **wherever they live**. The function-keyed scope (not "`digest.py` is LLM-free") is required because `reentry/leave.py` now legitimately hosts a content-gen call (`ARCHIVE_SUMMARY_RENDER`, D5), so a blanket file rule would either false-trip `leave.py` or leave `derive_query_tags` unprotected if it ever moved. Conversely, LLM use is **confined to exactly the two render call sites** — `render_reentry_prose` (`REENTRY_DIGEST_RENDER`) and the leave-time archive-summary render (`ARCHIVE_SUMMARY_RENDER`); the guard forbids any LLM reference inside the named selection functions. This is the Principle-11 "no LLM in selection" enforcement (real AST, not substring — RC-24; mirrors the matcher/validation/preference guards).
 
 ### 7. `ReentryDigest` — a new frozen return model (`extra="forbid"`)
 
 `reentry/schema.py`:
 
 ```python
+class NewSinceLeaveItem(BaseModel):           # frozen + extra="forbid" (Y3 → α — typed, not dict)
+    fact_type: Literal["verified_knowledge", "event"]  # the two diffed fact-types (D8)
+    ref_id: str                               # the VK id / event id
+    label: str                                # a code-produced short label (content, not summary)
+    occurred_at: TimestampMs                  # last_validated (VK) / timestamp (event)
+
 class ReentryDigest(BaseModel):               # frozen + extra="forbid"
     room_id: RoomId
     archive: ProjectArchive | None            # get_project_archive(room_id); None on first visit
     recalled_knowledge: list[VerifiedKnowledge]  # lookup result (ordered), [] if no tags
     entities: list[Entity]                    # relevant entities (code-filtered)
     preferences: list[Entity]                 # the user's preferences (type=PREFERENCE)
-    new_since_leave: list[dict[str, Any]]     # code diff vs last_seen_ts (typed-light; structured)
+    new_since_leave: list[NewSinceLeaveItem]  # code diff vs last_seen_ts; [] on first visit (D8)
     last_seen_ts: int | None                  # the leave-marker (None on first visit)
     generated_at: TimestampMs
 ```
 
-Frozen + `extra="forbid"` (the schema-invariant pattern). It carries the **code-selected fact-set only**; the prose is the separate `render_reentry_prose` output (kept out of the deterministic model so the tested core is fully deterministic). `new_since_leave` is a structured list of new-fact descriptors (not free text — code-produced).
+Both frozen + `extra="forbid"` (the schema-invariant pattern). `ReentryDigest` carries the **code-selected fact-set only**; the prose is the separate `render_reentry_prose` output (kept out of the deterministic model so the tested core is fully deterministic). `new_since_leave` is a **typed** descriptor list (Y3 → α — not `dict[str, Any]`): each `NewSinceLeaveItem` is a code-produced pointer to a new fact, never free text.
 
-### 8. Empty / first-visit graceful
+### 8. `new_since_leave` semantics + empty / first-visit graceful
 
-The consumer handles the empty cases without crashing (D9 / the cleanup tests): first visit (no `reentry_marker` → `last_seen_ts=None`, `new_since_leave` = everything-or-empty per the rule), no archive (`None`), no VK (skip lookup — do **not** pass `[]`), empty memory. The catch-up degrades to "Welcome — nothing recorded yet" rather than raising.
+**`new_since_leave` content** (Y3 → α): the **code diff** against the leave-marker contains exactly two fact-types — **verified knowledge** newly validated since leave (VK with `last_validated > last_seen_ts`) and **room events** since leave (events with `timestamp > last_seen_ts`) — each as a typed `NewSinceLeaveItem` (D7). Selection is the timestamp comparison (code); ordering is `occurred_at` ascending.
 
-### 9. A new content-gen `LLMPurpose` (ADR-gated)
+**First-visit rule** (Y3 → α, dual-lens — both lenses hit the undefined case): when there is **no leave-marker** (`last_seen_ts is None`), **`new_since_leave = []`** — a visit where the user never left is not a "return", so "what's new since you left" is empty (the *what's here* is carried by the other digest fields: `archive`, `recalled_knowledge`, `entities`, `preferences`). Returning `[all facts]` on a first visit would make the rendered prose ("since you left, X happened") misleading.
 
-`LLMPurpose.REENTRY_DIGEST_RENDER = "reentry_digest_render"` is added to `llm/purposes.py` (the taxonomy says adding a purpose requires an ADR — this is that ADR). It is **content-gen** (prose rendering of a code-assembled fact-set), the only new LLM surface in P2.5, and confined to `reentry/render.py`. (Verify no `LLMPurpose`-exhaustiveness test breaks — add the value to any per-value test, mirror the P2.3 EventType-addition discipline.)
+**Empty / first-visit graceful**: the consumer handles the empty cases without crashing (the cleanup tests): first visit (`last_seen_ts=None` → `new_since_leave=[]`, no crash), no archive (`None`), no VK / **no derivable tags → skip the lookup (do NOT pass `[]`** — `lookup_verified_knowledge` raises on empty `topic_tags`), empty memory. The catch-up degrades to "Welcome — nothing recorded yet" rather than raising.
+
+### 9. Two new content-gen `LLMPurpose` values (ADR-gated)
+
+P2.5 adds **two** content-gen purposes to `llm/purposes.py` (the taxonomy says adding a purpose requires an ADR — this is that ADR; both are added this cycle per the Y1 routing):
+
+- **`REENTRY_DIGEST_RENDER`** — prose-rendering the assembled `ReentryDigest` into the welcome-back catch-up (D4); confined to `reentry/render.py::render_reentry_prose`.
+- **`ARCHIVE_SUMMARY_RENDER`** — generating the leave-time `ProjectArchive`'s `one_line_summary` / `spinoff_questions` from the room's facts (D5); confined to `reentry/leave.py`.
+
+Both are **content-gen** (rendering a code-assembled / code-fetched fact-set into natural language), never routing/judgment; they are the **only two** LLM call sites in `reentry/`, and the LLM-free-selection guard (D6) forbids LLM use anywhere else (the selection functions). A reviewer grepping `LLMPurpose` sees exactly these two content-gen render surfaces. (No `LLMPurpose`-exhaustiveness/usage test exists — verified — so adding the values is safe.)
 
 ## Considered alternatives
 

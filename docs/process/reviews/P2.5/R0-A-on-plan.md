@@ -1,7 +1,7 @@
 ---
 task_id: P2.5
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
   yellow: 4
@@ -11,6 +11,10 @@ verdict_history:
     at_commit: 3934d81
     findings_count: { red: 0, yellow: 4, green: 9 }
     note: initial R0-A-on-plan (in-family); the constitutional core (no LLM in selection/ranking/ordering — the highest-risk surface) is CLEAN + AST-guarded; Y1 (leave-time content-gen surface + the LLM-free-guard scope are tangled) is the only substantive 🟡; Y2–Y4 are low refinements.
+  - verdict: clean
+    at_commit: senior-revision (plan-stage routing absorption)
+    findings_count: { red: 0, yellow: 4, green: 9 }
+    note: 'Y1+Y2+Y3+Y4 all α-absorbed (RC-10 + dual-lens Step 5; Y3 dual-lens ≡ R0-B Y1). Y1 — ARCHIVE_SUMMARY_RENDER content-gen purpose added (llm/purposes.py + ADR D5/D9), derive_query_tags pinned to digest.py, LLM-free guard re-scoped by named function. Y2 — import guard covers core/+memory/+derived/+llm/. Y3 — new_since_leave typed NewSinceLeaveItem + first-visit=[]. Y4 — Q2 decision_trace=N/A + Q4 6-cat walk in PR. r0b-G2 render-output-validation is a forward hook, not bundled.'
 ---
 
 # P2.5 R0-A on plan (architect-dispatched pre-impl review, in-family)

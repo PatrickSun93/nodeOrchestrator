@@ -2,11 +2,19 @@
 task_id: P2.5
 round: R0-B-cross-family
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
   yellow: 1
   green: 6
+verdict_history:
+  - verdict: needs_architect
+    findings_count: { red: 0, yellow: 1, green: 6 }
+    note: initial R0-B-cross-family; the selection/ranking boundary confirmed code-enforced + AST-guarded (no LLM leak into assembly); Y1 (new_since_leave first-visit undefined) ≡ R0-A Y3.
+  - verdict: clean
+    at_commit: senior-revision (plan-stage routing absorption)
+    findings_count: { red: 0, yellow: 1, green: 6 }
+    note: 'Y1 (≡ R0-A Y3) → α absorbed (RC-10 + dual-lens Step 5, two-lens overlap): new_since_leave is now a typed NewSinceLeaveItem with first-visit (last_seen_ts=None) → [] pinned + fact-types named (ADR-021 D7/D8). G2 (render phrasing-only is prompt-enforced — the weakest-link seam) recorded as a forward hook, not bundled.'
 ---
 
 # P2.5 R0-B cross-family review (plan + ADR-021) — room re-entry / 离开-回来追平
