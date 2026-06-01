@@ -1,6 +1,6 @@
 # ADR-021: Room re-entry / 离开-回来追平 — the catch-up consumer (code selects, LLM phrases)
 
-**Status:** Proposed — 2026-06-01 (senior-drafted per P2.5 brief; awaiting architect accept)
+**Status:** Accepted — 2026-06-01 (architect-accepted after plan-stage dual-lens reviews clean: R0-A-on-plan + R0-B-cross-family both `clean`; 4🟡 all routed α and absorbed — Y1 ARCHIVE_SUMMARY_RENDER content-gen purpose + guard re-scope, Y2 import-guard coverage, Y3 new_since_leave first-visit=[], Y4 hygiene)
 
 **Scope:** Builds the room re-entry / 离开-回来追平 experience ("AI 记得我") — the **first consumer** of the read-side memory surface (P2.1–2.4 were all write-side). Pins: the catch-up contract, the **code-decides / LLM-only-phrases** boundary (the constitutional crux), the consumer's placement (a new `orchestrator/reentry/` package outside `memory/`), the leave/return marker, the deterministic tag-derivation feeding `lookup_verified_knowledge`, the `ReentryDigest` return shape, and the new content-gen `LLMPurpose.REENTRY_DIGEST_RENDER`. **One slice** (re-entry assembly + leave-time generation), one ADR (architect-decided). Does NOT govern: LLM extraction producers (P2.6), forgetting/降级, knowledge-graph relations, team-scope, state-machine evolution (P2.7).
 
