@@ -409,3 +409,41 @@ def test_scenario_z_event_round_trip_via_event_store() -> None:
     rt = validate_metadata(EventType.EXTERNAL_VALIDATION, json.loads(stored_meta_raw))
     assert rt["verdict"] == "confirmed"
     assert rt["evidence_ref"] == "https://example.com/result/99"
+
+
+def test_scenario_z_reader_raises_on_raw_malformed_event() -> None:
+    """A raw-INSERTed malformed external_validation row makes the reader RAISE (Y1 alpha canary).
+
+    Every sanctioned external_validation event goes through EventStore.append ->
+    validate_metadata + ExternalValidationMeta extra="forbid", so a metadata shape
+    missing `verdict`/`validated_hypothesis_id` is unreachable via append(). The ONLY
+    way to construct it is a raw INSERT bypassing EventStore.append — and per ADR-019 D2
+    the reader must surface that loudly (KeyError constitutional canary), NOT silently
+    skip it. This guards the reader's direct-subscript posture against future drift back
+    to `.get()`-skip.
+    """
+    import pytest
+
+    store, conn = _make_store()
+    room, _evts = _make_room(store, n_events=1)
+
+    # Raw INSERT bypassing EventStore.append / validate_metadata: metadata lacks 'verdict'.
+    conn.execute(
+        "INSERT INTO events"
+        " (id, parent_id, room_id, type, author, timestamp, content, metadata)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            generate_event_id(),
+            None,
+            room.id,
+            "external_validation",
+            "system",
+            now_ms(),
+            "raw malformed validation (no verdict key)",
+            json.dumps({"source": "ci"}),  # missing verdict + validated_hypothesis_id
+        ),
+    )
+    conn.commit()
+
+    with pytest.raises(KeyError):
+        list_externally_validated_candidates(conn)

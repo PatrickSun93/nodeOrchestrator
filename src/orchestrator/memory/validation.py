@@ -37,10 +37,13 @@ def list_externally_validated_candidates(conn: sqlite3.Connection) -> list[Hypot
     confirmed_ids: set[str] = set()
     for row in rows:
         meta = json.loads(row[0])
-        if meta.get("verdict") == "confirmed":
-            hyp_id = meta.get("validated_hypothesis_id")
-            if hyp_id:
-                confirmed_ids.add(hyp_id)
+        # Direct subscript access (NOT .get()): every stored external_validation event is
+        # guaranteed well-formed by append-time validate_metadata + ExternalValidationMeta's
+        # extra="forbid", so verdict + validated_hypothesis_id are always present. A missing
+        # key means a raw INSERT bypassed EventStore.append — KeyError here is the
+        # constitutional canary (raise, never silently skip; ADR-019 D2 / ADR-018 D4 fail-loud).
+        if meta["verdict"] == "confirmed":
+            confirmed_ids.add(meta["validated_hypothesis_id"])
 
     if not confirmed_ids:
         return []

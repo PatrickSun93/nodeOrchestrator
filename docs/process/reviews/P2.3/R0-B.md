@@ -2,7 +2,9 @@
 task_id: P2.3
 round: R0-B
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 1🟡 5🟢); Y1 → α absorbed, bumped per RC-10
 findings_count:
   red: 0
   yellow: 1
@@ -49,3 +51,9 @@ The Principle-5 boundary — the highest-stakes check in the project — is **cl
 
 1. **Y1 (🟡):** The reader's `.get()` + `if hyp_id:` silently skips malformed metadata — re-opening the exact silent-skip the plan-stage Y1→α routing closed, and contradicting `validation.py`'s own docstring. Lean mirrors both prior reviews' **α**: use direct subscript access (`meta["verdict"]`, `meta["validated_hypothesis_id"]`) so a raw-INSERT bypass raises `KeyError` (the constitutional canary), drop `if hyp_id:`, and optionally add one test asserting the reader raises on a raw-INSERTed malformed row. No `src/` design change — the fix restores exactly the posture the docstring already promises.
 2. **Greens** are cross-family confirmations; no action.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+This cross-family review's lone 🟡 (Y1 — the reader's `.get()` + `if hyp_id:` silent-skip, import-trace-verified) was routed **α** (`architect-routing-on-impl.md`, 2026-05-31; 3-lens consensus, zero divergence). Absorbed in the senior revision: the reader uses **direct subscript access** (`meta["verdict"]`, `meta["validated_hypothesis_id"]`) — a malformed shape (only via a raw `INSERT` bypassing `EventStore.append`) raises `KeyError` (constitutional canary); the `if hyp_id:` guard is dropped; a raise-on-malformed test was added (the canary the e2e omitted). No `src/` design change. The Principle-5 boundary clean verdict (import-trace, this cross-family lens) stands. Gates green (ruff · mypy --strict · pytest). Verdict → **clean**.

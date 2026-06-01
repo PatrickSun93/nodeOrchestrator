@@ -3,7 +3,9 @@ task_id: P2.3
 round: plan-vs-impl
 reviewer: senior
 impl_commit: 7f66ad3
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 1🟡 3🟢); Y1 → α absorbed (reader subscript access + canary test), bumped per RC-10
 findings_count:
   red: 0
   yellow: 1
@@ -75,3 +77,9 @@ Confirmed-only (refuted/inconclusive ignored — two e2e tests); set-dedup for m
 2. **Greens** are affirmations.
 
 Per ADR-008 Amendment 1 (Route B), state auto-advances to `awaiting_R0_A` regardless of this verdict; R0-A (+ R0-B, dual-lens dispatched) fire, then joint-verdict evaluation. This 🟡 makes the joint verdict non-clean → `awaiting_architect_decision` for routing.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+Architect routed Y1 → α (`architect-routing-on-impl.md`, 2026-05-31; **3-lens consensus** — senior plan-vs-impl + R0-A + R0-B-cross-family, zero divergence; Principle-5 boundary confirmed clean by import-trace from two families). Absorbed in the senior revision: the reader (`validation.py`) now uses **direct subscript access** — `meta["verdict"]` and `meta["validated_hypothesis_id"]` — so a malformed metadata shape (only reachable via a raw `INSERT` bypassing `EventStore.append`) raises `KeyError` as the constitutional canary; the `if hyp_id:` silent-skip guard is dropped. This restores the posture the reader's own docstring already promised (raise, never silently skip — ADR-019 D2 / ADR-018 D4). Added `test_scenario_z_reader_raises_on_raw_malformed_event` (raw-`INSERT`ed `external_validation` row missing `verdict` → reader raises) — the canary the e2e previously omitted; it is discriminating (the old `.get()` would have silently skipped and failed `pytest.raises`). **No `src/` design change.** Gates green: ruff ✓ · mypy --strict ✓ (23 files) · pytest ✓ (memory + integration). Verdict → **clean**.

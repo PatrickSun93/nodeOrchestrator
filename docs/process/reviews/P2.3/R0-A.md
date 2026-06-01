@@ -1,7 +1,9 @@
 ---
 task_id: P2.3
 round: R0-A
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 1🟡 5🟢); Y1 → α absorbed, bumped per RC-10
 findings_count:
   red: 0
   yellow: 1
@@ -89,3 +91,9 @@ ruff ✓ · mypy ✓ (61 files) · full pytest green · no-LLM constitution cove
 2. **Greens** are affirmations. The Principle-5 boundary — the reason this dispatch existed — is **clean at impl**, verified by import trace.
 
 R0-A does not change state. R0-B (cross-family) is the separate dispatch; I'll synthesize R0-A + R0-B + senior plan-vs-impl for routing once R0-B lands. The rule-(c) impl is correct on every constitutional invariant; Y1 is a one-spot fix to honor a resolution the code already documents. Branch left checked out clean for the R0-B pass.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+This review's lone 🟡 (Y1 — the reader's `.get()` silent-skip) was routed **α** (`architect-routing-on-impl.md`, 2026-05-31; 3-lens consensus with senior plan-vs-impl + R0-B-cross-family). Absorbed in the senior revision: the reader now uses **direct subscript access** (`meta["verdict"]`, `meta["validated_hypothesis_id"]`) so a raw-`INSERT` bypass raises `KeyError` (constitutional canary); the `if hyp_id:` silent-skip is dropped; a raise-on-malformed test was added. No `src/` design change — the Principle-5 boundary, the representation, and the pure-derivation reader are confirmed clean (this review's import-trace included). Gates green (ruff · mypy --strict · pytest). Verdict → **clean**.
