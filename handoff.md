@@ -324,6 +324,17 @@ P2.1: tag registrations ride the same transaction (resolve_tags is transaction-n
 — OR-semantics, last_validated DESC, no LLM (Principle 5).
 P2.1 refinement (ADR-018 D7): both query AND stored tags normalized at match-time.
 
+**P2.5 新增 — re-entry consumer (`orchestrator/reentry/`, ADR-021)**:
+第一个消费所有 read-side memory 容器的模块。关键函数:
+- `assemble_reentry(room_id, user_id, *, conn, events, room, now) -> ReentryDigest` — 纯代码,无 LLM
+- `derive_query_tags(room_id, *, conn) -> list[str]` — code union of room hypothesis topic_tags (Principle 11)
+- `render_reentry_prose(digest, *, llm_router) -> str` — 唯一 LLM 调用,`REENTRY_DIGEST_RENDER` (content-gen)
+- `reenter(room_id, user_id, *, ...) -> ReentryResult` — 组合上两个
+- `record_leave_marker(room_id, user_id, ts, *, conn)` — upsert 离开标记 (reentry_marker 表)
+- `generate_and_record_archive(...)` — `ARCHIVE_SUMMARY_RENDER` LLM 生成语义字段 + `record_project_archive` 持久化
+- `new_since_leave: list[NewSinceLeaveItem]` — code diff vs leave-marker (first visit → []; D8)
+- 两个宪政 AST guard:① no upstream imports reentry/;② selection fns (assemble_reentry/derive_query_tags) LLM-free.
+
 ---
 
 ## 5. 必须实现的组件
@@ -910,7 +921,7 @@ Placeholder defaults 全部标 TODO,真值通过 P1.5+ 实际使用 tune 出来�
 | **P2.2** | 晋升规则 (a) 跨房间 matcher(ADR-017):`run_matcher` 按 canonical tag-set 分组,跨 ≥N 房间 flip `candidate_for_promotion`,advisory-only | ✅ **DONE** | 依赖 P2.1 |
 | **P2.3** | 晋升规则 (c) 外部 ground-truth 验证(ADR-019):typed external-validation 输入 + deterministic 规则函数,advisory-only,judgment 重定位到 connector(Principle 5) | 🚧 **IN-PROGRESS**(senior 起草中) | 完成晋升三元组 (a)(b)(c) |
 | **P2.4** | **记忆数据模型补全**:Entity 全实现(producer/consumer,脱离 schema-only stub)+ ProjectArchive(model+表+impl,P1.6.5 起 deferred)+ 用户偏好系统(chat-history §类别4:用户偏好 = 实体记忆) | ✅ IMPL DONE (claude/P2.4-impl — awaiting review) | re-entry 消费的"容器";必须先于 P2.5 |
-| **P2.5** | **房间 re-entry / 离开-回来追平体验(= P2 验收"AI 记得我")**:离开生成 catch-up 摘要;回来显式追平;**第一个** `lookup_verified_knowledge` + ProjectArchive + Entity + snapshot 的消费者 | ⬜ NOT STARTED | 依赖 P2.4 容器 + 现有 lookup/snapshot;rule-b 已晋升的 VK 即可 demo |
+| **P2.5** | **房间 re-entry / 离开-回来追平体验(= P2 验收"AI 记得我")**:离开生成 catch-up 摘要;回来显式追平;**第一个** `lookup_verified_knowledge` + ProjectArchive + Entity + snapshot 的消费者 | ✅ IMPL DONE (claude/P2.5-impl — awaiting review) | `orchestrator/reentry/`：`assemble_reentry`(code)+ `render_reentry_prose`(REENTRY_DIGEST_RENDER content-gen) + `record_leave_marker` + `generate_and_record_archive`(ARCHIVE_SUMMARY_RENDER) + 2 constitutional AST guards (import + LLM-free-selection) |
 | **P2.6** | **喂活 dormant 晋升规则**:rule-a 的 tagging producer(agent 层 content-gen 给 `Hypothesis.topic_tags` 打标)+ rule-c 的 external connectors(产出 validation verdict)+ refuted/inconclusive verdict 处理(P2.3 push-back #4 deferred) | ⬜ NOT STARTED | 依赖 P2.3(rule-c contract accepted);让 (a)(c) 在真实数据上 fire |
 | **P2.7** | **平台演化 + LLM 层 + 启动 polish**:状态机演化/切换(§7 co-headline)+ LLM Layer 4(全局 cost/quality override)+ Claude Code alt backend(`ANTHROPIC_BASE_URL`)+ 友好版启动错误信息 | ⬜ NOT STARTED | 多与记忆轨道独立;作为平台/polish 排最后 |
 

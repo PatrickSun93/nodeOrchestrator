@@ -2,6 +2,10 @@
 
 Per ADR-016 D6: lookup_verified_knowledge filters by scope + topic_tags (OR-
 semantics), ordered by last_validated DESC, id ASC. No LLM, no ranking.
+
+list_room_topic_tags: thin reader returning the union of canonical topic_tags
+from a room's hypothesis rows — feeds derive_query_tags in reentry/digest.py
+(ADR-021 D6). memory/ owns the hypothesis table; reentry/ calls this reader.
 """
 
 from __future__ import annotations
@@ -9,6 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from orchestrator.core.event import RoomId
 from orchestrator.memory.schema import VerifiedKnowledge, VKScope
 from orchestrator.memory.store import _row_to_vk
 from orchestrator.memory.tags import normalize_tag
@@ -49,3 +54,28 @@ def lookup_verified_knowledge(
             results.append(_row_to_vk(row))
 
     return results
+
+
+def list_room_topic_tags(
+    room_id: RoomId,
+    *,
+    conn: sqlite3.Connection,
+) -> list[str]:
+    """Return the sorted union of canonical topic_tags from a room's hypotheses.
+
+    Deterministic: tag-set union over hypothesis rows WHERE room_id = ?,
+    deduplicated, sorted. Returns [] for an untagged or first-visit room.
+    No LLM. Per ADR-021 D6 — memory/ owns hypothesis; reentry/ calls this.
+    """
+    rows = conn.execute(
+        "SELECT topic_tags FROM hypothesis WHERE room_id = ?",
+        (str(room_id),),
+    ).fetchall()
+    tag_set: set[str] = set()
+    for row in rows:
+        tags = json.loads(row[0] if isinstance(row, (list, tuple)) else row["topic_tags"])
+        for tag in tags:
+            normalized = normalize_tag(tag)
+            if normalized:
+                tag_set.add(normalized)
+    return sorted(tag_set)
