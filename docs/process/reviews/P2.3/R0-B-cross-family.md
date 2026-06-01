@@ -2,7 +2,9 @@
 task_id: P2.3
 round: R0-B-cross-family
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 1🟡 6🟢); Y1 → α absorbed (skip branch dropped), bumped per RC-10
 findings_count:
   red: 0
   yellow: 1
@@ -53,3 +55,9 @@ The Y1 finding is minor but correct: the "skip malformed metadata" branch guards
 2. **Greens** are cross-family confirmations; no action. The Principle-5 check — the reason this dispatch exists — is clean from both lenses independently.
 
 ADR-019 is accept-worthy once Y1 is routed. The representation, the predicate, and the Principle-5 reconciliation are correct across all invariants both lenses traced.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+This cross-family review's lone 🟡 (Y1, source-verified against `event_store.py`/`event.py`) was routed **α** (`architect-routing-on-plan.md`, 2026-05-31; co-raised by in-family R0-A — zero divergence). Absorbed: the reader's append-time-unreachable malformed-metadata **skip branch is dropped** (plan P2.3-3 AC#7 + ADR-019 D2) — `validate_metadata` + `extra="forbid"` guarantees stored `external_validation` metadata is well-formed, so the skip guarded an impossible state and would have silently masked an upstream `EventStore.append` bypass; any retained guard must **raise**, not skip. No `src/` design change — the Principle-5 boundary, the representation, and the pure-derivation reader are confirmed clean by both lenses (the cross-family trace confirmed the judgment-relocation is a genuine architectural boundary, not a rationalization). Verdict → **clean**.

@@ -1,7 +1,9 @@
 ---
 task_id: P2.3
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 1🟡 6🟢); Y1 → α absorbed (skip branch dropped), bumped per RC-10
 findings_count:
   red: 0
   yellow: 1
@@ -92,3 +94,9 @@ The plan's "verified against origin/main" claims are accurate — a notable cont
 2. **Greens** are affirmations; no action. The Principle-5 check — the reason this review existed — is clean.
 
 ADR-019 is accept-worthy once Y1 is routed (it's a one-line acceptance-criterion precision, not a design change). R0-A-on-plan does not change state (RC-9 manual dispatch). Branch left checked out clean for the R0-B pass.
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+This review's lone 🟡 (Y1) was routed **α** (`architect-routing-on-plan.md`, 2026-05-31; both lenses — R0-A + R0-B-cross-family — raised it independently, zero divergence). Absorbed in the senior revision: the reader's defensive **malformed-metadata skip branch is dropped** from plan P2.3-3 AC#7 (it guarded an append-time-unreachable state — `validate_metadata` + `ExternalValidationMeta`'s `extra="forbid"` raises at `EventStore.append`, so a malformed `external_validation` event never lands; a silent skip would have masked an upstream raw-`INSERT` bypass). The reader now trusts the append-time contract; a belt-and-suspenders guard, if ever kept, must **raise** (constitutional canary), never silently skip. Plan AC#7 + ADR-019 D2 updated. **No `src/` design change** — the representation, predicate, pure-derivation reader, and advisory orthogonality are correct as designed (6🟢, both lenses; Principle-5 boundary confirmed clean). Verdict → **clean**.
