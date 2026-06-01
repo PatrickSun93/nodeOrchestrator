@@ -1,7 +1,9 @@
 ---
 task_id: P2.4
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect  # original (0🔴 2🟡 10🟢); Y1 + Y2 → α absorbed, bumped per RC-10
 findings_count:
   red: 0
   yellow: 2
@@ -84,3 +86,14 @@ Both are surfaced with a lean below — the architect routes; I do not.
 - Did **not** accept ADR-020 (architect-only; the dispatch confirmed).
 - Did **not** re-route or re-interpret any finding — Y1/Y2 are surfaced with a lean for the architect to call.
 - Did **not** touch the tree beyond this review file (r0b R0-B runs next on the shared tree).
+
+---
+
+## Verdict bump (RC-10) — needs_architect → clean
+
+Both 🟡 (Y1 + Y2, two-lens overlap with R0-B-cross-family) were routed **α** (`architect-routing.md`, 2026-06-01); ProjectArchive persist (D3) ratified, no change. Absorbed in the senior revision:
+- **Y1 → α** — a Principle-11 structural **AST guard** now ships this cycle (ADR-020 D5 rewritten from "no guard"; plan P2.4-6 + §4): `EntityType.PREFERENCE` may be constructed/used only in `entity.py`'s `record_preference`/`record_entity`/`list_preferences`, hardening the no-inferred-prefs invariant against a future third write path (real-AST, not substring — RC-24).
+- **Y2 → α** — `record_preference` **upserts by `(user_id, key, scope)`** (one row per key per user, deterministic latest-wins) while `record_entity` stays **plain-insert / append-only**; the dropped duplicate-create tests are re-added on both paths (pref → one row; entity → two rows); ADR-020 D2 states the upsert data model.
+- Green fold-ins M1/M3/M4 absorbed; M2 left as a forward hook.
+
+ADR-020 stays Proposed (architect-only accept). Verdict → **clean**.
