@@ -1,6 +1,6 @@
 # ADR-019: Promotion rule (c) — external ground-truth validation (event-represented, advisory pure-derivation)
 
-**Status:** Proposed — 2026-05-31 (senior-drafted per P2.3 brief; awaiting architect accept)
+**Status:** Accepted — 2026-05-31 (architect sign-off after R0-A-on-plan + R0-B-cross-family clean, Y1→α absorbed at d74da1e; Principle-5 boundary confirmed clean by both lenses; Proposed 2026-05-31, senior-drafted per P2.3 brief)
 
 **Scope:** Locks promotion rule (c) — external ground-truth validation, the third and last rule of the `handoff.md` §4.5 promotion triad. Pins: the representation of "external validation happened" (a new `external_validation` EventType + `ExternalValidationMeta` in `core/`), the deterministic rule-(c) eligibility predicate (a pure-derivation reader in `memory/`), the advisory-only orthogonality to promotion (ADR-016 D10/D11 unchanged), the composition with rules (a)+(b), and the connector-producer deferral. Does NOT govern: external connectors that *produce* validation signals (out of scope — none exist), auto-promotion (forbidden by D10), `refuted`/`inconclusive` handling (forward hook), multi-source aggregation/trust-weighting (forward hook), or any LLM judgment (relocated to the connector, never in `memory/`).
 
