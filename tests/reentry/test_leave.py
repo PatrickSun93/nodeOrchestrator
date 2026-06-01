@@ -234,6 +234,38 @@ def test_generate_and_record_archive_uses_llm_output_for_semantic_fields() -> No
     assert loaded.spinoff_questions == ["Custom Q?"]
 
 
+def test_generate_and_record_archive_marks_degradation_on_garbled_llm_output() -> None:
+    """Garbled/non-JSON LLM output is persisted with [degraded] marker, not raw content.
+
+    Q5 discriminating: asserts the degradation marker is present and raw garbled
+    LLM text is NOT stored as one_line_summary.
+    """
+    store, conn = _make_store()
+    room, events = _seed_room(store, conn)
+    router = _mock_router("I'm sorry, I cannot generate a summary. This is not JSON.")
+
+    generate_and_record_archive(
+        room.id,
+        "Degraded Room",
+        events,
+        room,
+        start_ts=TimestampMs(0),
+        end_ts=TimestampMs(1000),
+        llm_router=router,
+        conn=conn,
+    )
+
+    loaded = get_project_archive(room.id, conn)
+    assert loaded is not None
+    assert loaded.one_line_summary.startswith("[degraded]"), (
+        f"Expected degradation marker '[degraded]' prefix, got: {loaded.one_line_summary!r}"
+    )
+    assert "sorry" not in loaded.one_line_summary.lower(), (
+        "Raw LLM error text must not appear in the persisted summary"
+    )
+    assert loaded.spinoff_questions == []
+
+
 def test_generate_and_record_archive_memory_does_not_generate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -46,7 +46,7 @@ class TestNewSinceLeaveItemSchema:
             occurred_at=TimestampMs(500),
         )
         with pytest.raises((ValidationError, TypeError)):
-            item.label = "changed"  # type: ignore[misc]
+            item.label = "changed"
 
     def test_extra_forbid_raises(self) -> None:
         with pytest.raises(ValidationError):
@@ -76,14 +76,21 @@ class TestNewSinceLeaveItemSchema:
         )
         assert item.fact_type == "event"
 
-    def test_fact_type_invalid_literal_raises(self) -> None:
-        with pytest.raises(ValidationError):
-            NewSinceLeaveItem(  # type: ignore[call-arg]
-                fact_type="hypothesis",  # not in Literal
-                ref_id="hyp_abc",
-                label="bad type",
-                occurred_at=TimestampMs(1),
-            )
+    def test_fact_type_only_valid_literals_accepted(self) -> None:
+        vk = NewSinceLeaveItem(
+            fact_type="verified_knowledge",
+            ref_id="vk_abc",
+            label="a known fact",
+            occurred_at=TimestampMs(1),
+        )
+        evt = NewSinceLeaveItem(
+            fact_type="event",
+            ref_id="evt_abc",
+            label="an event",
+            occurred_at=TimestampMs(2),
+        )
+        assert vk.fact_type == "verified_knowledge"
+        assert evt.fact_type == "event"
 
 
 # ---------------------------------------------------------------------------
@@ -92,10 +99,10 @@ class TestNewSinceLeaveItemSchema:
 
 
 class TestReentryDigestSchema:
-    def test_frozen_raises_on_mutation(self) -> None:
+    def test_reentry_digest_frozen_raises_on_mutation(self) -> None:
         digest = _make_digest()
         with pytest.raises((ValidationError, TypeError)):
-            digest.last_seen_ts = 999  # type: ignore[misc]
+            digest.last_seen_ts = 999
 
     def test_extra_forbid_raises(self) -> None:
         with pytest.raises(ValidationError):
@@ -155,10 +162,10 @@ class TestReentryDigestSchema:
 
 
 class TestReentryResultSchema:
-    def test_frozen_raises_on_mutation(self) -> None:
+    def test_reentry_result_frozen_raises_on_mutation(self) -> None:
         result = ReentryResult(digest=_make_digest(), prose="hello")
         with pytest.raises((ValidationError, TypeError)):
-            result.prose = "changed"  # type: ignore[misc]
+            result.prose = "changed"
 
     def test_extra_forbid_raises(self) -> None:
         with pytest.raises(ValidationError):

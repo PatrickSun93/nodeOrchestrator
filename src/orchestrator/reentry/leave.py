@@ -128,5 +128,4 @@ def _parse_archive_summary(content: str) -> dict[str, Any]:
             questions = []
         return {"one_line_summary": summary, "spinoff_questions": [str(q) for q in questions]}
     except (json.JSONDecodeError, AttributeError):
-        fallback = content[:120] or "Summary unavailable."
-        return {"one_line_summary": fallback, "spinoff_questions": []}
+        return {"one_line_summary": "[degraded] Summary unavailable.", "spinoff_questions": []}

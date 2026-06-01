@@ -273,20 +273,30 @@ def test_assemble_reentry_new_since_leave_typed_items_not_dict() -> None:
 
     ADR-021 D7/D8: Y3 absorbed — typed descriptor, not list[dict].
     Discriminating: fails if list contains dict objects.
+    Uses DECISION_PIVOT (decision-class) since only decision-class events surface.
     """
     store, conn = _make_full_store()
-    room, evt = _seed_room_with_event(store, ts=5000)
+    room, seed_evt = _seed_room_with_event(store, ts=500)
+    decision_evt = Event(
+        id=generate_event_id(),
+        room_id=room.id,
+        type=EventType.DECISION_PIVOT,
+        author="user",
+        timestamp=TimestampMs(5000),
+        content="a decision after leave",
+    )
+    store.append(decision_evt)
     record_leave_marker(room.id, "user1", TimestampMs(1000), conn=conn)
 
     digest = assemble_reentry(
         room.id,
         "user1",
         conn=conn,
-        events=[evt],
+        events=[seed_evt, decision_evt],
         room=room,
         now=TimestampMs(9999),
     )
-    # evt.timestamp (5000) > last_seen_ts (1000) → should appear
+    # decision_evt.timestamp (5000) > last_seen_ts (1000) and is decision-class → should appear
     assert len(digest.new_since_leave) > 0
     for item in digest.new_since_leave:
         assert isinstance(item, NewSinceLeaveItem), f"expected NewSinceLeaveItem, got {type(item)}"
@@ -301,11 +311,11 @@ def test_assemble_reentry_new_since_leave_exact_set() -> None:
     """
     store, conn = _make_full_store()
     room, old_evt = _seed_room_with_event(store, ts=500)
-    # Second event after marker.
+    # Second event after marker — DECISION_PIVOT (decision-class) to appear in new_since_leave.
     new_evt = Event(
         id=generate_event_id(),
         room_id=room.id,
-        type=EventType.UTTERANCE,
+        type=EventType.DECISION_PIVOT,
         author="user",
         timestamp=TimestampMs(3000),
         content="post-marker event",

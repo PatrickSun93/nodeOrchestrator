@@ -145,10 +145,11 @@ def test_scenario_full_leave_reentry_surfaces_exact_facts() -> None:
     record_leave_marker(room.id, "user1", TimestampMs(5000), conn=conn)
 
     # --- Post-leave facts (ts > 5000) ---
+    # Use DECISION_PIVOT (decision-class) so it appears in new_since_leave (Y2b filter).
     post_leave_evt = Event(
         id=generate_event_id(),
         room_id=room.id,
-        type=EventType.UTTERANCE,
+        type=EventType.DECISION_PIVOT,
         author="user",
         timestamp=TimestampMs(7000),
         content="new question after leave",

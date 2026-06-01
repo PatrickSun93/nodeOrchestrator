@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from orchestrator.core.event import Event, RoomId, TimestampMs
+from orchestrator.core.event import Event, EventType, RoomId, TimestampMs
 from orchestrator.core.room import Room
 from orchestrator.memory.archive import get_project_archive
 from orchestrator.memory.entity import list_entities, list_preferences
@@ -22,6 +22,11 @@ from orchestrator.memory.lookup import list_room_topic_tags, lookup_verified_kno
 from orchestrator.memory.schema import EntityType, VKScope
 from orchestrator.reentry.schema import NewSinceLeaveItem, ReentryDigest
 from orchestrator.reentry.store import get_leave_marker
+
+# Decision-class events surfaced in new_since_leave (mirrors decision_log.py filter).
+_DECISION_EVENT_TYPES: frozenset[EventType] = frozenset(
+    {EventType.DECISION, EventType.DECISION_PIVOT, EventType.REJECTION, EventType.RETRACTION}
+)
 
 
 def derive_query_tags(
@@ -85,9 +90,9 @@ def assemble_reentry(
                         occurred_at=TimestampMs(vk.last_validated),
                     )
                 )
-        # Room events since leave.
+        # Decision-class room events since leave (mirrors produce_decision_log filter).
         for evt in events:
-            if evt.timestamp > last_seen_ts:
+            if evt.timestamp > last_seen_ts and evt.type in _DECISION_EVENT_TYPES:
                 new_since_leave.append(
                     NewSinceLeaveItem(
                         fact_type="event",
@@ -96,8 +101,8 @@ def assemble_reentry(
                         occurred_at=TimestampMs(evt.timestamp),
                     )
                 )
-        # Order by occurred_at ASC (ADR-021 D8).
-        new_since_leave.sort(key=lambda x: x.occurred_at)
+        # Order by occurred_at ASC, ref_id as tie-breaker for determinism (ADR-021 D8).
+        new_since_leave.sort(key=lambda x: (x.occurred_at, x.ref_id))
 
     return ReentryDigest(
         room_id=room_id,
