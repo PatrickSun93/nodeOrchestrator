@@ -339,6 +339,62 @@ def test_assemble_reentry_new_since_leave_exact_set() -> None:
     assert "seed event" not in event_labels
 
 
+def test_assemble_reentry_new_since_leave_only_decision_class_events() -> None:
+    """new_since_leave event part contains only decision-class events (Y2b filter).
+
+    Q5 discriminating: seeds both a decision-class (DECISION_PIVOT) and a
+    non-decision-class (UTTERANCE) event after the leave marker — both post-marker
+    by timestamp. If the decision-class filter is removed, the UTTERANCE would appear
+    in event_labels, causing the "not in" assertion to fail.
+    """
+    store, conn = _make_full_store()
+    room, seed_evt = _seed_room_with_event(store, ts=500)
+    record_leave_marker(room.id, "user1", TimestampMs(1000), conn=conn)
+
+    # Post-marker decision-class event — must appear in new_since_leave.
+    decision_evt = Event(
+        id=generate_event_id(),
+        room_id=room.id,
+        type=EventType.DECISION_PIVOT,
+        author="user",
+        timestamp=TimestampMs(2000),
+        content="a pivot decision",
+    )
+    store.append(decision_evt)
+
+    # Post-marker non-decision-class event — must NOT appear (same ts range, different type).
+    utterance_evt = Event(
+        id=generate_event_id(),
+        room_id=room.id,
+        type=EventType.UTTERANCE,
+        author="user",
+        timestamp=TimestampMs(3000),
+        content="a plain utterance",
+    )
+    store.append(utterance_evt)
+
+    digest = assemble_reentry(
+        room.id,
+        "user1",
+        conn=conn,
+        events=[seed_evt, decision_evt, utterance_evt],
+        room=room,
+        now=TimestampMs(9999),
+    )
+
+    event_labels = [item.label for item in digest.new_since_leave if item.fact_type == "event"]
+
+    # Decision-class event must surface.
+    assert "a pivot decision" in event_labels, (
+        "decision-class post-marker event must appear in new_since_leave"
+    )
+    # Non-decision-class event must be excluded.
+    # Discriminating: removing the type filter causes UTTERANCE to appear here → assertion fails.
+    assert "a plain utterance" not in event_labels, (
+        "non-decision-class post-marker UTTERANCE must NOT appear in new_since_leave"
+    )
+
+
 def test_assemble_reentry_new_since_leave_vk_after_marker() -> None:
     """VK validated after the leave-marker appears in new_since_leave.
 
