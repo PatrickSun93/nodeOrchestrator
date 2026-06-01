@@ -1,6 +1,6 @@
 # ADR-020: Memory data-model completion — Entity full + ProjectArchive + user preferences
 
-**Status:** Proposed — 2026-06-01 (senior-drafted per P2.4 brief; awaiting architect accept)
+**Status:** Accepted — 2026-06-01 (architect-accepted after plan-stage reviews clean: R0-A-on-plan + R0-B-cross-family both `clean`; Y1 → α + Y2 → α absorbed; ProjectArchive persist ratified)
 
 **Scope:** Completes the `memory/` data model with the three structured cross-room memory *containers* that P2.5 (room re-entry) will consume: (A) `Entity` fleshed from schema-only stub into a deterministic create/read surface, (B) `ProjectArchive` (the per-room narrative 身份证), and (C) user preferences. Pins: the container shapes + their deterministic create/read APIs, the Principle-5 producer-relocation + Principle-11 no-inferred-preferences constraints, same-SQLite-file storage + the `entity`-column ALTER migration, and the deferral of the re-entry consumer + the LLM extraction producers. Does NOT govern: the P2.5 re-entry catch-up assembly (consumer), the LLM extraction/inference producers (out of `memory/`, deferred), knowledge-graph entity↔entity relations (forward hook), the forgetting/降级 mechanism (forward hook — fields reserved), or team-scope beyond reserving the enum value.
 
