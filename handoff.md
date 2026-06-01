@@ -890,7 +890,7 @@ Placeholder defaults 全部标 TODO,真值通过 P1.5+ 实际使用 tune 出来�
 
 **依赖序**:`P2.1→P2.2→P2.3`(晋升机制,已基本完成)→ `P2.4`(补全记忆容器)→ `P2.5`(re-entry 读容器,验收)→ `P2.6`(producers 喂活规则)→ `P2.7`(平台 polish)。
 **关键 gap 提醒**:P2.1-2.3 全是记忆**写**侧;`lookup_verified_knowledge` 至今**零消费者**。**P2.5 才是真正搬动"AI 记得我"验收的 slice** —— 前面都是它将读取的 plumbing。P2.5 是 milestone critical path。
-**一个序的判断点(待 architect ratify)**:P2.5(re-entry)vs P2.6(producers)的先后 —— re-entry 的硬依赖是 P2.4 容器(非 producers),且可在 rule-b 已晋升的 VK 上 demo,故置于 P2.6 前(尽早 de-risk 验收);若要"第二次使用"在 producer 自动填充的真实记忆上演示,则 P2.6 应前置。当前排序取前者。
+**一个序的判断点(ratified 2026-05-31:re-entry before producers)**:P2.5(re-entry)vs P2.6(producers)的先后 —— architect ratified **P2.5 先于 P2.6**:re-entry 的硬依赖是 P2.4 容器(非 producers),且可在 rule-b 已晋升的 VK 上 demo,故置于 P2.6 前(尽早 de-risk "AI 记得我" 验收)。Producer 自动填充的真实记忆演示在 P2.6 之后补强。
 
 ### P3 — 完整产品
 
