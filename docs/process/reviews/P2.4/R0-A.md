@@ -1,7 +1,7 @@
 ---
 task_id: P2.4
 round: R0-A
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
   yellow: 2
@@ -11,6 +11,10 @@ verdict_history:
     at_commit: 68fcedf
     findings_count: { red: 0, yellow: 2, green: 11 }
     note: initial R0-A (impl-stage, architect-partner in-family lens); gates fully green (ruff+format+mypy --strict 141 files + pytest 1063 passed); 2🟡 are both "invariant weaker than the ADR claims but does not manifest under the current single-connection model" — architect routes fix-now vs defer.
+  - verdict: clean
+    at_commit: senior-revision (impl-stage routing absorption)
+    findings_count: { red: 0, yellow: 2, green: 11 }
+    note: 'Y1 -> alpha-lite D2 wording absorbed; Y2 -> beta deferred to retro; raw-SQL gap is documented D5 limitation'
 ---
 
 # P2.4 R0-A (impl-stage, architect-partner in-family lens)
