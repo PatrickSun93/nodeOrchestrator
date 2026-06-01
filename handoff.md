@@ -288,7 +288,7 @@ class ProjectArchive: ...
 **晋升规则**:不自动晋升 (ADR-016 D10 enforces). P1.6.5 ships:
 - **(b) 用户显式确认** — `promote_hypothesis(hyp_id, user_id, *, scope, event_store)` (full)
 - **(a) 跨 N 个独立房间被独立得出** — **P2.2 物化** (ADR-017): `run_matcher(conn, *, min_rooms=2)` groups PENDING hypotheses by canonical tag-set equality (via `normalize_tag`); flips `candidate_for_promotion=True` for groups spanning ≥ `min_rooms` distinct rooms. Advisory only — never promotes. `list_promotion_candidates(conn)` reads the flagged PENDING rows. `memory/matcher.py`.
-- **(c) 外部 ground truth 验证** — deferred to P2+
+- **(c) 外部 ground truth 验证** — **P2.3 物化** (ADR-019): `external_validation` EventType + `ExternalValidationMeta` in `core/` (19th constitutional type; source/verdict/validated_hypothesis_id/evidence_ref). `list_externally_validated_candidates(conn) -> list[Hypothesis]` in `memory/validation.py` — pure-derivation reader, no LLM, no writes. Returns PENDING hypotheses with ≥1 confirmed `external_validation` event referencing them (`verdict == 'confirmed'`), ordered by `id` ASC. Rule-(c) is maximally advisory — by construction cannot create VK or emit `decision` event (ADR-019 D3/D10 unchanged). Dormant-until-fed: connectors that produce `external_validation` events deferred to P2.6+.
 
 **Promotion atomicity** (ADR-016 D11): single SQLite transaction wraps
 VK insert + Hypothesis.status update + `decision` event append to event_store.

@@ -60,6 +60,75 @@ def test_constitution_no_llm_calls_in_memory_module() -> None:
     )
 
 
+def test_validation_advisory_orthogonality_ast_guard() -> None:
+    """validation.py must NOT call promote_hypothesis, insert VK rows, or append events.
+
+    Per ADR-019 D3: rule-(c) is maximally advisory — a pure reader that cannot
+    create a VK or emit a promotion decision event. This guard checks the actual
+    AST (call/import nodes), NOT the whole-file text (RC-24, per P2.2 B-to-alpha precedent).
+
+    Forbidden in validation.py:
+      (a) import/from of 'promotion' module or 'promote_hypothesis'
+      (b) Call/Attribute nodes named 'promote_hypothesis', 'append',
+          'append_in_transaction'
+      (c) String-literal SQL containing 'INSERT INTO verified_knowledge'
+          (AST Constant nodes only — excludes comments and docstrings)
+    """
+    validation_path = _MEMORY_SRC / "validation.py"
+    source = validation_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(validation_path))
+
+    violations: list[str] = []
+
+    for node in ast.walk(tree):
+        # (a) forbidden imports.
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if "promotion" in alias.name or alias.name == "promote_hypothesis":
+                    violations.append(f"line {node.lineno}: forbidden import {alias.name!r}")
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if "promotion" in module:
+                violations.append(f"line {node.lineno}: forbidden from-import from {module!r}")
+            for alias in node.names:
+                if alias.name == "promote_hypothesis":
+                    violations.append(
+                        f"line {node.lineno}: forbidden import of 'promote_hypothesis'"
+                    )
+
+        # (b) forbidden call/attribute names.
+        if isinstance(node, ast.Name) and node.id in {
+            "promote_hypothesis",
+            "append_in_transaction",
+        }:
+            violations.append(f"line {node.lineno}: forbidden name reference {node.id!r}")
+        if isinstance(node, ast.Attribute):
+            if node.attr in {"promote_hypothesis", "append_in_transaction"}:
+                violations.append(f"line {node.lineno}: forbidden attribute .{node.attr}()")
+            if (
+                node.attr == "append"
+                and isinstance(node.value, ast.Name)
+                and ("event_store" in node.value.id or node.value.id == "store")
+            ):
+                violations.append(f"line {node.lineno}: forbidden event_store.append() call")
+
+        # (c) string-literal SQL INSERT INTO verified_knowledge.
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "INSERT INTO verified_knowledge" in node.value
+        ):
+            violations.append(
+                f"line {node.lineno}: forbidden SQL literal "
+                f"'INSERT INTO verified_knowledge' in string constant"
+            )
+
+    assert not violations, (
+        "validation.py contains forbidden promotion/event-append references "
+        "(ADR-019 advisory orthogonality violated):\n" + "\n".join(violations)
+    )
+
+
 def test_matcher_advisory_orthogonality_ast_guard() -> None:
     """matcher.py must NOT call promote_hypothesis, insert VK rows, or append events.
 
