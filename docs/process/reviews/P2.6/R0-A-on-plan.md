@@ -1,16 +1,21 @@
 ---
 task_id: P2.6
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 10
+  yellow: 0
+  green: 12
 verdict_history:
   - verdict: needs_architect
     at_commit: 25d7cb3
     findings_count: { red: 0, yellow: 2, green: 10 }
     note: initial R0-A-on-plan (in-family). The c1/c2 boundary *chains* are conceptually clean + the parallel structure is genuinely disjoint (verified incl. the memory/__init__ non-coupling). Y1 (architect-relevant) — c1/c2 are enforced by helper + code-review + import-guard but lack a structural AST guard against in-package bypass, vs the matcher/validation/reentry precedent. Y2 low. Nothing blocking.
+  - verdict: clean
+    at_commit: PENDING-plan-stage-routing-absorption
+    findings_count: { red: 0, yellow: 0, green: 12 }
+    note: >-
+      Bumped per architect plan-stage routing (architect-routing-on-plan.md) + RC-10. Y1 → SPLIT-α: c2 routed full α (the convergent two-lens finding — both R0-A Y1 c2-leg and R0-B independently flagged the empty-evidence_ref/raw-constructor bypass) and c1 routed α-lite (symmetric, lighter). Both absorbed as REAL-AST structural guards (RC-24): c2 → ADR-022 D4 + plan P2.6-4 (tests/connectors/test_constitution.py — ExternalValidationMeta constructed only in connectors/_emit.py+tests → empty-evidence_ref unreachable; discriminating self-test); c1 → ADR-022 D3 + plan P2.6-3 (tests/producers/test_constitution.py — producers/ reference no run_matcher/promote_hypothesis/list_promotion_candidates/candidate_for_promotion; discriminating self-test). Guards land in disjoint atoms (c1→B1/P2.6-3, c2→B2/P2.6-4) — no parallel coupling. Y2 → α: update_hypothesis_tags pinned **overwrite** (latest-wins, not merge) in ADR-022 D3 + plan P2.6-3 AC#2 with a discriminating assertion. Schema evidence_ref stays str|None (no ADR-019/event.py edit — closed-ADR-safe). Both 🟡 → 🟢 (12🟢). Did NOT accept ADR-022 (architect-only); did NOT advance state.
 ---
 
 # P2.6 R0-A on plan (architect-dispatched pre-impl review, in-family)
@@ -22,7 +27,9 @@ verdict_history:
 | ADR status | ADR-022 left **Proposed** — this review informs accept; I did not accept (architect-only). |
 | Cross-family | `requires_cross_family_review: true` — r0b R0-B runs after me on the shared tree; I leave it clean. |
 
-## Verdict: needs_architect
+## Verdict: clean (bumped from needs_architect — plan-stage routing absorbed)
+
+> **Routing-absorption note (RC-10).** Architect routed Y1 split — **c2 → α** (the convergent two-lens finding; R0-B independently flagged the same empty-`evidence_ref`/raw-constructor bypass) and **c1 → α-lite** (symmetric, lighter). Both are now **real-AST structural guards** (RC-24): the c2 guard (`tests/connectors/test_constitution.py`) makes `connectors/_emit.py` the sole `ExternalValidationMeta` construction site → empty-`evidence_ref` is unreachable (ADR-022 D4 + plan P2.6-4); the c1 guard (`tests/producers/test_constitution.py`) forbids `producers/` from referencing `run_matcher`/`promote_hypothesis`/`list_promotion_candidates`/`candidate_for_promotion` (ADR-022 D3 + plan P2.6-3). Both discriminating; in disjoint atoms (c1→B1, c2→B2). **Y2 → α**: `update_hypothesis_tags` pinned **overwrite** (D3 + P2.6-3 AC#2). Schema `evidence_ref` stays `str | None` (no ADR-019 edit). Both 🟡 resolved → 12🟢. Original findings preserved below for the audit trail.
 
 **The plan is strong and the constitutional boundary *chains* are conceptually clean.** c1: the LLM tags one hypothesis at a time (descriptive content-gen) → deterministic `resolve_tags` → `run_matcher`'s deterministic grouping → advisory `candidate_for_promotion` → rule-b user-confirm — and because the producer tags *per-hypothesis*, the LLM structurally cannot do cross-hypothesis selection. c2: the verdict is `evidence_ref`-anchored (the emit helper raises on empty), the demo connector is deterministic (no LLM), and append goes through `EventStore.append`. I verified the key substrate claim — `ExternalValidationMeta.evidence_ref` is `str | None` and existing tests rely on that (`test_schema.py:631`), so the ADR's connector-contract-not-schema enforcement is correctly reasoned. The parallel structure is **genuinely disjoint** (incl. a hidden-coupling check that came back clean — see below).
 

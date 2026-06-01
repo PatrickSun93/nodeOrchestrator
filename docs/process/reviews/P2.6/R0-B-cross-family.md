@@ -2,12 +2,21 @@
 task_id: P2.6
 round: R0-B-cross-family
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 6
----
+  yellow: 0
+  green: 8
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 25d7cb3
+    findings_count: { red: 0, yellow: 2, green: 6 }
+    note: initial R0-B-cross-family (deepseek). Both 🟡 on the c2 boundary — Y1 (evidence_ref str|None schema-level gap; emit-helper contract is opt-in) + Y2 (no structural guard that connectors go through the emit helper; ExternalValidationMeta directly-constructible). Lean α on both — add an AST guard that ExternalValidationMeta( appears only in connectors/_emit.py+tests, without touching closed ADR-019. c1/B3/parallel-structure greened.
+  - verdict: clean
+    at_commit: PENDING-plan-stage-routing-absorption
+    findings_count: { red: 0, yellow: 0, green: 8 }
+    note: >-
+      Bumped per architect plan-stage routing (architect-routing-on-plan.md) + RC-10 + dual-lens Step 5. Y1+Y2 (both c2) → α, exactly the cross-family lean: a REAL-AST structural guard (RC-24) in tests/connectors/test_constitution.py asserts ExternalValidationMeta(...) is constructed only in connectors/_emit.py (+test files) → the emit helper's non-empty evidence_ref check becomes the unbypassable single-write-path, closing the direct-construction circumvention. Landed in ADR-022 D4 + plan P2.6-4 (AC#2, discriminating self-test). Schema evidence_ref stays str|None — no core/event.py or closed-ADR-019 edit (the schema-tighten forward hook is unchanged). **Dual-lens convergence**: this same c2 bypass was flagged independently by R0-A-on-plan (Y1 c2-leg) — both families converged on the empty-evidence_ref/raw-constructor hole; the single c2 guard resolves both. (Symmetrically, R0-A's c1 α-lite guard + Y2 overwrite-pin land in ADR-022 D3 + plan P2.6-3 — R0-B greened c1/G1 so no R0-B 🟡 there.) Both 🟡 → 🟢 (8🟢). Did NOT accept ADR-022 (architect-only); did NOT advance state.
 
 # P2.6 R0-B cross-family review (plan + ADR-022) — feeding the dormant promotion rules
 
@@ -20,7 +29,9 @@ findings_count:
 | Baseline | `main` — `matcher.py:72` (excludes empty canonical set); `event.py:339` (`evidence_ref: str \| None`); `validation.py:45` (`meta["verdict"]` direct subscript — fail-loud canary); no `update_hypothesis_tags` exists; `purposes.py` all content-gen |
 | Prior reviews | None yet (R0-A-on-plan pending) |
 | Date | 2026-06-01 |
-| Verdict | **needs_architect** — 0🔴 · 2🟡 · 6🟢 |
+| Verdict | **clean** (bumped from needs_architect) — 0🔴 · 0🟡 · 8🟢 |
+
+> **Routing-absorption note (RC-10 + dual-lens Step 5).** Both 🟡 (Y1+Y2, both c2) routed **α** — exactly this review's cross-family lean. The c2 bypass is now closed by a **real-AST structural guard** (RC-24) in `tests/connectors/test_constitution.py`: `ExternalValidationMeta(...)` is constructed **only** in `connectors/_emit.py` (+tests) → the emit helper's non-empty `evidence_ref` check is the unbypassable single-write-path (ADR-022 D4 + plan P2.6-4). Schema `evidence_ref` stays `str | None` (no closed-ADR-019/`event.py` edit; schema-tighten forward hook unchanged). **Dual-lens convergence:** R0-A-on-plan independently flagged the same c2 hole (its Y1 c2-leg) — one guard resolves both families. Both 🟡 → 🟢. Original findings preserved below for the audit trail.
 
 ## Lens preamble
 
