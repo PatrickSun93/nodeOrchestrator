@@ -27,7 +27,7 @@ Without a type, downstream code can't tell. So you either:
   hidden in prose).
 - Add a structured field — i.e., readmit `type`.
 
-The 18 types are the result of refusing to lump distinct semantic operations
+The 19 types are the result of refusing to lump distinct semantic operations
 into "message". They are the system's working vocabulary. Code routes on
 type without inferring intent. LLMs are not in the routing path.
 
@@ -112,7 +112,7 @@ roughly what the event records and roughly what shape the metadata has.
 If you can't think of a specific name, the type might not exist yet.
 Defer adding it until the use case is concrete.
 
-## The 18 types
+## The 19 types
 
 | Type | Meaning | Strict metadata schema? |
 |---|---|---|
@@ -134,6 +134,7 @@ Defer adding it until the use case is concrete.
 | `decision_pivot` | Reframe — "we were asking the wrong question" | open |
 | `autonomy_decision` | Gate decision before a tool call: tier, score, full trace | yes |
 | `autonomy_refusal` | Gate registry-miss before raise: unknown tool_id, reason | yes |
+| `external_validation` | External ground-truth verdict on a hypothesis (ADR-019) | yes |
 
 "Strict" types validate via Pydantic at append time. "Open" types accept
 `dict[str, Any]` for now and will be tightened (with an ADR) when their

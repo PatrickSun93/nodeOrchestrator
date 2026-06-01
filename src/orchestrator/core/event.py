@@ -66,7 +66,7 @@ def generate_room_id() -> RoomId:
 
 
 class EventType(StrEnum):
-    """The 18 constitutional event types.
+    """The 19 constitutional event types.
 
     See docs/architecture/event-model.md for why this list is constitutional
     and what to do (and not do) when extending it. In short: adding a type
@@ -92,6 +92,7 @@ class EventType(StrEnum):
     DECISION_PIVOT = "decision_pivot"
     AUTONOMY_DECISION = "autonomy_decision"
     AUTONOMY_REFUSAL = "autonomy_refusal"
+    EXTERNAL_VALIDATION = "external_validation"
 
 
 class RelationType(StrEnum):
@@ -319,6 +320,25 @@ class SummarySnapshotMeta(_BaseMeta):
     participants: list[str]
 
 
+class ExternalValidationMeta(_BaseMeta):
+    """Metadata for ``external_validation`` events (ADR-019 D1).
+
+    Written by external connectors (CI hooks, paper-DB lookups, benchmark
+    runners, etc.) via ``event_store.append``. ``memory/`` reads the typed
+    verdict as a pure-code predicate — no LLM judgment inside ``memory/``.
+
+    ``validated_hypothesis_id`` is a pattern-validated ``str``, NOT a
+    ``HypothesisId`` import — deliberate-duplication (``core/`` MUST NOT
+    import from ``memory/``; mirrors ``DecisionMeta.hypothesis_id`` at line
+    156 in this file).
+    """
+
+    source: str = Field(min_length=1)
+    verdict: Literal["confirmed", "refuted", "inconclusive"]
+    validated_hypothesis_id: Annotated[str, Field(pattern=r"^hyp_[0-9a-f]{32}$")]
+    evidence_ref: str | None = None
+
+
 TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.HYPOTHESIS: HypothesisMeta,
     EventType.DECISION: DecisionMeta,
@@ -330,6 +350,7 @@ TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.AUTONOMY_REFUSAL: AutonomyRefusalMetadata,
     EventType.STATE_TRANSITION: StateTransitionMeta,
     EventType.SUMMARY_SNAPSHOT: SummarySnapshotMeta,
+    EventType.EXTERNAL_VALIDATION: ExternalValidationMeta,
 }
 
 
