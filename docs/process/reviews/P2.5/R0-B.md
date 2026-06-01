@@ -2,11 +2,18 @@
 task_id: P2.5
 round: R0-B
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
   yellow: 1
   green: 6
+verdict_history:
+  - verdict: needs_architect
+    findings_count: { red: 0, yellow: 1, green: 6 }
+    note: initial R0-B (cross-family, impl-stage); constitutional code/LLM boundary confirmed clean; lone 🟡 = R0B-Y1 (_parse_archive_summary persisted raw garbled LLM output on parse failure).
+  - verdict: clean
+    at_commit: 061850e (α-fix 229d892 + Y2b discriminating follow-up 061850e)
+    note: 'R0B-Y1 → α absorbed: _parse_archive_summary now persists a "[degraded] Summary unavailable." marker (not raw content, not raise) + a discriminating degradation test (asserts the [degraded] marker present and raw LLM error text absent). The cross-cycle R1 mypy gate + the four R0-A 🟡 were also all absorbed; orchestrator verified FULL gates green (ruff + ruff-format + mypy --strict 156 files + pytest 1131 passed). Y2b decision-class filter ships with a Q5 discriminating test (post-marker UTTERANCE asserted-absent). Verdict → clean per RC-10 / dual-lens Step 5.'
 ---
 
 # P2.5 R0-B (cross-family, impl-stage) — room re-entry / 离开-回来追平

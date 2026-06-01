@@ -1,7 +1,7 @@
 ---
 task_id: P2.5
 round: R0-A
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 1
   yellow: 2
@@ -11,6 +11,10 @@ verdict_history:
     at_commit: 203c606
     findings_count: { red: 1, yellow: 2, green: 10 }
     note: initial R0-A (impl-stage, in-family). Constitutional core CLEAN + actively verified (both AST guards proven to fail on real-source planted bypasses; selection LLM-free; no routing/judgment LLMPurpose). All 4 plan-stage α-absorptions faithfully implemented. R1 (🔴) — the mandatory mypy --strict gate is RED (5 test-only errors in tests/reentry/test_schema.py) despite the landing claiming gates green; blocks merge, α-fix. Y1/Y2 low.
+  - verdict: clean
+    at_commit: 061850e (α-fix 229d892 + Y2b discriminating follow-up 061850e)
+    findings_count: { red: 1, yellow: 2, green: 10 }
+    note: 'All impl-stage findings absorbed (RC-10). R1 🔴 — mypy --strict gate fixed (4 unused type:ignore removed + invalid-literal test replaced with valid-literal coverage; orchestrator verified FULL gates green: ruff + ruff-format + mypy --strict 156 files no issues + pytest 1131 passed). R0A-Y1 — rename applied; senior re-verified the shadowing premise was inaccurate (the three test_frozen_raises_on_mutation methods were one-per-class across distinct classes, so pytest ran all three as distinct node IDs — no shadowing; the rename is a harmless clarity keep, no behavior change). R0A-Y2a — secondary ref_id sort tie-break added. R0A-Y2b — decision-class event filter (DECISION/DECISION_PIVOT/REJECTION/RETRACTION) in assemble_reentry + a Q5 DISCRIMINATING test (seeds a post-marker UTTERANCE asserted-absent alongside a post-marker DECISION_PIVOT asserted-present; fails if the filter is removed). Constitutional code/LLM boundary unchanged + still guarded.'
 ---
 
 # P2.5 R0-A (impl-stage, in-family)
