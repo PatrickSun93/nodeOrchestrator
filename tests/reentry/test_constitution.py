@@ -63,24 +63,19 @@ def test_constitution_no_upstream_imports_reentry() -> None:
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         if "orchestrator.reentry" in alias.name:
-                            violations.append(
-                                f"  {rel}: line {node.lineno}: "
-                                f"import {alias.name!r}"
-                            )
+                            violations.append(f"  {rel}: line {node.lineno}: import {alias.name!r}")
                 elif isinstance(node, ast.ImportFrom):
                     module = node.module or ""
                     if "orchestrator.reentry" in module or module.startswith(
                         "orchestrator.reentry"
                     ):
                         violations.append(
-                            f"  {rel}: line {node.lineno}: "
-                            f"from {module!r} import ..."
+                            f"  {rel}: line {node.lineno}: from {module!r} import ..."
                         )
 
     assert not violations, (
         "Upstream layers (core/ memory/ derived/ llm/) must not import reentry/.\n"
-        "reentry/ is the leaf consumer (ADR-021 D1, Y2 absorbed):\n"
-        + "\n".join(violations)
+        "reentry/ is the leaf consumer (ADR-021 D1, Y2 absorbed):\n" + "\n".join(violations)
     )
 
 
@@ -191,11 +186,7 @@ def test_constitution_selection_functions_llm_free_discriminating() -> None:
 
     Verifies the visitor logic catches a forbidden symbol inside the named function.
     """
-    fake_source = (
-        "def assemble_reentry():\n"
-        "    req = LLMRequest(purpose='x')\n"
-        "    return req\n"
-    )
+    fake_source = "def assemble_reentry():\n    req = LLMRequest(purpose='x')\n    return req\n"
     tree = ast.parse(fake_source, filename="<synthetic>")
     collector = _SelectionFunLLMCollector(Path("<synthetic>"))
     collector.visit(tree)

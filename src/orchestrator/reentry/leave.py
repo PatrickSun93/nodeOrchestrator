@@ -119,9 +119,7 @@ def _parse_archive_summary(content: str) -> dict[str, Any]:
     # strip markdown code fences if present
     if content.startswith("```"):
         lines = content.splitlines()
-        content = "\n".join(
-            line for line in lines if not line.startswith("```")
-        ).strip()
+        content = "\n".join(line for line in lines if not line.startswith("```")).strip()
     try:
         parsed = json.loads(content)
         summary = str(parsed.get("one_line_summary", "")) or "Summary unavailable."
