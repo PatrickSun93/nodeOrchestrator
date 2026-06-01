@@ -17,9 +17,14 @@ from typing import Any
 from orchestrator.core.event import EventId, RoomId, TimestampMs, now_ms
 from orchestrator.memory.exceptions import EventNotFoundError, MemoryStoreError
 from orchestrator.memory.schema import (
+    Entity,
+    EntityId,
+    EntityScope,
+    EntityType,
     Hypothesis,
     HypothesisId,
     HypothesisStatus,
+    ProjectArchive,
     VerifiedKnowledge,
     VKId,
     generate_hypothesis_id,
@@ -69,7 +74,22 @@ CREATE TABLE IF NOT EXISTS entity (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
     attributes TEXT NOT NULL DEFAULT '{}',
+    scope TEXT NOT NULL DEFAULT 'personal',
+    evidence TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_archive (
+    room_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    one_line_summary TEXT NOT NULL,
+    decision_log TEXT NOT NULL DEFAULT '[]',
+    spinoff_questions TEXT NOT NULL DEFAULT '[]',
+    scope TEXT NOT NULL DEFAULT 'project',
+    evidence TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (room_id) REFERENCES rooms(id)
 );
 
 CREATE TABLE IF NOT EXISTS tag (
@@ -82,6 +102,20 @@ CREATE TABLE IF NOT EXISTS tag (
 # ---------------------------------------------------------------------------
 # Schema init
 # ---------------------------------------------------------------------------
+
+
+def _ensure_entity_columns(conn: sqlite3.Connection) -> None:
+    """Idempotent ALTER-TABLE guard for scope + evidence on entity (ADR-020 D4).
+
+    Called after executescript(_MEMORY_SCHEMA) in init_memory_schema.
+    Fresh DBs already have both columns; pre-P2.4 DBs need the ALTER.
+    SQLite backfills DEFAULT values into existing rows.
+    """
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(entity)")}
+    if "scope" not in cols:
+        conn.execute("ALTER TABLE entity ADD COLUMN scope TEXT NOT NULL DEFAULT 'personal'")
+    if "evidence" not in cols:
+        conn.execute("ALTER TABLE entity ADD COLUMN evidence TEXT NOT NULL DEFAULT '{}'")
 
 
 def _ensure_hypothesis_topic_tags(conn: sqlite3.Connection) -> None:
@@ -107,6 +141,7 @@ def init_memory_schema(conn: sqlite3.Connection) -> None:
     """
     conn.executescript(_MEMORY_SCHEMA)
     _ensure_hypothesis_topic_tags(conn)
+    _ensure_entity_columns(conn)
     conn.commit()
 
 
@@ -248,8 +283,6 @@ def _row_to_hypothesis(row: sqlite3.Row) -> Hypothesis:
 
 
 def _row_to_vk(row: sqlite3.Row) -> VerifiedKnowledge:
-    from orchestrator.memory.schema import EntityType, VKScope  # noqa: F401 (used via dict)
-
     raw: dict[str, Any] = dict(row)
     return VerifiedKnowledge(
         id=VKId(raw["id"]),
@@ -262,4 +295,29 @@ def _row_to_vk(row: sqlite3.Row) -> VerifiedKnowledge:
         promoted_from_hypothesis_id=HypothesisId(raw["promoted_from_hypothesis_id"]),
         promoted_by_user_id=raw["promoted_by_user_id"],
         promotion_event_id=EventId(raw["promotion_event_id"]),
+    )
+
+
+def _row_to_entity(row: sqlite3.Row) -> Entity:
+    return Entity(
+        id=EntityId(row["id"]),
+        type=EntityType(row["type"]),
+        attributes=json.loads(row["attributes"]),
+        scope=EntityScope(row["scope"]),
+        evidence=json.loads(row["evidence"]),
+        created_at=TimestampMs(row["created_at"]),
+    )
+
+
+def _row_to_project_archive(row: sqlite3.Row) -> ProjectArchive:
+    return ProjectArchive(
+        room_id=RoomId(row["room_id"]),
+        title=row["title"],
+        duration_ms=row["duration_ms"],
+        one_line_summary=row["one_line_summary"],
+        decision_log=json.loads(row["decision_log"]),
+        spinoff_questions=json.loads(row["spinoff_questions"]),
+        scope=EntityScope(row["scope"]),
+        evidence=json.loads(row["evidence"]),
+        created_at=TimestampMs(row["created_at"]),
     )

@@ -241,7 +241,8 @@ agent:
 
 **P1.6.5 新增 (slice B 已物化)**: 跨房间记忆持久化层 — `src/orchestrator/memory/` 包
   (ADR-016 cross-room memory persistence + promotion)。
-  Hypothesis + VerifiedKnowledge 完整持久化;Entity schema-only stub;ProjectArchive 推迟。
+  Hypothesis + VerifiedKnowledge 完整持久化;**P2.4 新增**: Entity 全实现(脱离 schema-only stub)
+  + ProjectArchive 物化 + 用户偏好系统 (ADR-020)。
 
 四类跨房间记忆数据类,**严格分开**:
 
@@ -270,14 +271,39 @@ class VerifiedKnowledge:
     promoted_by_user_id: str
     promotion_event_id: EventId    # the `decision` event id in event_store
 
-# 3. 实体 — schema-only stub (P1.6.5; no producer/consumer API)
+# 3. 实体 — P2.4 物化 (ADR-020 D1; entity SQLite 表 + record_entity / list_entities / get_entity_by_id)
+#    EntityType: person | project | concept | paper | preference (preference via record_preference only)
+#    EntityScope: personal | team | project | global (day-one reserve; chat-history 作用域)
+#    record_entity: plain-insert / append-only; rejects type=PREFERENCE (Principle-11 bypass guard)
 class Entity:
     id: EntityId                   # "ent_<32hex>"
-    type: Literal["person", "project", "concept", "paper"]
-    attributes: dict[str, Any]
+    type: EntityType               # person | project | concept | paper (NOT preference directly)
+    attributes: dict[str, Any]     # free-form, e.g. {"name": "Project X"}
+    scope: EntityScope             # default: PERSONAL; day-one reserve
+    evidence: dict[str, Any]       # provenance (e.g. {"declared_by": user_id}); day-one reserve
+    created_at: TimestampMs
 
-# 4. 项目档案 — 推迟至 P1.7+ (consumer: room re-entry experience, not yet built)
-class ProjectArchive: ...
+# 3b. 用户偏好 — P2.4 物化 (ADR-020 D2; Principle-11 explicit-only)
+#     Entity rows with type=PREFERENCE; stored in same entity table
+#     record_preference(key, value, user_id, *, scope, conn): upserts by (user_id, key, scope)
+#       requires user_id (non-empty) — LLM-inferred pref with no declaring user is un-representable
+#     list_preferences(*, user_id, scope, conn): thin wrapper over list_entities(type=PREFERENCE)
+#     Propose-then-confirm: producer proposes outside memory/; only confirmed result (with user_id) reaches memory/
+
+# 4. 项目档案 — P2.4 物化 (ADR-020 D3; project_archive SQLite 表 + record/get/list API)
+#    Persisted at room close; one row per room (room_id PK); duplicate raises IntegrityError
+#    Semantic fields (one_line_summary, spinoff_questions) produced outside memory/ and passed in (Principle 5)
+#    decision_log: frozen serialized copy composed by caller (produce_decision_log); memory/ stores, never re-derives
+class ProjectArchive:
+    room_id: RoomId                # PRIMARY KEY
+    title: str
+    duration_ms: int               # ge=0
+    one_line_summary: str          # content-gen, passed in from outside memory/
+    decision_log: list[dict]       # frozen copy of ADR-015 derivation at close
+    spinoff_questions: list[str]   # content-gen, passed in
+    scope: EntityScope             # default: PROJECT
+    evidence: dict[str, Any]       # provenance; day-one reserve
+    created_at: TimestampMs
 ```
 
 **P2.1 新增 (tag registry 已物化, ADR-018)**: 共享规范标签词汇表 — `tag` SQLite 表 +
@@ -883,7 +909,7 @@ Placeholder defaults 全部标 TODO,真值通过 P1.5+ 实际使用 tune 出来�
 | **P2.1** | Tag registry(ADR-018):`tag` 表 + `normalize_tag` + `resolve_tags`;Hypothesis/VK 共享规范词汇表 | ✅ **DONE** | 地基(matcher 的前置) |
 | **P2.2** | 晋升规则 (a) 跨房间 matcher(ADR-017):`run_matcher` 按 canonical tag-set 分组,跨 ≥N 房间 flip `candidate_for_promotion`,advisory-only | ✅ **DONE** | 依赖 P2.1 |
 | **P2.3** | 晋升规则 (c) 外部 ground-truth 验证(ADR-019):typed external-validation 输入 + deterministic 规则函数,advisory-only,judgment 重定位到 connector(Principle 5) | 🚧 **IN-PROGRESS**(senior 起草中) | 完成晋升三元组 (a)(b)(c) |
-| **P2.4** | **记忆数据模型补全**:Entity 全实现(producer/consumer,脱离 schema-only stub)+ ProjectArchive(model+表+impl,P1.6.5 起 deferred)+ 用户偏好系统(chat-history §类别4:用户偏好 = 实体记忆) | ⬜ NOT STARTED | re-entry 消费的"容器";必须先于 P2.5 |
+| **P2.4** | **记忆数据模型补全**:Entity 全实现(producer/consumer,脱离 schema-only stub)+ ProjectArchive(model+表+impl,P1.6.5 起 deferred)+ 用户偏好系统(chat-history §类别4:用户偏好 = 实体记忆) | ✅ IMPL DONE (claude/P2.4-impl — awaiting review) | re-entry 消费的"容器";必须先于 P2.5 |
 | **P2.5** | **房间 re-entry / 离开-回来追平体验(= P2 验收"AI 记得我")**:离开生成 catch-up 摘要;回来显式追平;**第一个** `lookup_verified_knowledge` + ProjectArchive + Entity + snapshot 的消费者 | ⬜ NOT STARTED | 依赖 P2.4 容器 + 现有 lookup/snapshot;rule-b 已晋升的 VK 即可 demo |
 | **P2.6** | **喂活 dormant 晋升规则**:rule-a 的 tagging producer(agent 层 content-gen 给 `Hypothesis.topic_tags` 打标)+ rule-c 的 external connectors(产出 validation verdict)+ refuted/inconclusive verdict 处理(P2.3 push-back #4 deferred) | ⬜ NOT STARTED | 依赖 P2.3(rule-c contract accepted);让 (a)(c) 在真实数据上 fire |
 | **P2.7** | **平台演化 + LLM 层 + 启动 polish**:状态机演化/切换(§7 co-headline)+ LLM Layer 4(全局 cost/quality override)+ Claude Code alt backend(`ANTHROPIC_BASE_URL`)+ 友好版启动错误信息 | ⬜ NOT STARTED | 多与记忆轨道独立;作为平台/polish 排最后 |

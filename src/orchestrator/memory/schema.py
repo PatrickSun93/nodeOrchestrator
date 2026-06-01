@@ -61,11 +61,19 @@ class VKScope(StrEnum):
     GLOBAL = "global"
 
 
+class EntityScope(StrEnum):
+    PERSONAL = "personal"
+    TEAM = "team"
+    PROJECT = "project"
+    GLOBAL = "global"
+
+
 class EntityType(StrEnum):
     PERSON = "person"
     PROJECT = "project"
     CONCEPT = "concept"
     PAPER = "paper"
+    PREFERENCE = "preference"
 
 
 # ---------------------------------------------------------------------------
@@ -117,15 +125,29 @@ class VerifiedKnowledge(BaseModel):
 
 
 class Entity(BaseModel):
-    """Schema-only stub. No producer/consumer API in P1.6.5.
-
-    Per ADR-016 D1: ships to avoid future migration cost when an Entity
-    producer/consumer surface materializes.
-    """
+    """Entity with full producer/consumer surface. Per ADR-020 D1."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: EntityId
     type: EntityType
     attributes: dict[str, Any] = Field(default_factory=dict)
+    scope: EntityScope = EntityScope.PERSONAL
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    created_at: TimestampMs
+
+
+class ProjectArchive(BaseModel):
+    """Per-room narrative identity persisted at close. Per ADR-020 D3."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    room_id: RoomId
+    title: str
+    duration_ms: int = Field(ge=0)
+    one_line_summary: str
+    decision_log: list[dict[str, Any]] = Field(default_factory=list)
+    spinoff_questions: list[str] = Field(default_factory=list)
+    scope: EntityScope = EntityScope.PROJECT
+    evidence: dict[str, Any] = Field(default_factory=dict)
     created_at: TimestampMs

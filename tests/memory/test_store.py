@@ -270,6 +270,73 @@ class TestInitMemorySchema:
         assert hyp.content == "post-migration hypothesis"
         conn2.close()
 
+    def test_entity_column_add_migration_round_trip(self, tmp_path: Path) -> None:
+        """Pre-P2.4 entity table (no scope/evidence) gains both columns on migration.
+
+        Per ADR-020 D4 + the _ensure_entity_columns ALTER template (mirror
+        _ensure_hypothesis_topic_tags / ADR-018 D5 precedent).
+
+        Discriminating: if _ensure_entity_columns fails to ALTER, the SELECT on
+        scope/evidence after reopening raises OperationalError or returns
+        None — we assert both columns present AND old row reads defaults.
+        """
+        db_path = tmp_path / "entity_migration_test.db"
+
+        # Phase 1: create event store + OLD entity schema (without scope/evidence).
+        old_ddl = """
+            CREATE TABLE rooms (
+                id TEXT PRIMARY KEY, type TEXT NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE events (
+                id TEXT PRIMARY KEY, room_id TEXT NOT NULL, type TEXT NOT NULL,
+                author TEXT NOT NULL, timestamp INTEGER NOT NULL, content TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE entity (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                attributes TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER NOT NULL
+            );
+        """
+        conn1 = sqlite3.connect(str(db_path))
+        conn1.row_factory = sqlite3.Row
+        conn1.executescript(old_ddl)
+        conn1.execute(
+            "INSERT INTO entity (id, type, attributes, created_at) VALUES (?, ?, ?, ?)",
+            ("ent_old", "project", '{"name":"old-project"}', 1_000_000),
+        )
+        conn1.commit()
+        old_count = conn1.execute("SELECT COUNT(*) FROM entity").fetchone()[0]
+        conn1.close()
+
+        # Phase 2: reopen + run init_memory_schema (simulates P2.4 migration).
+        conn2 = sqlite3.connect(str(db_path))
+        conn2.row_factory = sqlite3.Row
+        init_memory_schema(conn2)
+
+        # scope + evidence columns present.
+        cols = {row["name"] for row in conn2.execute("PRAGMA table_info(entity)")}
+        assert "scope" in cols, "scope column missing after migration"
+        assert "evidence" in cols, "evidence column missing after migration"
+
+        # Old row backfilled with DEFAULT values.
+        row = conn2.execute("SELECT * FROM entity WHERE id = 'ent_old'").fetchone()
+        assert row is not None
+        assert row["scope"] == "personal"
+        assert row["evidence"] == "{}"
+
+        # Row count preserved.
+        new_count = conn2.execute("SELECT COUNT(*) FROM entity").fetchone()[0]
+        assert new_count == old_count
+
+        # Idempotent: second init_memory_schema is a no-op.
+        init_memory_schema(conn2)
+        final_count = conn2.execute("SELECT COUNT(*) FROM entity").fetchone()[0]
+        assert final_count == old_count
+        conn2.close()
+
 
 # ---------------------------------------------------------------------------
 # record_hypothesis

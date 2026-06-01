@@ -401,11 +401,11 @@ class TestRunMatcherInvariants:
         # canonical "topic-x" via different surface forms); singleton in C;
         # the dup pair is both in room A (1 distinct room → not cross-room).
         specs: dict[str, tuple[str, str]] = {
-            "cluster-a": ("A", "Topic X"),    # canonical "topic-x"
-            "cluster-b": ("B", "topic x"),    # canonical "topic-x" (different surface)
-            "singleton": ("C", "unique-y"),   # 1 room
-            "dup-1": ("A", "dup-z"),          # same-room dup (room A)
-            "dup-2": ("A", "dup-z"),          # ... both room A → 1 distinct room
+            "cluster-a": ("A", "Topic X"),  # canonical "topic-x"
+            "cluster-b": ("B", "topic x"),  # canonical "topic-x" (different surface)
+            "singleton": ("C", "unique-y"),  # 1 room
+            "dup-1": ("A", "dup-z"),  # same-room dup (room A)
+            "dup-2": ("A", "dup-z"),  # ... both room A → 1 distinct room
         }
         expected_flagged = {"cluster-a", "cluster-b"}
 
