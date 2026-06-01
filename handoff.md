@@ -871,15 +871,26 @@ Placeholder defaults 全部标 TODO,真值通过 P1.5+ 实际使用 tune 出来�
 
 **P1 验收**:能跑研究类对话、能感受到 push back、能看到结构化进展。
 
-### P2 — 跨房间记忆 + 状态机演化
+### P2 — 跨房间记忆 + 状态机演化(7 个 slice:P2.1..P2.7)
 
 跨房间记忆系统、状态机切换、用户偏好系统、离开/回来追平体验。
 **P2 验收**:第二次使用能看到"AI 记得我"。
 
-P2 还包括:
-- LLM 层 Layer 4(全局覆盖,省钱/质量模式)
-- Claude Code 接 alt backend(`ANTHROPIC_BASE_URL` 配置)
-- 友好版启动错误信息
+**Scope 决定(architect,2026-05-31)**:P2 = **the long close** —— 上面四大支柱 + 三个"还包括"项 + 把 P2.1-2.3 留下的 dormant 机制喂活,全部在 P2 内,拆成 **7 个 dependency-ordered slice P2.1..P2.7**。P2 完成 = 这 7 个全部 closed。**不是** tight close(不把任何项推到 P3)。
+
+| Slice | 内容 | 状态 | 依赖 / 序 |
+|---|---|---|---|
+| **P2.1** | Tag registry(ADR-018):`tag` 表 + `normalize_tag` + `resolve_tags`;Hypothesis/VK 共享规范词汇表 | ✅ **DONE** | 地基(matcher 的前置) |
+| **P2.2** | 晋升规则 (a) 跨房间 matcher(ADR-017):`run_matcher` 按 canonical tag-set 分组,跨 ≥N 房间 flip `candidate_for_promotion`,advisory-only | ✅ **DONE** | 依赖 P2.1 |
+| **P2.3** | 晋升规则 (c) 外部 ground-truth 验证(ADR-019):typed external-validation 输入 + deterministic 规则函数,advisory-only,judgment 重定位到 connector(Principle 5) | 🚧 **IN-PROGRESS**(senior 起草中) | 完成晋升三元组 (a)(b)(c) |
+| **P2.4** | **记忆数据模型补全**:Entity 全实现(producer/consumer,脱离 schema-only stub)+ ProjectArchive(model+表+impl,P1.6.5 起 deferred)+ 用户偏好系统(chat-history §类别4:用户偏好 = 实体记忆) | ⬜ NOT STARTED | re-entry 消费的"容器";必须先于 P2.5 |
+| **P2.5** | **房间 re-entry / 离开-回来追平体验(= P2 验收"AI 记得我")**:离开生成 catch-up 摘要;回来显式追平;**第一个** `lookup_verified_knowledge` + ProjectArchive + Entity + snapshot 的消费者 | ⬜ NOT STARTED | 依赖 P2.4 容器 + 现有 lookup/snapshot;rule-b 已晋升的 VK 即可 demo |
+| **P2.6** | **喂活 dormant 晋升规则**:rule-a 的 tagging producer(agent 层 content-gen 给 `Hypothesis.topic_tags` 打标)+ rule-c 的 external connectors(产出 validation verdict)+ refuted/inconclusive verdict 处理(P2.3 push-back #4 deferred) | ⬜ NOT STARTED | 依赖 P2.3(rule-c contract accepted);让 (a)(c) 在真实数据上 fire |
+| **P2.7** | **平台演化 + LLM 层 + 启动 polish**:状态机演化/切换(§7 co-headline)+ LLM Layer 4(全局 cost/quality override)+ Claude Code alt backend(`ANTHROPIC_BASE_URL`)+ 友好版启动错误信息 | ⬜ NOT STARTED | 多与记忆轨道独立;作为平台/polish 排最后 |
+
+**依赖序**:`P2.1→P2.2→P2.3`(晋升机制,已基本完成)→ `P2.4`(补全记忆容器)→ `P2.5`(re-entry 读容器,验收)→ `P2.6`(producers 喂活规则)→ `P2.7`(平台 polish)。
+**关键 gap 提醒**:P2.1-2.3 全是记忆**写**侧;`lookup_verified_knowledge` 至今**零消费者**。**P2.5 才是真正搬动"AI 记得我"验收的 slice** —— 前面都是它将读取的 plumbing。P2.5 是 milestone critical path。
+**一个序的判断点(待 architect ratify)**:P2.5(re-entry)vs P2.6(producers)的先后 —— re-entry 的硬依赖是 P2.4 容器(非 producers),且可在 rule-b 已晋升的 VK 上 demo,故置于 P2.6 前(尽早 de-risk 验收);若要"第二次使用"在 producer 自动填充的真实记忆上演示,则 P2.6 应前置。当前排序取前者。
 
 ### P3 — 完整产品
 
