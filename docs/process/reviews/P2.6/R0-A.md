@@ -1,16 +1,36 @@
 ---
 task_id: P2.6
 round: R0-A
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 10
+  yellow: 0
+  green: 11
 verdict_history:
   - verdict: needs_architect
     at_commit: fbcc5c6
     findings_count: { red: 0, yellow: 1, green: 10 }
     note: initial R0-A (impl-stage, in-family). Gates FULLY green incl. mypy --strict (169 files, canonical files=[src,tests] — P2.5 R1 lesson learned). Both c1+c2 AST guards PROVEN discriminating on real-source planted bypasses. Constitutional boundaries clean + structurally enforced; B3 advisory no-status-mutation; e2e discriminating; Y2-overwrite absorbed. Y1 (architect-relevant) — the tagging producer's LLM-call pattern (async + provider-direct + Any) deviates from the established sync-typed-router convention (agents/dispatch + reentry); as the FIRST producer it sets the pattern. Nothing blocking.
+  - verdict: clean
+    at_commit: 383abc9
+    findings_count: { red: 0, yellow: 0, green: 11 }
+    note: >-
+      Bumped per architect impl-stage routing Y1 -> alpha (align first producer to
+      sync-typed-router) + RC-10. Verified the fix (383abc9) genuinely aligns to the
+      project-wide convention: propose_hypothesis_tags is now sync `def` (no async
+      color), takes a typed local `LLMRouterProtocol` Protocol (`def call(self, request:
+      LLMRequest) -> LLMResponse`) byte-identical in shape to reentry/render.py +
+      reentry/leave.py + agents/dispatch.py, calls `llm_router.call(request)`, and drops
+      the `Any` type + the sentinel ModelProfile (router owns model selection/fallback).
+      Tests realigned: e2e + test_tagging use `MagicMock(spec=LLMRouterProtocol)` (sync),
+      call site drops `asyncio.run` and passes `llm_router=`. The content-gen boundary is
+      preserved (purpose=HYPOTHESIS_TAG_PROPOSAL, caller_agent_id=None) and the c1 guard
+      is untouched (no forbidden symbols). Orchestrator verified FULL gates green: ruff +
+      ruff-format + mypy --strict (170 files, no issues) + pytest all pass; independently
+      re-confirmed here (producer + e2e tests pass, mypy --strict clean on tagging.py).
+      Y1 1🟡 -> 🟢 (11🟢). Two stale "MockProvider" comments in the e2e remain (cosmetic,
+      non-blocking). R0-B.md + plan-vs-impl.md already clean (untouched). Did NOT advance
+      or merge.
 ---
 
 # P2.6 R0-A (impl-stage, in-family)
@@ -22,7 +42,9 @@ verdict_history:
 | Reviewed in | isolated git worktree at `fbcc5c6` |
 | Gates (run in worktree) | **ALL green** — ruff ✓ · ruff-format ✓ (169 files) · **`mypy` (canonical `files=[src,tests]`) ✓ (169 files)** · pytest ✓ |
 
-## Verdict: needs_architect
+## Verdict: clean (bumped from needs_architect — Y1 α-absorbed at `383abc9`)
+
+> **Routing-absorption note (RC-10).** Architect routed Y1 → **α** (align the first producer to the sync-typed-router convention). Fix `383abc9` is genuine: `propose_hypothesis_tags` is now **sync `def`**, takes a typed local **`LLMRouterProtocol`** Protocol byte-identical to `reentry/render.py` + `reentry/leave.py` + `agents/dispatch.py` (`def call(self, request: LLMRequest) -> LLMResponse`), calls `llm_router.call(request)`, and drops both the `Any` type and the sentinel `ModelProfile` (router owns model selection/fallback). Tests realigned to `MagicMock(spec=LLMRouterProtocol)` (sync); the e2e call site drops `asyncio.run`. The content-gen boundary is preserved (`HYPOTHESIS_TAG_PROPOSAL`, `caller_agent_id=None`) and the c1 guard is untouched. Orchestrator verified **full gates green** (ruff · ruff-format · `mypy --strict` 170 files · pytest); independently re-confirmed here. Y1 1🟡 → 🟢 (11🟢). Two stale "MockProvider" comments in the e2e remain (cosmetic). Original finding preserved below for the audit trail.
 
 **Strong impl — and notably, the P2.5 R1 lesson landed: `mypy --strict` is green** (the junior's `58084d7` "fix mypy" commit; the canonical `uv run mypy` passes 169 files). The constitutional boundaries are clean **and I verified the guards actively, not by inspection**: I planted real-source bypasses and confirmed **both** AST guards fail — c1 caught `run_matcher` in `producers/tagging.py` (line 80), c2 caught `ExternalValidationMeta(...)` in `connectors/dataset_check.py` (line 52); both pass after revert. B1 tagging is content-gen (descriptive, no matcher/promotion symbols); B2's verdict is `evidence_ref`-anchored (the emit helper raises on empty, is the sole construction site, appends via `EventStore.append`); B3 is a pure advisory reader (no status mutation); the e2e is discriminating (positive + negative per block); Y2-overwrite is absorbed + tested.
 
