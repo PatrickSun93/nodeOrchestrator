@@ -1,16 +1,30 @@
 ---
 task_id: P2.7
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 11
+  yellow: 0
+  green: 13
 verdict_history:
   - verdict: needs_architect
     at_commit: b564633
     findings_count: { red: 0, yellow: 2, green: 11 }
     note: initial R0-A-on-plan (in-family). Exceptional plan — every named check (c1 S2 routing-is-code, c2 S3 security, S1 scaffold-SM, RC-23-safe amendments, split, Q1-Q5) verifies clean; the S1 halt-and-resurface (param-consumption already shipped → architect re-pin) is a process win. Two architect-confirm-at-accept 🟡 beyond the checks — Y1 (S2 cost_ceiling keeps unknown-cost models = soft ceiling) + Y2 (split-into-4-full-lifecycles re-derives brief/plan already done here). Neither blocking.
+  - verdict: clean
+    at_commit: PENDING-plan-stage-routing-absorption
+    findings_count: { red: 0, yellow: 0, green: 13 }
+    note: >-
+      Bumped per architect plan-stage routing + RC-10. Y1 → α (S2 soft-ceiling; convergent
+      with R0-B Y1): GlobalLLMOverride gains `on_unknown_cost: Literal["keep","drop"] = "keep"`
+      (default behavior unchanged) and apply_global_override emits a decision_trace entry for
+      every unknown-cost model met under a ceiling (kept-despite / dropped-as), so the softness
+      is never silent — ADR-023 D1/D2 + plan §2-S2 AC#3b. Y2 → architect ruled **batched (B)**:
+      plan §3 rewritten from split-4-tasks to one P2.7 task (prelude config_loader+types.py
+      skeleton → S1∥S2∥S3 atomics [junior subagent-parallel, architect-authorized] → S4-last
+      [S2/S3 friendly errors] → e2e); single state file, single merge; dual-lens R0-B on the
+      S2/S3 atomics in the one review; frontmatter slice_recommendation → batched-single-task.
+      Both 🟡 → 🟢 (13🟢). Did NOT accept ADR-023/amendments (architect-only); did NOT advance state.
 ---
 
 # P2.7 R0-A on plan (architect-dispatched pre-impl review, in-family)
@@ -22,7 +36,9 @@ verdict_history:
 | ADR status | ADR-023 left **Proposed**; ADR-002/ADR-012 amendments left **Proposed** — this review informs accept; I did not accept (architect-only). |
 | Cross-family | `requires_cross_family_review: true` — dual-lens R0-B on S2/S3 runs after me; I leave the tree clean. |
 
-## Verdict: needs_architect
+## Verdict: clean (bumped from needs_architect — plan-stage routing absorbed)
+
+> **Routing-absorption note (RC-10).** **Y1 → α** (S2 soft-ceiling, convergent with R0-B Y1): `GlobalLLMOverride` gains `on_unknown_cost: Literal["keep","drop"] = "keep"` (default unchanged); `apply_global_override` emits a `decision_trace` entry for every unknown-cost model met under a ceiling (kept-despite / dropped-as) — the softness is now visible (ADR-023 D1/D2 + plan §2-S2 AC#3b). **Y2 → architect ruled batched (B)**: plan §3 rewritten from split-4-tasks to **one P2.7 task** (prelude → S1∥S2∥S3 atomics → S4-last → e2e; single state file, single merge; dual-lens on the S2/S3 atomics in the one review; `slice_recommendation: batched-single-task`). Both 🟡 → 🟢 (13🟢). Original findings preserved below for the audit trail.
 
 **This is the strongest plan I've reviewed this cycle — every check the dispatch named verifies clean against the actual artifacts.** c1 (S2 override is deterministic code) and c2 (S3 alt-backend security) are pinned with structural enforcement; the two closed-ADR amendments are RC-23-safe; S1 was **halted-and-resurfaced** correctly (the senior found the param-consumption interpretation already shipped in P1.5, halted rather than plan a no-op, and the architect re-pinned S1 to scaffold-buildout — a textbook surface-don't-improvise). I verified the substrate (router.py:15 "zero LLM calls", `_next_scaffold_state` always-None, `ANTHROPIC_BASE_URL` absent in `claude_code_cli.py`, no `main.py`, `config_loader.py` coupling) — all the plan's §7 self-discoveries are accurate.
 

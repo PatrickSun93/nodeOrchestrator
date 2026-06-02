@@ -2,11 +2,30 @@
 task_id: P2.7
 round: R0-B-cross-family
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 6
+  yellow: 0
+  green: 8
+verdict_history:
+  - verdict: needs_architect
+    at_commit: b564633
+    findings_count: { red: 0, yellow: 2, green: 6 }
+    note: initial R0-B-cross-family (deepseek). S2 override IS genuinely deterministic code (spy + AST guard structurally enforce c1; composes with Layer-3 no bypass); S3 allowlist IS fail-closed for the config path. Two 🟡 — Y1 (S2 cost_ceiling "keep on unknown" = unpriced models bypass the cost dial; no trace visibility) + Y2 (S3 subprocess-env inheritance: unset base_url may NOT be fail-closed if parent carries ANTHROPIC_BASE_URL — the sharpest c2 probe). Both resolvable at plan stage; lean α on both.
+  - verdict: clean
+    at_commit: PENDING-plan-stage-routing-absorption
+    findings_count: { red: 0, yellow: 0, green: 8 }
+    note: >-
+      Bumped per architect plan-stage routing + RC-10 + dual-lens Step 5. Y1 → α (convergent
+      with R0-A Y1): `on_unknown_cost: Literal["keep","drop"] = "keep"` knob + a decision_trace
+      entry for every unknown-cost model met under a ceiling (visibility in both modes) —
+      ADR-023 D1/D2 + plan §2-S2. Y2 → α MUST-FIX (the cross-family security catch): ADR-023 D4
+      + plan §2-S3 now pin the subprocess-env contract — when base_url is None the child env has
+      ANTHROPIC_BASE_URL **explicitly cleared** (a parent value is dropped, never forwarded), so
+      the redirect can take effect only through the allowlisted path; + a discriminating test
+      (parent ANTHROPIC_BASE_URL=untrusted + config base_url=None → child does NOT receive it),
+      plan §2-S3 AC#2b. This closes the inheritance bypass without changing the allowlist/config
+      contract — exactly this review's α lean. Both 🟡 → 🟢 (8🟢). Did NOT accept ADR or advance state.
 ---
 
 # P2.7 R0-B cross-family review (plan + ADR-023) — LLM Layer-4 override + alt-backend + startup
@@ -20,7 +39,9 @@ findings_count:
 | Baseline | `main` — `router.py:15` ("zero LLM calls"), `router.py:109` (select_model_and_provider), `openai_compatible.py:64` (base_url precedent), `claude_code_cli.py` (no base_url), `state_machine.py:219-231` (_next_scaffold_state returns None) |
 | Prior reviews | None yet (R0-A-on-plan pending) |
 | Date | 2026-06-02 |
-| Verdict | **needs_architect** — 0🔴 · 2🟡 · 6🟢 |
+| Verdict | **clean** (bumped from needs_architect) — 0🔴 · 0🟡 · 8🟢 |
+
+> **Routing-absorption note (RC-10 + dual-lens Step 5).** Both 🟡 routed **α** — exactly this review's leans. **Y1** (S2 soft-ceiling, convergent with R0-A Y1): `on_unknown_cost: Literal["keep","drop"]="keep"` + a `decision_trace` entry for unknown-cost models met under a ceiling, in both modes (ADR-023 D1/D2). **Y2** (MUST-FIX, the cross-family security catch — the subprocess-env-inheritance bypass): ADR-023 D4 + plan §2-S3 now pin the subprocess-env contract — `base_url=None` ⇒ child `ANTHROPIC_BASE_URL` **explicitly cleared** (parent value dropped, never forwarded) + a discriminating test (parent `ANTHROPIC_BASE_URL=untrusted` + config `base_url=None` → child does not receive it). Both 🟡 → 🟢. Original findings preserved below for the audit trail.
 
 ## Lens preamble
 

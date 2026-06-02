@@ -38,6 +38,7 @@ class GlobalLLMOverride(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     quality_tier: Literal["economy", "balanced", "premium"] | None = None
     cost_ceiling_per_1m_output: float | None = Field(default=None, ge=0.0)
+    on_unknown_cost: Literal["keep", "drop"] = "keep"  # Y1-α: policy for unpriced models under a ceiling
 ```
 
 This is a **global** knob (one per deployment), distinct from the per-agent `AgentLLMConfig` (ADR-002 layer-3). It is the **4th layer** (ADR-002 amendment): provider ← model ← agent ← **global override**. It sits *above* the agent layer because it is a deployment-wide operational dial (cost governance / quality posture), not a per-agent property.
@@ -59,7 +60,7 @@ def apply_global_override(
 
 Two **independent, deterministic** operations over **static `ModelProfile` attributes** (no inference):
 
-- **Filter** by `cost_ceiling_per_1m_output`: drop any candidate whose `ModelProfile.cost_per_1m_output` is *known and strictly greater* than the ceiling. A candidate with `cost_per_1m_output is None` (unknown cost) is **kept** — the ceiling cannot be evaluated, so the override does not silently drop it (documented; the alternative — fail-closed on unknown cost — is rejected as surprising for a cost dial).
+- **Filter** by `cost_ceiling_per_1m_output`: drop any candidate whose `ModelProfile.cost_per_1m_output` is *known and strictly greater* than the ceiling. A candidate with `cost_per_1m_output is None` (**unknown cost**) is handled by the **`on_unknown_cost`** policy (Y1-α, R0-A/R0-B convergent): `"keep"` (**default** — behavior unchanged: the ceiling cannot be evaluated, so the model is **not** silently dropped) or `"drop"` (fail-closed — a hard ceiling for deployments that want unpriced models excluded). **Either way the softness is made visible**: every unknown-cost candidate encountered under a set ceiling gets a `decision_trace` / `RouteCandidate` entry recording it was skipped-by-the-ceiling-check (kept-despite-unknown-cost, or dropped-as-unknown-cost) — so a user reading the route never silently believes an unpriced model was cost-bounded. With **no** ceiling set, `on_unknown_cost` is inert (nothing to evaluate).
 - **Reorder** by `quality_tier`, a **stable sort** by a tier-specific key over static attributes: `economy` → ascending `cost_per_1m_output` (None-cost sorts last); `premium` → descending `len(capabilities)` then original order (prefer the most-capable available); `balanced` / `None` → identity (no reorder). Stable so equal keys preserve the author's `[default_model, *fallback_chain]` intent.
 
 **Composition with Layer-3 (ADR-002 D4):** the transformed `effective_chain` is fed into the **existing** `select_model_and_provider` loop, which still applies `required_capabilities` + provider-exists + tools-support + `health_check` per candidate, unchanged. The override **never** bypasses those filters — it only pre-filters/reorders *which* candidates the router considers and *in what order*. Integration site: `router.py:164-166` (chain construction) gains `effective_chain = apply_global_override(chain, override, models)`; `select_model_and_provider` gains an `override: GlobalLLMOverride | None = None` parameter (default `None` ⇒ no behavior change for existing callers/tests).
@@ -80,6 +81,12 @@ Two enforcements make "the override is code, not LLM judgment" structural, not c
 #### D4. `base_url` opt-in on the Claude Code provider, plumbed via subprocess env
 
 `providers/claude_code_cli.py` gains an optional field `base_url: str | None = None`. When set, the provider passes `ANTHROPIC_BASE_URL=<base_url>` in the subprocess environment of the `claude` invocation (the CLI honors that env var to redirect its endpoint). **Unset (`None`) = the default Anthropic endpoint** — existing behavior unchanged (test-coverage §3 cleanup). This mirrors the *intent* of `openai_compatible.py`'s `base_url` field, adapted to the subprocess (env-var) rather than HTTP-client construction.
+
+**Subprocess-env contract — fail-closed against parent-env inheritance (Y2-α, MUST-FIX security; R0-B cross-family).** The `claude` subprocess must **never** inherit `ANTHROPIC_BASE_URL` from the parent process. The default subprocess behavior (inherit the parent environment) would let an `ANTHROPIC_BASE_URL` set in the parent — by the OS, a wrapper script, a container runtime, or a prior invocation — reach the child Claude Code process **without passing the D5 allowlist**, silently bypassing the entire c2 boundary (conversation content + tool calls + key → an untrusted backend). Therefore the provider constructs the child env **explicitly**, controlling `ANTHROPIC_BASE_URL` in **all** cases:
+- `base_url` **set + allowlisted** (D5) → child env gets `ANTHROPIC_BASE_URL=<base_url>`.
+- `base_url` **unset (`None`)** → child env has `ANTHROPIC_BASE_URL` **explicitly cleared/removed** (e.g. build `env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_BASE_URL"}`, or pop it from a copied env) — a parent-process value is **dropped**, never forwarded. The redirect can take effect **only** through the allowlisted config path; an ambient parent value cannot.
+
+This makes "unset = Anthropic default" genuinely fail-closed. The contract is enforced by a **discriminating test** (plan S3 AC): parent env `ANTHROPIC_BASE_URL=<untrusted>` + config `base_url=None` → the child env does **not** carry `ANTHROPIC_BASE_URL` (asserts the inheritance bypass is closed).
 
 #### D5. Fail-closed allowlist — only explicitly-trusted base_urls
 
