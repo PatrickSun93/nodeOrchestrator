@@ -1,16 +1,35 @@
 ---
 task_id: P3.1
 round: R0-A-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 11
+  yellow: 0
+  green: 12
 verdict_history:
   - verdict: needs_architect
     at_commit: f30a1dd
     findings_count: { red: 0, yellow: 1, green: 11 }
     note: initial R0-A-on-plan (in-family, single-lens — dual-lens skipped as ruled). Exemplary for a light slice; every named check verifies clean — rosters match the ruling, the 2b backward-compat design is VERIFIED safe (scaffold state names are unique vs Research's setup/exploration/divergence/convergence/snapshot_pending/closed), facilitator preserves the code-activation/LLM-content split, ADR-024 RC-23-safe, no new LLMPurpose. One LOW 🟡 (Y1) — the 2b matrix specifies the state_change-trigger layer but the reused agents' EXISTING triggers also fire in scaffold rooms (additive, acknowledged but un-enumerated); the e2e's "exactly the matrix agents per state" must test the NET activation. Not blocking.
+  - verdict: clean
+    at_commit: PENDING-plan-stage-routing-absorption
+    findings_count: { red: 0, yellow: 0, green: 12 }
+    note: >-
+      Bumped per architect plan-stage routing (Y1 → α-fold) + RC-10. Added plan §2b-net: a net
+      per-(room,state) activation table = (existing event_type/regex triggers firing on the
+      triggering event) ∪ (new state_change→<state> firing on the appended state_transition event),
+      derived from the verified mechanics (should_agent_speak evaluates current_event; dispatch.py:90).
+      The net surfaces the precision the matrix missed: at the two HYPOTHESIS-driven transitions
+      (bug_fix→diagnosed, idea_validation→validating) operator co-fires via its existing hypothesis
+      trigger (§2b had skeptic only); all other transition triggers (OBSERVATION/DECISION/REJECTION/
+      UTTERANCE/SUMMARY_SNAPSHOT) match no event_type trigger so net = state_change layer there.
+      Verified **no unintended over-activation**: every off-transition/existing-trigger firing is
+      role-appropriate (operator on user_input/hypothesis; skeptic on hypothesis; prober on \?), the
+      hypothesis triggers do NOT fire on code_review's transition path (only ad-hoc), and skeptic's
+      state_change→research is a pre-existing no-op (no state named "research"). e2e acceptance
+      (P3.1-2) rewritten to assert the NET (existing + state_change) over the full picture with
+      control events (RC-25 discriminating). Design unchanged — precision completion only. Y1 🟡 → 🟢
+      (12🟢). Did NOT accept ADR-024 or advance state.
 ---
 
 # P3.1 R0-A on plan (architect-dispatched pre-impl review, in-family, single-lens)
@@ -21,7 +40,9 @@ verdict_history:
 | Artifacts | `senior-plans/P3.1.md` + `ADR-024` (Proposed) + `config/agents/facilitator.yaml` vs `origin/main` substrate + brief P3.1 |
 | ADR status | ADR-024 left **Proposed** — informs accept; I did not accept (architect-only). |
 
-## Verdict: needs_architect
+## Verdict: clean (bumped from needs_architect — Y1 α-folded into the plan)
+
+> **Routing-absorption note (RC-10).** Y1 → **α-fold**. Plan gained **§2b-net**: the net per-(room,state) activation = existing `event_type`/`regex` triggers (firing on the triggering event) ∪ new `state_change→<state>` (firing on the appended `state_transition` event), per the verified `should_agent_speak`-evaluates-`current_event` mechanics. It surfaces the matrix gap (operator co-fires via `hypothesis` at `bug_fix→diagnosed` + `idea_validation→validating`) and **verifies no unintended over-activation** (every existing-trigger firing is role-appropriate; hypothesis triggers don't fire on `code_review`'s transition path; skeptic's `state_change→research` is a pre-existing no-op). The e2e acceptance (P3.1-2) now asserts the **net** (existing + `state_change`) with control events (RC-25). Design unchanged — precision only. Y1 🟡 → 🟢. Original finding preserved below.
 
 **Exemplary plan for a "light" slice — every named check verifies clean, and the senior did genuinely sharp backward-compat work.** The non-obvious part (2b) is right and I verified it: `applies_to.room_states` is a *flat shared list*, so narrowing it would regress Research — the senior instead uses `speaking_triggers` keyed on **scaffold state names**, and I confirmed those names (`reproduced/diagnosed/fix_proposed/reviewing/changes_requested/approved/pitching/validating/decided/active`) are **unique** — none occurs in Research's set (`setup/exploration/divergence/convergence/snapshot_pending/closed`) — so a `state_change → <scaffold_state>` trigger fires **only** in that room (backward-compat-safe). The facilitator preserves the code-activation/LLM-content split (ADR-024 D2), ADR-024 is RC-23-safe, no new `LLMPurpose` (still 9), and the e2e is discriminating-by-design.
 
