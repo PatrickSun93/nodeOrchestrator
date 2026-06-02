@@ -14,56 +14,43 @@ candidate_for_promotion.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Protocol
 
 from orchestrator.core.event import Event
 from orchestrator.llm.purposes import LLMPurpose
 from orchestrator.llm.types import (
     LLMRequest,
+    LLMResponse,
     Message,
-    ModelId,
-    ModelProfile,
-    ProviderId,
     generate_request_id,
 )
 from orchestrator.memory.schema import Hypothesis
 
-# ---------------------------------------------------------------------------
-# Sentinel model profile for tests (MockProvider does not use provider_model_id).
-# Production callers are expected to supply a real model profile via `model=`.
-# ---------------------------------------------------------------------------
 
-_TAG_PROVIDER_ID = ProviderId("tag_provider_sentinel")
-_TAG_MODEL_ID = ModelId("tag_model_sentinel")
+class LLMRouterProtocol(Protocol):
+    """Synchronous LLM call interface for the tagging producer."""
 
-_TAG_MODEL_PROFILE = ModelProfile(
-    id=_TAG_MODEL_ID,
-    provider=_TAG_PROVIDER_ID,
-    provider_model_id="tag-model-sentinel",
-    context_window=4096,
-)
+    def call(self, request: LLMRequest) -> LLMResponse: ...
 
 
-async def propose_hypothesis_tags(
+def propose_hypothesis_tags(
     hypothesis: Hypothesis,
     source_events: list[Event],
     *,
-    llm_provider: Any,
-    model: ModelProfile | None = None,
+    llm_router: LLMRouterProtocol,
 ) -> list[str]:
     """Propose descriptive topic_tags for *hypothesis* via LLM content-gen.
 
     Content-gen only (ADR-022 D6, LLMPurpose.HYPOTHESIS_TAG_PROPOSAL).
     The LLM describes; it never selects, ranks, gates, or actuates promotion.
+    Sync + typed LLMRouterProtocol per the project-wide convention
+    (agents/dispatch + reentry/render).
 
     Args:
         hypothesis: The hypothesis to tag.
         source_events: The events that contributed to this hypothesis.
-        llm_provider: An LLMProvider-compatible object with an async
-            ``call(request, model, *, model_id_requested)`` method.
-            Tests pass a MockProvider directly.
-        model: Optional ModelProfile for the call. Defaults to the
-            sentinel profile (sufficient for MockProvider-backed tests).
+        llm_router: A synchronous LLMRouterProtocol implementation.
+            Model selection and fallback are handled by the router.
 
     Returns:
         A non-empty list of raw descriptive tag strings as proposed by
@@ -76,9 +63,6 @@ async def propose_hypothesis_tags(
         candidate_for_promotion. The c1 structural guard in
         tests/producers/test_constitution.py enforces this at CI.
     """
-    effective_model = model if model is not None else _TAG_MODEL_PROFILE
-
-    # Build the content payload: hypothesis text + source event summaries.
     payload = {
         "hypothesis": hypothesis.content,
         "source_event_excerpts": [
@@ -102,13 +86,8 @@ async def propose_hypothesis_tags(
         messages=[Message(role="user", content=user_content)],
     )
 
-    response = await llm_provider.call(
-        request,
-        effective_model,
-        model_id_requested=effective_model.id,
-    )
+    response = llm_router.call(request)
 
-    # Parse: split on commas and/or newlines, strip whitespace, drop empties.
     raw_output = response.content
     parts = [part.strip() for part in raw_output.replace("\n", ",").split(",") if part.strip()]
     return parts

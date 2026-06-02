@@ -27,9 +27,9 @@ Source ≠ sink per block:
 
 from __future__ import annotations
 
-import asyncio
 import sqlite3
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -46,9 +46,7 @@ from orchestrator.core.event import (
 )
 from orchestrator.core.event_store import EventStore
 from orchestrator.core.room import Room, RoomType
-from orchestrator.llm.providers.mock import MockProvider
-from orchestrator.llm.purposes import LLMPurpose
-from orchestrator.llm.types import ProviderId
+from orchestrator.llm.types import LLMResponse, ModelId, ProviderId, Usage, generate_request_id
 from orchestrator.memory.matcher import run_matcher
 from orchestrator.memory.schema import HypothesisId
 from orchestrator.memory.store import (
@@ -61,7 +59,7 @@ from orchestrator.memory.validation import (
     list_externally_validated_candidates,
     list_refuted_candidates,
 )
-from orchestrator.producers.tagging import propose_hypothesis_tags
+from orchestrator.producers.tagging import LLMRouterProtocol, propose_hypothesis_tags
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -96,11 +94,19 @@ def _make_room(store: EventStore, *, n_events: int = 2) -> tuple[Room, list[Even
     return room, ids
 
 
-def _make_mock_provider(tags_response: str) -> MockProvider:
-    return MockProvider(
-        provider_id=ProviderId("mock"),
-        responses={(LLMPurpose.HYPOTHESIS_TAG_PROPOSAL, None): [tags_response]},
+def _make_mock_router(tags_response: str) -> MagicMock:
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.return_value = LLMResponse(
+        request_id=generate_request_id(),
+        content=tags_response,
+        model_id_requested=ModelId("m"),
+        model_id_used=ModelId("m"),
+        provider_id_used=ProviderId("mock"),
+        usage=Usage(input_tokens=0, output_tokens=0),
+        latency_ms=0,
+        finish_reason="stop",
     )
+    return router
 
 
 # ---------------------------------------------------------------------------
@@ -146,20 +152,16 @@ def test_b1_e2e_tagging_producer_feeds_run_matcher() -> None:
     # Propose tags via MockProvider (content-gen, HYPOTHESIS_TAG_PROPOSAL).
     # Both providers return the SAME canonical tag string so run_matcher sees
     # identical frozensets across two rooms (exact-set equality per ADR-017 D2).
-    mock_provider_a = _make_mock_provider("quantum entanglement, physics")
-    mock_provider_b = _make_mock_provider("quantum entanglement, physics")
+    mock_router_a = _make_mock_router("quantum entanglement, physics")
+    mock_router_b = _make_mock_router("quantum entanglement, physics")
 
     source_evt_a = store.get_event(r1evts[0])
     assert source_evt_a is not None
-    raw_tags_a: list[str] = asyncio.run(
-        propose_hypothesis_tags(hyp_a, [source_evt_a], llm_provider=mock_provider_a)
-    )
+    raw_tags_a: list[str] = propose_hypothesis_tags(hyp_a, [source_evt_a], llm_router=mock_router_a)
 
     source_evt_b = store.get_event(r2evts[0])
     assert source_evt_b is not None
-    raw_tags_b: list[str] = asyncio.run(
-        propose_hypothesis_tags(hyp_b, [source_evt_b], llm_provider=mock_provider_b)
-    )
+    raw_tags_b: list[str] = propose_hypothesis_tags(hyp_b, [source_evt_b], llm_router=mock_router_b)
 
     assert raw_tags_a, "propose_hypothesis_tags must return non-empty list"
     assert raw_tags_b, "propose_hypothesis_tags must return non-empty list"
