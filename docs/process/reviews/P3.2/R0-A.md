@@ -5,12 +5,26 @@ stage: impl
 reviewer: architect-partner
 impl_commit: fa5aa18
 lens: single
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 12
+  yellow: 0
+  green: 13
 verdict_history:
+  - verdict: clean
+    at_commit: PENDING-impl-stage-Y1-absorption
+    findings_count: { red: 0, yellow: 0, green: 13 }
+    note: >-
+      Bumped per architect impl-stage routing (Y1 → α-lite) + RC-10. Y1 was process/landing, not an
+      impl defect — the canonical gates require the [api] optional extra (fastapi/uvicorn) or mypy/
+      pytest break on api/ with import-not-found. Confirm result (orchestrator-verified): the project
+      has NO .github CI workflow — the gate IS the contributing.md local commands (ruff/mypy/pytest);
+      and those commands did not note the [api] extra, so a fresh `uv sync` without --extra api would
+      miss fastapi/uvicorn. Absorbed by adding a note to docs/contributing.md §Code style — api/ (from
+      P3.2) needs the [api] extra; set up with `uv sync --all-extras` (or `uv run --extra api ...`),
+      and there is no CI workflow (the gates are the local commands). No CI file change (none exists).
+      Y1 🟡 → 🟢 (13🟢). plan-vs-impl + R0-B-cross-family already clean (untouched). Did NOT merge or
+      advance state.
   - verdict: needs_architect
     at_commit: fa5aa18
     findings_count: { red: 0, yellow: 1, green: 12 }
@@ -54,6 +68,10 @@ verdict_history:
 | Gates | re-run in-worktree **with `--extra api`**: **ruff ✅ · format ✅ · mypy canonical (187 files) ✅ · pytest full (100%) ✅** |
 
 ## Verdict: needs_architect — 0🔴 · 1🟡 · 12🟢
+
+## Verdict: clean (bumped from needs_architect — Y1 α-lite absorbed)
+
+> **Routing-absorption note (RC-10).** Y1 → **α-lite** (process/landing, not an impl defect). Confirm result (orchestrator-verified): the project has **no `.github` CI workflow** — the gate *is* the `contributing.md` local commands (`ruff`/`mypy`/`pytest`), which did not note that `api/` (from P3.2) needs the **`[api]` optional extra** (without it a fresh `uv sync` misses `fastapi`/`uvicorn` → `mypy`/`pytest` break on `api/`). Absorbed by a note in `docs/contributing.md` §Code style: set up with `uv sync --all-extras` (or `uv run --extra api …`); no CI file change (none exists). Y1 🟡 → 🟢 (13🟢). Original finding preserved below.
 
 > **Exemplary new-infra impl.** The constitutional/security spine holds and **all four plan-stage α-folds landed, each discriminatingly tested.** I ran active **plant-bypass** verification of the forge boundary (the architect's emphasis): a client cannot set `author`/`id`/`timestamp` (schema `extra="forbid"` → 422), cannot post an off-allowlist type (`STATE_TRANSITION`/`AUTONOMY_DECISION`/`UTTERANCE`/`TOOL_CALL` → 422), and the server hardcodes `author="user"` — all confirmed by tests with passing controls. **One LOW 🟡 (Y1)** — process/landing: the canonical gates require the `[api]` extra and no CI/contributing change in the diff installs it.
 
