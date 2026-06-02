@@ -137,6 +137,13 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     skills = load_skills(config_dir / "skills")
     tools = load_tools_config(config_dir / "tools.yaml")
 
+    # Merge MCP tool registry if mcp_servers.yaml exists (ADR-027 D2/D5).
+    # Graceful: unavailable servers are warned+skipped (skip_unavailable=True).
+    from orchestrator.mcp.adapter import build_mcp_tool_registry_from_config
+
+    mcp_tools = build_mcp_tool_registry_from_config(config_dir / "mcp_servers.yaml")
+    tools = {**tools, **mcp_tools}
+
     from orchestrator.api.llm_adapter import RealLLMRouter
 
     llm_router: LLMRouterProtocol = RealLLMRouter(
