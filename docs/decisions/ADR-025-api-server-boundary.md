@@ -1,6 +1,6 @@
 # ADR-025: API/Server Boundary — HTTP/WS over the Event Store + Room Runtime
 
-**Status:** Proposed — 2026-06-02 (senior-drafted per P3.2 brief; awaiting architect accept)
+**Status:** Accepted — 2026-06-02 (architect-accepted; P3.2 plan-stage dual-lens reviews clean after all-α routing: r0b Y1 subscribe-then-replay+dedup, Y2 separate WAL read connection, Y3 partial-turn error envelope, arch Y1 allowlist-authority α-lite; constitutional spine — backend-authoritative, write-surface forge-prevention, state-machine-not-exposed, trust boundary — preserved)
 
 **Scope:** P3.2 — the first `api/` package: a thin FastAPI HTTP/WS server over the existing event store + room runtime + bootstrap. Governs **the wire contract** (the frozen `Event`/`Room`/`Snapshot` schemas + the intent/response/WS envelopes + the OpenAPI/AsyncAPI artifacts) that ≥5 future tasks bind to (P3.3 GUI, P3.6, future clients), **the backend-authoritative invariant** (no decision surface in the API), **write-surface forge-prevention**, and **the MVP trust posture**. Wraps `core/`/`rooms/`/`autonomy/`/`llm/` **unchanged**. Does NOT govern: the GUI (P3.3 — binds this contract); MCP/plugins (Wave 2); remote/multi-user hardening beyond the ruled MVP; any change to backend decision logic.
 
