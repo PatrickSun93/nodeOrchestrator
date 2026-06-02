@@ -6,12 +6,25 @@ reviewer: architect-partner
 plan_commit: c9c6567
 lens: single
 adr: ADR-026
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 12
+  yellow: 0
+  green: 13
 verdict_history:
+  - verdict: clean
+    at_commit: PENDING-plan-stage-routing-absorption
+    findings_count: { red: 0, yellow: 0, green: 13 }
+    note: >-
+      Bumped per architect plan-stage routing (Y1 → α-lite-fold) + RC-10. Both contract-drift guards
+      folded into ADR-026 + plan (precision/durability; design unchanged). (a) HTTP codegen-freshness:
+      the FE gate gains a codegen:check step (`npm run codegen && git diff --exit-code ui/src/api/
+      schema.ts`) that fails on a stale schema.ts vs openapi.json — the symmetric counterpart of the
+      P3.2 OpenAPI-drift test (ADR-026 D6 + plan §3/§7 P3.3-1 + gate table). (b) WS-type conformance:
+      a vitest asserts the hand-written StreamMessage TS types against the asyncapi.md sample shapes
+      (event/replay_complete/error{stage,appended_event_id,reason}/ping) — guards WS-envelope drift
+      that codegen can't track (ADR-026 D2 + plan §4/§7 P3.3-2 + gate table). Y1 🟡 → 🟢 (13🟢). Did
+      NOT accept ADR-026 or advance state.
   - verdict: needs_architect
     at_commit: c9c6567
     findings_count: { red: 0, yellow: 1, green: 12 }
@@ -54,7 +67,9 @@ verdict_history:
 | Review scope | architect-ruled (d): **constitutional spine + contract-binding correctness + code quality** (new stack) |
 | ADR status | ADR-026 left **Proposed** — informs accept; I did not accept (architect-only). |
 
-## Verdict: needs_architect — 0🔴 · 1🟡 · 12🟢
+## Verdict: clean (bumped from needs_architect) — 0🔴 · 0🟡 · 13🟢
+
+> **Routing-absorption note (RC-10).** Y1 → **α-lite-fold**. Both contract-drift guards folded into ADR-026 + plan (durability; design unchanged): **(a)** the FE gate gains a **codegen-freshness** step (`codegen:check` = re-run `openapi-typescript` + `git diff --exit-code schema.ts`) — the symmetric counterpart of the P3.2 OpenAPI-drift test (ADR-026 D6 + plan §3/§7); **(b)** a **WS-type conformance** vitest asserts the hand-written `StreamMessage` types against the `asyncapi.md` sample shapes — guards WS-envelope drift codegen can't track (ADR-026 D2 + plan §4/§7). Y1 🟡 → 🟢 (13🟢). Original finding preserved below.
 
 > **Exemplary plan for a new stack.** The constitutional spine I inscribed in the brief is faithfully carried into ADR-026 (HR#1–5) and, crucially, **structurally enforced** where it can be — the **binds-API-only** invariant becomes an eslint rule + a no-DB-dep check + a test (not just convention), and **状态机不暴露** becomes an exhaustive never-returns-raw `ui_strings` mapper + a no-raw-vocab-leak DOM test. The contract-binding is right: HTTP types **codegen'd** from the drift-tested `openapi.json`; a **complete** hand-written WS client matching `asyncapi.md` (incl. the sharp `{"kind":"ping"}`-tolerance catch), with dedup centralized in the store. **One LOW 🟡 (Y1)** — the contract-drift guards are under-specified (no codegen-freshness gate; hand-written WS types). Low for the frozen MVP; matters as the contract evolves.
 
