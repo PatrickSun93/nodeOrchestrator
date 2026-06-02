@@ -942,6 +942,18 @@ Placeholder defaults 全部标 TODO,真值通过 P1.5+ 实际使用 tune 出来�
 
 加更多 agent / 模板 / skill,Plugin 系统,MCP 集成,GUI 完整。
 
+**P3.4 已落地 (2026-06-02)**: MCP client + stdio transport + generic tool-adapter +
+autonomy-gating 已完成 (ADR-027 Accepted)。
+- `src/orchestrator/mcp/`: config/transport/client/adapter/execution (5 模块)
+- `src/orchestrator/agents/mcp_interpret.py`: TOOL_OUTPUT_INTERPRET interpret wiring
+- `config/mcp_servers.yaml`: filesystem demo connector config
+- `src/orchestrator/api/app.py`: bootstrap registry merge (MCP ToolMeta ∪ local tools)
+- 宪法脊柱全部守住: MCP tool-call 走现有 gate, discovery≠permission, feed-the-gate-unchanged,
+  mcp/ 无 routing/judgment, TOOL_OUTPUT_INTERPRET content-gen interpret
+- 信任边界: server allowlist + api_key_env + scoped subprocess env + fail-closed timeout
+- MVP: AUTO_EXECUTE 执行, COUNTDOWN/HARD gated-not-executed (no confirm flow, defer to GUI)
+- 51 mcp tests: §1/§2/§3/§4/§6 全部覆盖 (hanging-mock/orphan/oversized/unclassified/namespace 等)
+
 ---
 
 ## 8. 关键反 pattern(不要做)
