@@ -173,10 +173,24 @@ async def select_model_and_provider(
     ]
 
     # Apply global override (Layer-4) before the router walks the chain.
-    effective_chain, drop_reasons = apply_global_override(chain, override, models)
+    effective_chain, drop_reasons, kept_unknown_cost = apply_global_override(
+        chain, override, models
+    )
 
     # Emit pre-filter trace entries for models dropped by the override.
     for model_id, reason in drop_reasons.items():
+        candidates.append(
+            RouteCandidate(
+                model_id=model_id,
+                provider_id=None,
+                accepted=False,
+                reason=reason,
+            )
+        )
+
+    # Emit visibility entries for models kept despite unknown cost under a ceiling
+    # (ADR-023 D2: softness is never silent; ceiling check was bypassed for these).
+    for model_id, reason in kept_unknown_cost.items():
         candidates.append(
             RouteCandidate(
                 model_id=model_id,

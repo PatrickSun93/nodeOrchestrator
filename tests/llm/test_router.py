@@ -554,25 +554,52 @@ class TestOnUnknownCost:
         assert "unknown" in unpriced_entries[0].reason.lower()
 
     async def test_unknown_cost_trace_entry_present_in_keep_mode(self) -> None:
-        """Ceiling + unpriced model + keep: unpriced model is still selected
-        (not silently dropped), proving the keep behavior is active."""
+        """Discriminating: ceiling + unknown-cost model + over-ceiling model + keep (default).
+
+        The decision_trace MUST contain a distinct entry for the unknown-cost model
+        recording that it bypassed the ceiling check (ADR-023 D2 visibility).
+        Fails if the trace entry is absent — guards against silent keep-mode softness.
+        """
         prov = MockProvider(provider_id=ProviderId("p"))
         models = ModelRegistry(
-            {ModelId("unpriced"): _profile("unpriced", "p", cost_per_1m_output=None)}
+            {
+                ModelId("unpriced"): _profile("unpriced", "p", cost_per_1m_output=None),
+                ModelId("expensive"): _profile("expensive", "p", cost_per_1m_output=50.0),
+            }
         )
         providers = ProviderRegistry({ProviderId("p"): prov})
-        agent = _agent("unpriced")
+        # Expensive is default (dropped by ceiling); unpriced is fallback (kept by policy).
+        agent = _agent("expensive", fallbacks=["unpriced"])
 
-        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0, on_unknown_cost="keep")
+        # Default on_unknown_cost="keep" — the soft-ceiling default path.
+        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0)
         result = await select_model_and_provider(
             agent, _request(), models, providers, override=override
         )
-        # Model is kept and accepted — it appears in trace as accepted.
+        assert result.model.id == ModelId("unpriced")
+
         trace = result.decision_trace
+
+        # Over-ceiling model must be dropped.
+        expensive_entries = [c for c in trace if c.model_id == ModelId("expensive")]
+        assert len(expensive_entries) >= 1
+        assert not expensive_entries[0].accepted
+
+        # The unknown-cost model must have a distinct pre-walk visibility entry
+        # that mentions both "unknown" and "keep" — this is the ADR-023 D2 note.
+        # Without the fix, the only unpriced entry is "matched" (no unknown-cost note),
+        # and this assertion fails — making the test genuinely discriminating.
         unpriced_entries = [c for c in trace if c.model_id == ModelId("unpriced")]
-        assert len(unpriced_entries) >= 1
-        # The accepted entry exists (model was kept and routed to).
-        assert any(c.accepted for c in unpriced_entries)
+        unknown_cost_note = [
+            c
+            for c in unpriced_entries
+            if "unknown" in c.reason.lower() and "keep" in c.reason.lower()
+        ]
+        assert len(unknown_cost_note) >= 1, (
+            "decision_trace must contain a visibility entry for the unknown-cost model "
+            "kept under a ceiling (ADR-023 D2). "
+            f"Actual trace entries for 'unpriced': {[c.reason for c in unpriced_entries]}"
+        )
 
 
 class TestOverrideEmptyChain:

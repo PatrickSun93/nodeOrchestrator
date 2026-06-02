@@ -17,22 +17,24 @@ def apply_global_override(
     chain: list[ModelId],
     override: GlobalLLMOverride | None,
     models: ModelRegistry,
-) -> tuple[list[ModelId], dict[ModelId, str]]:
+) -> tuple[list[ModelId], dict[ModelId, str], dict[ModelId, str]]:
     """Pure function. Deterministically filters + reorders the candidate
     chain per the global override. Zero LLM calls, zero I/O.
 
-    Returns ``(effective_chain, drop_reasons)`` where ``drop_reasons``
-    maps each pre-filtered ``ModelId`` to a human-readable reason string.
-    The caller (router) converts ``drop_reasons`` to ``RouteCandidate``
-    trace entries with ``accepted=False``.
+    Returns ``(effective_chain, drop_reasons, kept_unknown_cost)`` where:
+    - ``drop_reasons`` maps each dropped ``ModelId`` to a human-readable
+      reason string; the caller emits these as ``accepted=False`` trace entries.
+    - ``kept_unknown_cost`` maps each unknown-cost ``ModelId`` retained under
+      a ceiling to a visibility reason; the caller emits these as pre-walk
+      trace entries so the softness is never silent (ADR-023 D2).
 
-    None override (or absent file) => returns chain unchanged with empty
-    drop_reasons.
+    None override (or absent file) => returns chain unchanged with empty dicts.
     """
     if override is None:
-        return list(chain), {}
+        return list(chain), {}, {}
 
     drop_reasons: dict[ModelId, str] = {}
+    kept_unknown_cost: dict[ModelId, str] = {}
     kept: list[ModelId] = []
 
     # ---- Filter step (cost ceiling) ------------------------------------
@@ -56,11 +58,13 @@ def apply_global_override(
                         f"(ceiling={ceiling})"
                     )
                 else:
-                    # "keep" (default): retain but record trace note.
-                    # The router will add a separate note via drop_reasons
-                    # only for truly dropped models; "kept with unknown cost"
-                    # is visible in the chain itself (not dropped).
+                    # "keep" (default): retain + record visibility note so the
+                    # router can emit a trace entry (ADR-023 D2: softness never silent).
                     kept.append(model_id)
+                    kept_unknown_cost[model_id] = (
+                        f"global override: unknown cost (cost_per_1m_output=None) "
+                        f"kept by on_unknown_cost='keep' (ceiling={ceiling})"
+                    )
             elif cost > ceiling:
                 drop_reasons[model_id] = (
                     f"global override: cost_per_1m_output={cost} exceeds ceiling={ceiling}"
@@ -69,12 +73,6 @@ def apply_global_override(
                 kept.append(model_id)
     else:
         kept = list(chain)
-
-    # ---- Also emit trace entries for unknown-cost models kept under a ceiling,
-    # so the router can record their "unknown cost kept" status.
-    # We communicate this via a special prefix in drop_reasons only for dropped ones;
-    # kept unknown-cost models are visible purely through the effective chain.
-    # (Trace entries for kept-unknown-cost are added by the router separately.)
 
     # ---- Reorder step --------------------------------------------------
     tier = override.quality_tier
@@ -100,4 +98,4 @@ def apply_global_override(
 
     # "balanced" and None => identity (no reorder).
 
-    return kept, drop_reasons
+    return kept, drop_reasons, kept_unknown_cost
