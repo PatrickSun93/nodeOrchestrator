@@ -235,6 +235,60 @@ def record_hypothesis(
 
 
 # ---------------------------------------------------------------------------
+# Hypothesis tag updater (P2.6 / ADR-022 D6)
+# ---------------------------------------------------------------------------
+
+
+def update_hypothesis_tags(
+    hyp_id: HypothesisId,
+    *,
+    topic_tags: list[str],
+    conn: sqlite3.Connection,
+) -> Hypothesis:
+    """Overwrite a hypothesis row's topic_tags with *topic_tags*.
+
+    Routes proposed raw tags through ``resolve_tags`` (normalizes +
+    registers) then UPDATEs the hypothesis row's ``topic_tags`` column
+    with the JSON-serialised canonical list.
+
+    Semantics: OVERWRITE (latest-wins). A second call with different tags
+    REPLACES the stored tags entirely — no merge/append.
+
+    Args:
+        hyp_id: Id of the hypothesis to update.
+        topic_tags: Raw proposed tags. Normalized + auto-registered via
+            ``resolve_tags``. May be empty (clears tags).
+        conn: SQLite connection. Must already have memory schema
+            initialised. Uses ``with conn:`` transaction.
+
+    Returns:
+        The updated ``Hypothesis`` (reloaded from the DB row).
+
+    Raises:
+        MemoryStoreError: If the hypothesis is not found, or on any
+            unexpected SQLite failure.
+        ValueError: If any proposed tag normalizes to "" (whitespace-only
+            / empty input — per ADR-018 D4 fail-loud contract).
+    """
+    try:
+        with conn:
+            resolution = resolve_tags(topic_tags, conn)
+            result = conn.execute(
+                "UPDATE hypothesis SET topic_tags = ? WHERE id = ?",
+                (json.dumps(resolution.canonical), hyp_id),
+            )
+            if result.rowcount == 0:
+                raise MemoryStoreError(f"hypothesis not found: {hyp_id!r}")
+    except sqlite3.Error as exc:
+        raise MemoryStoreError(f"failed to update hypothesis tags: {exc}") from exc
+
+    updated = get_hypothesis_by_id(hyp_id, conn=conn)
+    if updated is None:
+        raise MemoryStoreError(f"hypothesis not found after update: {hyp_id!r}")
+    return updated
+
+
+# ---------------------------------------------------------------------------
 # Row loaders
 # ---------------------------------------------------------------------------
 
