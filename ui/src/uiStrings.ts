@@ -28,13 +28,15 @@ const EVENT_TYPE_LABELS: Record<EventType, string> = {
   external_validation: "外部验证",
 };
 
-// Agent id → display name. Unknown agents fall back to "助手".
+// Agent id → display name. Keys on the product agents from config/agents/.
+// Unknown agents fall back to "助手".
 const AGENT_NAME_MAP: Record<string, string> = {
-  architect: "架构师",
-  senior: "高级规划师",
-  junior: "实现者",
-  "reviewer-r0a": "评审员",
-  "reviewer-r0b": "交叉评审员",
+  prober: "探查者",
+  skeptic: "质疑者",
+  operator: "执行者",
+  divergence_mapper: "分歧梳理者",
+  logger: "记录者",
+  facilitator: "引导者",
 };
 
 // Room type labels

@@ -117,9 +117,11 @@ describe("uiStrings — no raw vocab leak (HR#3)", () => {
     expect(authorLabel("system")).not.toBe("system");
   });
 
-  it("authorLabel with known agent id returns human name, not raw agent prefix", () => {
-    const label = authorLabel("agent:architect");
+  it("authorLabel with known product agent id returns human name, not raw agent prefix", () => {
+    // Use a product agent (config/agents/skeptic.yaml) — discriminating: map must hit, not fall to generic
+    const label = authorLabel("agent:skeptic");
     expect(label).not.toContain("agent:");
+    expect(label).not.toBe("助手"); // must resolve to the named label, not the safe-generic fallback
     expect(label.length).toBeGreaterThan(0);
   });
 
