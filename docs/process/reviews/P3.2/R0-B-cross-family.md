@@ -2,11 +2,37 @@
 task_id: P3.2
 round: R0-B-cross-family
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 3
-  green: 6
+  yellow: 0
+  green: 9
+verdict_history:
+  - verdict: needs_architect
+    at_commit: a51cfcd
+    findings_count: { red: 0, yellow: 3, green: 6 }
+    note: >-
+      initial R0-B-cross-family (deepseek). Security + backend-authoritative fronts sound (forge
+      fail-closed; cursor-diff race-free under serialization; no decision surface). 3 🟡 on the
+      concurrency/failure surface — Y1 replay/subscribe ordering inverted (gap), Y2 single-executor
+      serializes reads behind a multi-second run_turn (GUI hangs = liveness), Y3 partial-turn error
+      ambiguous (append-fail vs turn-fail). All resolvable at plan stage.
+  - verdict: clean
+    at_commit: PENDING-plan-stage-routing-absorption
+    findings_count: { red: 0, yellow: 0, green: 9 }
+    note: >-
+      Bumped per architect plan-stage routing (all 3 → α) + RC-10 + dual-lens Step 5 — exactly this
+      review's leans. Y1 → ADR-025 D6 + plan §4 corrected to subscribe-then-replay+dedup (register
+      queue first, then replay, dedup overlap by event id — eliminates the post-SELECT-pre-subscribe
+      window the inverted prose would have dropped). Y2 → a separate read-only WAL connection
+      (check_same_thread=False) + read executor for GET/WS-replay; writes + run_turn stay on the
+      serialized writer executor; the API opens a second EventStore instance (no core change, no wire
+      change) so a multi-second run_turn no longer blocks reads (the GUI-liveness fix). Y3 → a pinned
+      IntentError{stage: append|turn, appended_event_id, reason} folded into the contract (ADR-025 D5)
+      distinguishing safe-retry append-fail from intent-already-landed turn-fail. §2/§3 tests added
+      (read-during-turn liveness; gap/dup-free subscribe-replay; stage-distinguished error). All 3 🟡 →
+      🟢 (9🟢). (R0-A's arch Y1 DECISION/RETRACTION-authority α-lite was routed in parallel — ADR-025
+      D4a; see R0-A verdict_history.) Did NOT accept ADR-025 or advance state.
 ---
 
 # P3.2 R0-B cross-family review (plan + ADR-025) — API/server boundary
@@ -20,7 +46,9 @@ findings_count:
 | Baseline | `main` — `event_store.py` (sync sqlite3, caller-owns-conn, `get_room_events` ordered `timestamp ASC, rowid ASC`, TRIGGER-enforced append-only); `event.py:364` (`is_valid_author` permits user\|system\|agent); `rooms/runtime.py:47` (`run_turn` sync, appends side-effect events); `agents/dispatch.py` (`LLMRouterProtocol` — no concrete impl exists) |
 | Prior reviews | None yet (R0-A-on-plan pending) |
 | Date | 2026-06-02 |
-| Verdict | **needs_architect** — 0🔴 · 3🟡 · 6🟢 |
+| Verdict | **clean** (bumped from needs_architect) — 0🔴 · 0🟡 · 9🟢 |
+
+> **Routing-absorption note (RC-10 + dual-lens Step 5).** All 3 🟡 routed **α** — exactly these leans. **Y1** → ADR-025 D6 + plan §4 corrected to **subscribe-then-replay + dedup** (register-queue-first → replay → dedup overlap by id; eliminates the dropped-window the inverted prose implied). **Y2** → a **separate read-only WAL connection + read executor** for GET/WS-replay (writes + `run_turn` stay on the serialized writer executor; a second `EventStore` instance, no core change) → a multi-second `run_turn` no longer blocks reads (the GUI-liveness fix). **Y3** → a pinned **`IntentError{stage:"append"|"turn", appended_event_id, reason}`** folded into the contract (ADR-025 D5) distinguishing safe-retry append-fail from intent-already-landed turn-fail. §2/§3 tests added. All 3 🟡 → 🟢. Original findings preserved below.
 
 ## Lens preamble
 

@@ -6,12 +6,29 @@ reviewer: architect-partner
 plan_commit: a51cfcd
 lens: single
 adr: ADR-025
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 14
+  yellow: 0
+  green: 15
 verdict_history:
+  - verdict: clean
+    at_commit: PENDING-plan-stage-routing-absorption
+    findings_count: { red: 0, yellow: 0, green: 15 }
+    note: >-
+      Bumped per architect plan-stage routing (Y1 → α-lite) + RC-10. The DECISION/RETRACTION
+      authority gap is absorbed without tightening the allowlist (UTTERANCE stays excluded):
+      ADR-025 D4a + plan §3 now pin that the API adds NO authority check (no decision surface,
+      HR#1) and the impl VERIFIES the existing backend gates authority — promote_hypothesis is
+      the sole promotion actuator (ADR-016 D10), so a client-posted DECISION{promotion:true} via
+      /intent+run_turn cannot reach the durable-memory path (Principle 11 safe); a RETRACTION is
+      inert beyond the recorded event absent a downstream consumer. Acceptance added (plan §3/§4/
+      P3.2-4): a posted DECISION{promotion:true} appends but does NOT promote (no VK / no status
+      change). Shape-validation + the backend's actuator gating is the whole gate. (The 3 R0-B
+      concurrency/failure 🟡 — subscribe-then-replay+dedup, separate WAL read connection,
+      partial-turn IntentError envelope — were routed α in parallel and absorbed into ADR-025
+      D5/D6 + plan §4; see R0-B-cross-family verdict_history.) Y1 🟡 → 🟢 (15🟢). Did NOT accept
+      ADR-025 or advance state.
   - verdict: needs_architect
     at_commit: a51cfcd
     findings_count: { red: 0, yellow: 1, green: 14 }
@@ -53,7 +70,9 @@ verdict_history:
 | Reviewed at | isolated worktree `/tmp/p32-r0a` @ plan `a51cfcd` (shared tree was mid-branch-switch by a concurrent session — RC-7 isolation) |
 | ADR status | ADR-025 left **Proposed** — informs accept; I did not accept (architect-only). |
 
-## Verdict: needs_architect — 0🔴 · 1🟡 · 14🟢
+## Verdict: clean (bumped from needs_architect) — 0🔴 · 0🟡 · 15🟢
+
+> **Routing-absorption note (RC-10).** Y1 → **α-lite**. ADR-025 D4a + plan §3/§4 now pin that the API adds **no** authority check (HR#1) and the impl **verifies** the existing backend gates `DECISION`/`RETRACTION` authority — `promote_hypothesis` is the sole promotion actuator (ADR-016 D10), so a client `DECISION{promotion:true}` via `/intent`+`run_turn` cannot reach the durable-memory path (Principle-11-safe); a §4 test asserts a posted `DECISION{promotion:true}` appends but does **not** promote. The allowlist is **not** narrowed (`UTTERANCE` stays excluded). The 3 dual-lens R0-B concurrency/failure 🟡 (subscribe-then-replay+dedup, separate WAL read connection, partial-turn `IntentError` envelope) were routed α in parallel and folded into ADR-025 D5/D6 + plan §4. Y1 🟡 → 🟢 (15🟢). Original finding preserved below.
 
 > **Exemplary plan for a new-infra slice.** The constitutional/security spine I inscribed in the brief is faithfully carried into ADR-025 (HR#1–4, non-negotiable) and the plan, and the senior's self-discoveries are sharp — especially **"`Event.author` permits `user|system|agent` so the schema alone is *not* the forge guard; the API must hardcode `author:"user"` + omit author from the wire"** (the load-bearing security insight) and the **`UTTERANCE` exclusion** (barring the agent speech-act so a client can't drive `UTTERANCE`-keyed transitions). Every named check verifies clean. **One LOW 🟡 (Y1)** — two allowlisted intent types (`DECISION`/`RETRACTION`) carry typed-metadata *authority* semantics beyond shape-validation (Principle-11-adjacent); a verify-don't-assume gap, not a forge gap. Concurrency/failure-mode pressure-points are handed to the **dispatched dual-lens R0-B** (the lens built to catch exactly those).
 
