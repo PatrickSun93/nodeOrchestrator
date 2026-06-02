@@ -5,12 +5,28 @@ stage: impl
 reviewer: architect-partner
 impl_commit: 05e9a48
 lens: single
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 12
+  yellow: 0
+  green: 13
 verdict_history:
+  - verdict: clean
+    at_commit: 2da9632
+    findings_count: { red: 0, yellow: 0, green: 13 }
+    note: >-
+      Bumped per architect impl-stage routing (Y1 → α) + RC-10. Y1 (AGENT_NAME_MAP keyed on the
+      dev-workflow roles architect/senior/junior/reviewer instead of the product agents → every
+      product agent rendered as the generic "助手"; NOT a constitutional breach but a UX/correctness
+      defect on the MVP's core "watch the agents respond") is fixed at 2da9632: AGENT_NAME_MAP is
+      re-keyed on the product agents prober/skeptic/operator/divergence_mapper/logger/facilitator
+      (verified uiStrings.ts:33-40), and the test context-bleed is fixed — uiStrings.test.ts:120 now
+      uses a PRODUCT agent (agent:skeptic) and asserts the label is NOT the generic "助手", so a
+      regression to dev-role keys would FAIL it (the original test used agent:architect and could not
+      catch the bug). Discriminating. Orchestrator verified the FE gate green (eslint/prettier/tsc/
+      vitest/codegen:check) at 2da9632 (node is not in the senior's Python session — relied on the
+      orchestrator's run). The senior plan-vs-impl (back-filled at 2da9632) is also clean. Y1 🟡 → 🟢
+      (13🟢). Did NOT advance or merge.
   - verdict: needs_architect
     at_commit: 05e9a48
     findings_count: { red: 0, yellow: 1, green: 12 }
@@ -54,7 +70,9 @@ verdict_history:
 | Review scope | architect-ruled (d): **constitutional spine + contract-binding correctness + code quality** |
 | Gate | **green per the orchestrator's verification** (eslint/format/`tsc`/vitest **52 passed**, codegen-freshness exit 0, Python ruff untouched). *node is absent in my env → I rely on the orchestrator's gate run + the code read (vs the Python slices where I re-ran the canonical gates myself).* |
 
-## Verdict: needs_architect — 0🔴 · 1🟡 · 12🟢
+## Verdict: clean (bumped from needs_architect at `2da9632`) — 0🔴 · 0🟡 · 13🟢
+
+> **Routing-absorption note (RC-10).** Y1 → **α**. `AGENT_NAME_MAP` is re-keyed on the **product** agents (prober/skeptic/operator/divergence_mapper/logger/facilitator — `uiStrings.ts:33-40`), so a real agent event now renders its human name instead of the generic "助手". The **test context-bleed is fixed**: `uiStrings.test.ts:120` now uses a product agent (`agent:skeptic`) and asserts the label is **not** "助手" — a regression to dev-role keys would now **fail** (the original `agent:architect`-based test could not). Orchestrator verified the FE gate green at `2da9632` (node absent in the senior's Python session). Y1 🟡 → 🟢. Original finding preserved below.
 
 > **Exemplary new-stack impl.** The constitutional spine holds and is largely **structurally enforced** — `binds-API-only` is a source-scan test (no `fetch`/`WebSocket` outside `src/api/`, no `orchestrator` import, no DB dep), `状态机不暴露` is a tsc-enforced exhaustive `ui_strings` mapper + an exhaustive no-raw-leak unit test + a rendered-DOM check, and `partial-turn` is a discriminating "no-re-post on `stage:turn`" integration test (asserts `postIntent` called **once** + input disabled). The WS client is complete (replay→`replay_complete`→live, store-centralized dedup, `ping` no-op, exponential-backoff reconnect-re-replay), and **both Y1 α-lite-fold guards landed** (codegen-freshness in the gate + a WS-type conformance test). **One 🟡 (Y1, medium-low)** — `AGENT_NAME_MAP` keys on the dev-workflow roles, so product agents render as the generic "助手" (a UX defect on the MVP's core value; safe fallback, not constitutional).
 
