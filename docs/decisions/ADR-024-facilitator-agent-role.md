@@ -1,6 +1,6 @@
 # ADR-024: The `facilitator` Agent Role (free_chat conversational host)
 
-**Status:** Proposed — 2026-06-02 (senior-drafted per P3.1 brief; awaiting architect accept)
+**Status:** Accepted — 2026-06-02 (architect-accepted; P3.1 R0-A-on-plan clean after Y1 → α-fold (net activation table); facilitator preserves code-activation/LLM-content split, no new routing LLMPurpose)
 
 **Scope:** P3.1 — adds a single new agent role, **`facilitator`** (`config/agents/facilitator.yaml`), to give the `free_chat` scaffold room a working roster. Governs the role's purpose, its `applies_to` scope, and its preservation of the code-activation / LLM-content split. Does NOT govern: the per-room rosters of the other three scaffold rooms (`bug_fix` / `code_review` / `idea_validation` — reuse-only, no ADR; covered in the P3.1 plan), new skills (deferred to P3.7), or any change to the selection/dispatch machinery (`should_agent_speak`, `applies_to` filtering — unchanged code).
 
