@@ -1,0 +1,57 @@
+.composer {
+  border-top: 1px solid #e5e7eb;
+  padding: 0.75rem;
+  background: #fff;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.textarea {
+  flex: 1;
+  resize: none;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 0.5rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+
+.textarea:disabled {
+  background: #f9fafb;
+  color: #9ca3af;
+}
+
+.sendBtn {
+  padding: 0 1rem;
+  border-radius: 6px;
+  border: none;
+  background: #6366f1;
+  color: #fff;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.sendBtn:disabled {
+  background: #c7d2fe;
+  cursor: not-allowed;
+}
+
+.turnError {
+  font-size: 0.8rem;
+  color: #d97706;
+  margin-bottom: 0.4rem;
+}
+
+.appendError {
+  font-size: 0.8rem;
+  color: #dc2626;
+  margin-bottom: 0.4rem;
+}

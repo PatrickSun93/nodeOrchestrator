@@ -1,0 +1,29 @@
+.view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.roomId {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #374151;
+  font-family: monospace;
+}
+
+.roomType {
+  font-size: 0.8rem;
+  color: #6b7280;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+}

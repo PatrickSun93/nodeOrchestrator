@@ -1,0 +1,33 @@
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.live {
+  color: #059669;
+  background: #ecfdf5;
+}
+
+.loading,
+.reconnecting {
+  color: #d97706;
+  background: #fffbeb;
+}
+
+.error {
+  color: #dc2626;
+  background: #fef2f2;
+}
