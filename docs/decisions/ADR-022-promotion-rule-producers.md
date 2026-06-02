@@ -1,6 +1,6 @@
 # ADR-022: Feeding the dormant promotion rules — tagging producer (rule a) + external connectors (rule c) + refuted handling
 
-**Status:** Proposed — 2026-06-01 (senior-drafted per P2.6 brief; awaiting architect accept)
+**Status:** Accepted — 2026-06-01 (architect-accepted after plan-stage dual-lens reviews clean: R0-A-on-plan + R0-B-cross-family both `clean`; c2 → α structural AST guard (ExternalValidationMeta only in connectors/_emit.py), c1 → α-lite tagging selection guard, Y2 overwrite; boundary confirmed code-enforced)
 
 **Scope:** Ships the **first producers/connectors** that feed the dormant promotion rules on real data: **(B1)** a rule-a **tagging producer** (LLM content-gen → `Hypothesis.topic_tags` → `run_matcher`), **(B2)** rule-c **external connector(s)** (externally-grounded verdicts → `external_validation` events → `list_externally_validated_candidates`), and **(B3)** **refuted/inconclusive handling** (an advisory `memory/` reader, no status mutation). Pins: the producer/connector contracts, the content-gen-vs-judgment boundary (c1), the connector-verdict external-grounding guarantee (c2), the new content-gen `LLMPurpose` (`HYPOTHESIS_TAG_PROPOSAL`), and the refuted handling. **One slice with parallel atomics** (prelude → B1∥B2∥B3 → e2e; architect-decided). Does NOT govern: the rule readers (`run_matcher`/`list_externally_validated_candidates` — unchanged), multi-source aggregation/trust-weighting, a user-confirm reject actuator (forward hooks), or P2.7.
 
