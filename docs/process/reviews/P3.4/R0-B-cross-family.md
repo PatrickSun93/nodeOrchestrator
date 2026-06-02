@@ -2,11 +2,37 @@
 task_id: P3.4
 round: R0-B-cross-family
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 7
+  yellow: 0
+  green: 8
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 1cbb86d
+    findings_count: { red: 0, yellow: 1, green: 7 }
+    note: >-
+      initial R0-B-cross-family (deepseek). The autonomy-bypass surface is genuinely fail-closed
+      (execution keys on the TOOL_CALL event, appended only for AUTO_EXECUTE), the server cannot
+      influence its tier (code/config-classified, hints ignored), unclassified→refused is airtight,
+      env-leak is prevented (minimal scoped subprocess env — the c2 lesson), untrusted results are
+      size-limited + content-gen-framed, and the gate feeds unchanged. One 🟡 — the sync-over-async
+      bridge timeout mechanism is underspecified (a stdio hang has no built-in timeout; the bridge
+      must enforce it or the orchestrator thread blocks indefinitely). Lean α.
+  - verdict: clean
+    at_commit: PENDING-plan-stage-routing-absorption
+    findings_count: { red: 0, yellow: 0, green: 8 }
+    note: >-
+      Bumped per architect plan-stage routing (Y1 → α MUST-FIX) + RC-10 + dual-lens Step 5 — exactly
+      this review's lean. The sync-over-async bridge now enforces the timeout itself: every MCP SDK
+      call (connect/tools.list/tools.call) is wrapped in asyncio.wait_for(coro, timeout=<bounded>)
+      (run_until_complete(asyncio.wait_for(...))); on TimeoutError the subprocess is killed
+      (proc.kill()+proc.wait(), no orphan) and the tool-call fails closed (TOOL_FAILED) — implementing
+      HR#10 hang→fail-closed. Bounded defaults pinned (connect/tools.list ≈10s, tools.call ≈30s,
+      config-overridable). A deliberately-hanging-mock-server test asserts: hang → tool-call fails
+      closed AND the subprocess is killed (no orphan), the orchestrator thread is not blocked
+      (ADR-027 D1 + plan §4 + §8-§3). The autonomy-bypass / env-leak / untrusted-result greens are
+      cross-family confirmations (no action). Y1 🟡 → 🟢 (8🟢). Did NOT accept ADR-027 or advance state.
 ---
 
 # P3.4 R0-B cross-family review (plan + ADR-027) — MCP client + tool-adapter + autonomy-gating
@@ -20,7 +46,9 @@ findings_count:
 | Baseline | `main` — `scoring.py:36,130,147,165,210` (ToolMeta/UnknownToolError/score/decide_tier/gate — TOOL-SOURCE-AGNOSTIC); `tool_dispatch.py:57,105` (process_tool_calls, TOOL_CALL only for AUTO_EXECUTE); `purposes.py:60` (TOOL_OUTPUT_INTERPRET exists, no consumer) |
 | Prior reviews | None yet (R0-A-on-plan pending) |
 | Date | 2026-06-02 |
-| Verdict | **needs_architect** — 0🔴 · 1🟡 · 7🟢 |
+| Verdict | **clean** (bumped from needs_architect) — 0🔴 · 0🟡 · 8🟢 |
+
+> **Routing-absorption note (RC-10 + dual-lens Step 5).** Y1 routed **α MUST-FIX** — exactly this lean. The sync-over-async bridge now enforces the timeout itself: every MCP SDK call is wrapped in `asyncio.wait_for(coro, timeout=<bounded>)`; on `TimeoutError` the subprocess is **killed** (`proc.kill()`+`proc.wait()`, no orphan) and the tool-call **fails closed** (`TOOL_FAILED`) — HR#10 hang→fail-closed. Bounded defaults pinned (connect/`tools.list` ≈10s, `tools.call` ≈30s); a hanging-mock-server test asserts hang → fail-closed + subprocess-killed, orchestrator not blocked (ADR-027 D1 + plan §4/§8-§3). Y1 🟡 → 🟢. Original findings preserved below.
 
 ## Lens preamble
 

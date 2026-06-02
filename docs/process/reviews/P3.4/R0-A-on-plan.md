@@ -6,12 +6,29 @@ reviewer: architect-partner
 plan_commit: 1cbb86d
 lens: single
 adr: ADR-027
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 13
+  yellow: 0
+  green: 14
 verdict_history:
+  - verdict: clean
+    at_commit: PENDING-plan-stage-routing-absorption
+    findings_count: { red: 0, yellow: 0, green: 14 }
+    note: >-
+      Bumped per architect plan-stage routing (Y1 → α-lite-fold) + RC-10. Y1 (the execution
+      references a "post-user-confirm" path that does not exist — process_tool_calls appends a
+      TOOL_CALL event only for AUTO_EXECUTE, and there is no confirm-then-execute flow; so
+      COUNTDOWN/HARD MCP tools are gated-but-not-executed; scope/completeness, not constitutional)
+      is absorbed: ADR-027 D6 + HR#4 + plan §5/§7-3 now clarify the MVP executes AUTO_EXECUTE only;
+      COUNTDOWN/HARD are correctly gated but NOT executed (the demo's write_file rev2 → HARD_CONFIRM
+      → not-executed IS the constitutional demonstration); confirm-then-execute is GUI-coupled and
+      DEFERRED (a later GUI-interaction slice surfaces the pending call → user confirms → a TOOL_CALL
+      event is appended → the same executor runs it unchanged); P3.4 does NOT wire a confirm flow
+      (no scope creep); the e2e demonstrates AUTO-executes + HARD-gated-not-executed. (The R0-B
+      concurrency Y1 — sync-over-async bridge timeout — was routed α MUST-FIX in parallel and folded
+      into ADR-027 D1 + plan §4/§8; see R0-B-cross-family verdict_history.) Y1 🟡 → 🟢 (14🟢). Did
+      NOT accept ADR-027 or advance state.
   - verdict: needs_architect
     at_commit: 1cbb86d
     findings_count: { red: 0, yellow: 1, green: 13 }
@@ -52,7 +69,9 @@ verdict_history:
 | Reviewed at | isolated worktree `/tmp/p34-plan` @ plan `1cbb86d` (shared-tree instability — RC-7 isolation) |
 | ADR status | ADR-027 left **Proposed** — informs accept; I did not accept (architect-only). |
 
-## Verdict: needs_architect — 0🔴 · 1🟡 · 13🟢
+## Verdict: clean (bumped from needs_architect) — 0🔴 · 0🟡 · 14🟢
+
+> **Routing-absorption note (RC-10).** Y1 → **α-lite-fold**. ADR-027 D6 + HR#4 + plan §5/§7-3 now clarify the MVP executes **`AUTO_EXECUTE` only**; `COUNTDOWN`/`HARD` MCP tools are **gated-but-not-executed** (no confirm-then-execute flow exists — the demo's `write_file` rev2→`HARD_CONFIRM`→not-executed *is* the constitutional demonstration); **confirm-then-execute is GUI-coupled and deferred** (a later slice appends the `TOOL_CALL` on user-confirm → the *same* executor runs it unchanged); P3.4 wires **no** confirm flow (no scope creep). The R0-B concurrency Y1 (sync-over-async bridge timeout) was routed α MUST-FIX in parallel → ADR-027 D1 + plan §4/§8. Y1 🟡 → 🟢 (14🟢). Original finding preserved below.
 
 > **An exemplary plan for P3's heaviest constitutional/security slice.** The spine + trust boundary aren't just inscribed (ADR-027 HR#1–10) — they're **structurally enforced**: MCP feeds the **unchanged** gate via a registry merge (a *feed-the-gate empty-diff* test + a constitution test forbidding `mcp/` from referencing the decision functions / being imported upstream); the server's hints **never** touch the tier (a test asserts it); discovery≠permission is `UnknownToolError`-fail-closed; execution-downstream-of-gate is **structural** (keys on the `TOOL_CALL` event); the c2 env-inheritance lesson is applied. **One 🟡 (Y1, medium-low)** — the plan/ADR reference a "post-user-confirm" execution path that **doesn't exist** (I verified); clarify the MVP is `AUTO_EXECUTE`-only + defer confirm-then-execute. Non-constitutional (the gate works). Concurrency/untrusted-result pressure-points handed to the dispatched R0-B.
 
