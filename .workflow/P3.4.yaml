@@ -4,4 +4,4 @@ cycle: 1
 last_transition_at: '2026-06-02T22:10:21.447179Z'
 cycle_started_at: '2026-06-02T22:05:15.536821Z'
 override_history: []
-requires_cross_family_review: false
+requires_cross_family_review: true
