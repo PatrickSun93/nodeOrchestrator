@@ -2,8 +2,8 @@
 task_id: P2.7
 round: plan-vs-impl
 reviewer: senior
-impl_commit: ce0d043
-verdict: needs_architect
+impl_commit: d25cf7f
+verdict: clean
 verdict_history:
   - verdict: needs_architect
     at_commit: ce0d043
@@ -22,10 +22,28 @@ verdict_history:
       to emit an unknown-cost decision_trace entry, but only drop-mode does; keep-mode (the default
       soft-ceiling — the exact case R0-B Y1 flagged) stays silent, and its test is non-discriminating
       (asserts only acceptance). Flagged, not waved through.
+  - verdict: clean
+    at_commit: d25cf7f
+    findings_count: { red: 0, yellow: 0, green: 7 }
+    note: >-
+      Bumped after junior Y1 fix (d25cf7f) + RC-10. Verified the keep-mode unknown-cost trace
+      visibility is now genuinely implemented: apply_global_override returns a third dict
+      `kept_unknown_cost` (override.py) — every unknown-cost model retained under a ceiling in the
+      default keep mode is recorded with a reason "unknown cost ... kept by on_unknown_cost='keep'
+      (ceiling=X)"; the router emits a pre-walk RouteCandidate trace entry for each (router.py),
+      so the soft-ceiling is no longer silent (satisfies ADR-023 D2 for BOTH modes). The replaced
+      test (test_unknown_cost_trace_entry_present_in_keep_mode) is now genuinely discriminating —
+      it asserts a distinct unpriced trace entry containing both "unknown" and "keep"; without the
+      fix the only unpriced entry is "matched" and the assertion fails (load-bearing). The stale
+      override.py comments were removed. Note: the visibility entry is accepted=False (a pre-walk
+      marker, mirroring the drop_reasons pattern; the model is still separately selected) — sound.
+      Orchestrator verified FULL gates green (ruff, ruff-format, mypy --strict 174 files, pytest all
+      pass); independently re-confirmed (on_unknown_cost tests pass + mypy clean on override/router).
+      Y1 🟡 → 🟢 (7🟢). Did NOT advance or merge.
 findings_count:
   red: 0
-  yellow: 1
-  green: 6
+  yellow: 0
+  green: 7
 ---
 
 # P2.7 plan-vs-impl (senior) — 平台演化 + LLM 层 + 启动 polish (P2 closing slice)
@@ -36,7 +54,9 @@ findings_count:
 | Plan | `docs/process/senior-plans/P2.7.md` (batched §3 + the Y1/Y2 plan-stage absorption) |
 | ADR | `ADR-023` (**Accepted**) + `ADR-002`/`ADR-012` amendments (Implemented) |
 | Impl | `claude/P2.7-impl` @ `ce0d043` (7 commits: prelude `5946840`, S1 `2df7269`, S2 `167afb7`, S3 `f954973`, integration-fix `0531c93`, S4 `b37ecf7`, e2e/landing `ce0d043`) |
-| Verdict | **needs_architect** — 0🔴 · 1🟡 · 6🟢 |
+| Verdict | **clean** (bumped from needs_architect at `d25cf7f`) — 0🔴 · 0🟡 · 7🟢 |
+
+> **Y1 resolution note (RC-10).** Junior fix `d25cf7f` closes the one 🟡. `apply_global_override` now returns a third dict `kept_unknown_cost`; the router emits a pre-walk `RouteCandidate` (reason "unknown cost … kept by on_unknown_cost='keep' (ceiling=X)") for every unknown-cost model retained under a ceiling in the **default keep** mode — the soft-ceiling is no longer silent (ADR-023 D2 now satisfied for **both** modes). The keep-mode test is now **discriminating** (asserts a distinct unpriced entry containing both "unknown" and "keep"; fails if absent). Stale `override.py` comments removed. Gates green (orchestrator: mypy --strict 174 files + pytest all pass; re-confirmed here). Y1 🟡 → 🟢. Original finding preserved below for the audit trail.
 
 ## Summary
 

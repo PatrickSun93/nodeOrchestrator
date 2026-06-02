@@ -1,16 +1,30 @@
 ---
 task_id: P2.7
 round: R0-A
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 11
+  yellow: 0
+  green: 12
 verdict_history:
   - verdict: needs_architect
     at_commit: ce0d043
     findings_count: { red: 0, yellow: 1, green: 11 }
     note: initial R0-A (impl-stage, in-family; the FINAL P2 slice). Both cruxes plant-bypass-PROVEN — c1 (planted .call in override.py → AST guard + spy both fail) and c2/Y2 (planted strip-regression → 3 env-inheritance tests fail). Gates all green incl. mypy (173 files); no new LLMPurpose; S1 pure; allowlist fail-closed; _build_child_env live. Y1 (the only 🟡) — the Y1 absorb is incomplete: the kept-unknown-cost decision_trace (the "kept-despite" visibility the architect routed α for) is NOT emitted (override.py defers to the router via a comment; the router doesn't implement it), so the default on_unknown_cost=keep softness is still silent — contradicting the absorb's "never silent". Nothing blocking.
+  - verdict: clean
+    at_commit: d25cf7f
+    findings_count: { red: 0, yellow: 0, green: 12 }
+    note: >-
+      Bumped after junior Y1 fix (d25cf7f) + RC-10. The kept-unknown-cost decision_trace visibility
+      is now genuinely emitted — exactly this review's α lean: apply_global_override returns a third
+      dict kept_unknown_cost; the router emits a pre-walk RouteCandidate (reason "unknown cost ...
+      kept by on_unknown_cost='keep' (ceiling=X)") for each unknown-cost model retained under a
+      ceiling in the default keep mode, so the soft-ceiling is no longer silent (ADR-023 D2 satisfied
+      for both modes). The keep-mode test is now discriminating (asserts a distinct unpriced entry
+      containing both "unknown" and "keep"; fails if absent). Stale override.py comments removed.
+      Convergent with plan-vs-impl Y1 (same finding, same fix). Orchestrator verified FULL gates
+      green (ruff, ruff-format, mypy --strict 174 files, pytest all pass); independently re-confirmed
+      (on_unknown_cost tests pass + mypy clean). Y1 🟡 → 🟢 (12🟢). Did NOT advance or merge.
 ---
 
 # P2.7 R0-A (impl-stage, in-family) — the final P2 slice
@@ -22,7 +36,9 @@ verdict_history:
 | Reviewed in | isolated git worktree at `ce0d043` |
 | Gates (run in worktree) | **ALL green** — ruff ✓ · ruff-format ✓ (173) · **`mypy` (canonical) ✓ (173)** · pytest ✓ |
 
-## Verdict: needs_architect
+## Verdict: clean (bumped from needs_architect at `d25cf7f`)
+
+> **Y1 resolution note (RC-10).** Junior fix `d25cf7f` finishes the absorb exactly as this review's α lean described: `apply_global_override` returns a third dict `kept_unknown_cost`, and the router emits a pre-walk `RouteCandidate` trace entry (reason "unknown cost … kept by on_unknown_cost='keep' (ceiling=X)") for each unknown-cost model kept under a ceiling in the default mode — the soft-ceiling is no longer silent (ADR-023 D2 satisfied both modes). The keep-mode test is now discriminating (asserts a distinct unpriced entry with "unknown" + "keep"; fails if absent). Stale `override.py` comments removed. Same finding + fix as plan-vs-impl Y1 (convergent). Gates green (orchestrator: mypy --strict 174 + pytest all; re-confirmed here). Y1 🟡 → 🟢. Original finding preserved below.
 
 **Exemplary on both cruxes — and I proved both with live plant-bypass** (your checks 1+2). The constitutional core (c1 routing-is-code) and the security must-fix (c2/Y2 env-inheritance) are not just present but **structurally guarded against regression**: planting a `.call` in `override.py` trips the AST guard **and** the spy test; planting a strip-regression in `_build_child_env` trips 3 env-inheritance tests (incl. the hostile-parent + the live `call()`/`health_check` paths). The override is a pure deterministic transform (zero LLM, static attrs); no new `LLMPurpose`; the allowlist is fail-closed; S1 is pure code; gates fully green. The batched-B integration even **caught its own parallel-atomics collision** (commit `0531c93` removed a duplicate `GlobalLLMOverride` — the reconcile step working).
 
