@@ -29,6 +29,7 @@ from orchestrator.memory.store import (
     get_verified_knowledge_by_id,
     init_memory_schema,
     record_hypothesis,
+    update_hypothesis_tags,
 )
 
 # ---------------------------------------------------------------------------
@@ -597,3 +598,95 @@ class TestRecordHypothesisTopicTags:
                 conn=conn,
                 topic_tags=["   "],
             )
+
+
+# ---------------------------------------------------------------------------
+# update_hypothesis_tags (P2.6-3 B1 / ADR-022 D6)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateHypothesisTags:
+    def test_update_hypothesis_tags_overwrites_existing(self) -> None:
+        """Second call with new tags REPLACES the row's tags (not merge/append).
+
+        Discriminating: if update_hypothesis_tags merges instead of overwrites,
+        the final tags would be ["chemistry", "physics", "quantum"] and the
+        assertion that the row has ONLY ["chemistry"] would fail.
+
+        Per ADR-022 D6: overwrite semantics, latest-wins.
+        """
+        store, conn = _make_store_with_memory()
+        room_id, event_ids = _seed_room_and_events(store, conn)
+
+        # Insert hypothesis with no tags.
+        hyp = record_hypothesis(
+            content="overwrite test hypothesis",
+            room_id=room_id,
+            source_event_ids=event_ids,
+            confidence=0.7,
+            conn=conn,
+        )
+
+        # First tagging pass: physics + quantum.
+        update_hypothesis_tags(hyp.id, topic_tags=["physics", "quantum"], conn=conn)
+        loaded = get_hypothesis_by_id(hyp.id, conn=conn)
+        assert loaded is not None
+        assert set(loaded.topic_tags) == {"physics", "quantum"}
+
+        # Second tagging pass: chemistry only — must OVERWRITE, not append.
+        updated = update_hypothesis_tags(hyp.id, topic_tags=["chemistry"], conn=conn)
+        assert updated.topic_tags == ["chemistry"], (
+            f"expected only ['chemistry'], got {updated.topic_tags!r}"
+        )
+
+        # Reload from DB to confirm persistence.
+        reloaded = get_hypothesis_by_id(hyp.id, conn=conn)
+        assert reloaded is not None
+        assert reloaded.topic_tags == ["chemistry"], (
+            "overwrite must persist to DB: expected only ['chemistry'], "
+            f"got {reloaded.topic_tags!r}"
+        )
+
+    def test_update_hypothesis_tags_resolves_canonical(self) -> None:
+        """Raw tags are normalized via resolve_tags before storage.
+
+        Discriminating: if normalization is skipped, the stored tag would
+        be "  Machine Learning  " (with spaces) rather than "machine-learning".
+
+        Per ADR-018 D3: normalize_tag(strip -> lower -> collapse whitespace to '-').
+        """
+        store, conn = _make_store_with_memory()
+        room_id, event_ids = _seed_room_and_events(store, conn)
+        hyp = record_hypothesis(
+            content="normalization test hypothesis",
+            room_id=room_id,
+            source_event_ids=event_ids,
+            confidence=0.6,
+            conn=conn,
+        )
+
+        updated = update_hypothesis_tags(hyp.id, topic_tags=["  Machine Learning  "], conn=conn)
+
+        assert updated.topic_tags == ["machine-learning"], (
+            f"expected ['machine-learning'], got {updated.topic_tags!r}"
+        )
+
+        # Also verify the tag is registered in the tag table.
+        row = conn.execute(
+            "SELECT canonical FROM tag WHERE canonical = 'machine-learning'"
+        ).fetchone()
+        assert row is not None, "canonical tag must be registered in the tag table"
+
+    def test_update_hypothesis_tags_missing_hyp_raises(self) -> None:
+        """Raises MemoryStoreError when hyp_id does not exist.
+
+        Discriminating: if the function silently ignores the missing row,
+        no exception is raised and this test fails.
+        """
+        _store, conn = _make_store_with_memory()
+        from orchestrator.memory.schema import HypothesisId
+
+        fake_id = HypothesisId("hyp_" + "0" * 32)
+
+        with pytest.raises(MemoryStoreError):
+            update_hypothesis_tags(fake_id, topic_tags=["irrelevant"], conn=conn)
