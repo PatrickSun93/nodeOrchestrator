@@ -12,7 +12,9 @@ import pytest
 
 from orchestrator.core.event import (
     Event,
+    EventId,
     EventType,
+    RoomId,
     TimestampMs,
     generate_event_id,
     generate_room_id,
@@ -41,7 +43,7 @@ def _make_store() -> tuple[EventStore, sqlite3.Connection]:
     return store, conn
 
 
-def _make_room(store: EventStore, *, n_events: int = 2) -> tuple[Room, list]:
+def _make_room(store: EventStore, *, n_events: int = 2) -> tuple[Room, list[EventId]]:
     room = Room(id=generate_room_id(), type=RoomType.RESEARCH)
     store.append_room(room)
     ids = []
@@ -62,7 +64,7 @@ def _make_room(store: EventStore, *, n_events: int = 2) -> tuple[Room, list]:
 
 def _inject_validation(
     store: EventStore,
-    room_id: str,
+    room_id: RoomId,
     verdict: str,
     hyp_id: str,
     *,

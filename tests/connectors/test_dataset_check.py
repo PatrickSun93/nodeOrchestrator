@@ -16,6 +16,7 @@ from orchestrator.core.event import (
     Event,
     EventId,
     EventType,
+    RoomId,
     generate_event_id,
     generate_room_id,
     now_ms,
@@ -38,7 +39,7 @@ def _make_store() -> tuple[EventStore, sqlite3.Connection]:
     return store, conn
 
 
-def _make_room(store: EventStore) -> str:
+def _make_room(store: EventStore) -> RoomId:
     room = Room(id=generate_room_id(), type=RoomType.RESEARCH)
     store.append_room(room)
     evt = Event(
