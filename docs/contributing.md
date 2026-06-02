@@ -199,6 +199,12 @@ You don't need an ADR for a typical feature PR.
 - Public functions get docstrings only when the *why* is non-obvious. Type
   hints carry the *what*.
 
+The `api/` package (from P3.2) depends on the **`[api]` optional extra**
+(`fastapi`, `uvicorn`). Install it before running the gates, or `mypy`/`pytest`
+break on `api/` with import-not-found: set up with `uv sync --all-extras` (or run
+the gate per-command as `uv run --extra api mypy --strict .` / `uv run --extra api
+pytest`). There is no CI workflow — the gates are these local commands.
+
 ## Commit messages
 
 Imperative mood, focus on the why. The diff already shows the what.

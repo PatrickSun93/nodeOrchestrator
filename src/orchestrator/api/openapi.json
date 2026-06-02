@@ -1,0 +1,752 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Orchestrator API",
+    "description": "HTTP/WS API over the event store and room runtime (ADR-025)",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/rooms": {
+      "post": {
+        "summary": " Create Room",
+        "operationId": "_create_room_rooms_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_CreateRoomBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Room"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rooms/{room_id}": {
+      "get": {
+        "summary": " Get Room",
+        "operationId": "_get_room_rooms__room_id__get",
+        "parameters": [
+          {
+            "name": "room_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Room Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Room"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rooms/{room_id}/events": {
+      "get": {
+        "summary": " Get Room Events",
+        "operationId": "_get_room_events_rooms__room_id__events_get",
+        "parameters": [
+          {
+            "name": "room_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Room Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Event"
+                  },
+                  "title": "Response  Get Room Events Rooms  Room Id  Events Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rooms/{room_id}/snapshot": {
+      "get": {
+        "summary": " Get Snapshot",
+        "operationId": "_get_snapshot_rooms__room_id__snapshot_get",
+        "parameters": [
+          {
+            "name": "room_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Room Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Snapshot"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events/{event_id}/thread": {
+      "get": {
+        "summary": " Get Thread",
+        "operationId": "_get_thread_events__event_id__thread_get",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Event"
+                  },
+                  "title": "Response  Get Thread Events  Event Id  Thread Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rooms/{room_id}/intent": {
+      "post": {
+        "summary": " Post Intent",
+        "description": "Write path: forge-check \u2192 append \u2192 run_turn \u2192 cursor-diff \u2192 publish.\n\nSecurity spine (ADR-025 D4):\n  - author hardcoded \"user\" \u2014 cannot be forged by client\n  - id + timestamp server-stamped\n  - type allowlist enforced before any append (fail-closed)\n  - metadata validated by validate_metadata (shape-only, not authority)\nError semantics (ADR-025 D5, R0-B Y3):\n  - append-fail \u2192 _AppendFailedError \u2192 422 IntentError{stage:\"append\"}\n  - turn-fail  \u2192 _TurnFailedError  \u2192 500 IntentError{stage:\"turn\"}",
+        "operationId": "_post_intent_rooms__room_id__intent_post",
+        "parameters": [
+          {
+            "name": "room_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Room Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DecisionRef": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id"
+        ],
+        "title": "DecisionRef"
+      },
+      "Event": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "type": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "timestamp": {
+            "type": "integer",
+            "title": "Timestamp"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "room_id",
+          "type",
+          "author",
+          "timestamp",
+          "content"
+        ],
+        "title": "Event",
+        "description": "An immutable event in the append-only event log.\n\n`metadata` is `dict[str, Any]` for storage flexibility; per-type\nschema validation happens via `validate_metadata()` at append time.\nApplication-layer `frozen=True` plus the schema-level UPDATE/DELETE\ntriggers give overlapping append-only enforcement (see event-model.md\n\u00a7\"Append-only enforcement\")."
+      },
+      "EventType": {
+        "type": "string",
+        "enum": [
+          "user_input",
+          "utterance",
+          "hypothesis",
+          "decision",
+          "rejection",
+          "retraction",
+          "observation",
+          "tool_call",
+          "tool_result",
+          "tool_failed",
+          "escalation",
+          "summary_snapshot",
+          "state_transition",
+          "milestone",
+          "term_definition",
+          "decision_pivot",
+          "autonomy_decision",
+          "autonomy_refusal",
+          "external_validation"
+        ],
+        "title": "EventType",
+        "description": "The 19 constitutional event types.\n\nSee docs/architecture/event-model.md for why this list is constitutional\nand what to do (and not do) when extending it. In short: adding a type\nrequires an ADR; renaming or merging types is a breaking change; a\n`generic_message` catch-all is forbidden."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HypothesisRef": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id"
+        ],
+        "title": "HypothesisRef"
+      },
+      "IntentError": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "append",
+              "turn"
+            ],
+            "title": "Stage"
+          },
+          "appended_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appended Event Id"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "stage",
+          "reason"
+        ],
+        "title": "IntentError",
+        "description": "Partial-turn error envelope (ADR-025 D5, R0-B Y3).\n\nstage=\"append\": nothing persisted \u2014 safe to retry.\nstage=\"turn\":  intent persisted \u2014 do NOT re-post; reconcile via replay."
+      },
+      "IntentRequest": {
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "content"
+        ],
+        "title": "IntentRequest",
+        "description": "Client intent to append a user event and drive a turn (ADR-025 D4).\n\nNo author/id/timestamp fields \u2014 server stamps all three. extra=\"forbid\"\nrejects any unknown field at parse time (forge guard at schema layer).\ntype must be in INTENT_TYPE_ALLOWLIST; validated at the endpoint."
+      },
+      "IntentResponse": {
+        "properties": {
+          "appended_event": {
+            "$ref": "#/components/schemas/Event"
+          },
+          "turn": {
+            "$ref": "#/components/schemas/TurnResult"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "appended_event",
+          "turn"
+        ],
+        "title": "IntentResponse",
+        "description": "Successful intent result: the appended user event + turn result."
+      },
+      "Room": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "type": {
+            "$ref": "#/components/schemas/RoomType"
+          },
+          "state": {
+            "type": "string",
+            "title": "State",
+            "default": "open"
+          },
+          "created_at": {
+            "type": "integer",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "type"
+        ],
+        "title": "Room",
+        "description": "A container for events.\n\nAppend-only at the application layer (the EventStore API does not\nexpose update/delete for rooms either), but the schema does not\nenforce this with TRIGGERs. Room state changes flow through\n`state_transition` events and can be derived on demand rather than\nmutating the rooms row."
+      },
+      "RoomType": {
+        "type": "string",
+        "enum": [
+          "free_chat",
+          "bug_fix",
+          "research",
+          "code_review",
+          "idea_validation"
+        ],
+        "title": "RoomType",
+        "description": "Room templates. State machine and default agent/tool sets vary by\ntype; those wirings come in P1."
+      },
+      "Snapshot": {
+        "properties": {
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "room_type": {
+            "$ref": "#/components/schemas/RoomType"
+          },
+          "room_state": {
+            "type": "string",
+            "title": "Room State"
+          },
+          "snapshot_at": {
+            "type": "integer",
+            "title": "Snapshot At"
+          },
+          "event_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Event Count"
+          },
+          "decision_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Decision Count"
+          },
+          "open_hypotheses": {
+            "items": {
+              "$ref": "#/components/schemas/HypothesisRef"
+            },
+            "type": "array",
+            "title": "Open Hypotheses"
+          },
+          "closed_decisions": {
+            "items": {
+              "$ref": "#/components/schemas/DecisionRef"
+            },
+            "type": "array",
+            "title": "Closed Decisions"
+          },
+          "tool_calls_pending_confirm": {
+            "items": {
+              "$ref": "#/components/schemas/ToolCallRef"
+            },
+            "type": "array",
+            "title": "Tool Calls Pending Confirm"
+          },
+          "last_state_transition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StateTransitionRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "participants": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Participants"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "room_id",
+          "room_type",
+          "room_state",
+          "snapshot_at",
+          "event_count",
+          "decision_count",
+          "open_hypotheses",
+          "closed_decisions",
+          "tool_calls_pending_confirm",
+          "last_state_transition",
+          "participants"
+        ],
+        "title": "Snapshot"
+      },
+      "StateTransitionRef": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "new_state": {
+            "type": "string",
+            "title": "New State"
+          },
+          "prior_state": {
+            "type": "string",
+            "title": "Prior State"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "new_state",
+          "prior_state"
+        ],
+        "title": "StateTransitionRef"
+      },
+      "ToolCallRef": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "tool_name": {
+            "type": "string",
+            "title": "Tool Name"
+          },
+          "autonomy_tier": {
+            "type": "string",
+            "enum": [
+              "countdown_confirm",
+              "hard_confirm",
+              "unknown"
+            ],
+            "title": "Autonomy Tier"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "event_id",
+          "tool_name",
+          "autonomy_tier"
+        ],
+        "title": "ToolCallRef"
+      },
+      "TurnResult": {
+        "properties": {
+          "utterances": {
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "type": "array",
+            "title": "Utterances"
+          },
+          "failed_agents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Failed Agents"
+          },
+          "total_asked": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Asked"
+          },
+          "snapshot_failed": {
+            "type": "boolean",
+            "title": "Snapshot Failed",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "utterances",
+          "total_asked"
+        ],
+        "title": "TurnResult",
+        "description": "`dispatch_turn` return type.\n\nDistinguishes three observable cases so callers can react without\nlog-watching:\n- nothing to say: ``total_asked=0, utterances=[], failed_agents=[]``\n- N succeeded:    ``total_asked=N, utterances=N, failed_agents=[]``\n- N all failed:   ``total_asked=N, utterances=[], failed_agents=N ids``\n\n``snapshot_failed`` is True when snapshot dispatch raised ValidationError\nper ADR-014 D7 error-semantic (narrowed from broad Exception per M-Y1 routing).\nCaller (room runtime) can decide retry/escalate on snapshot_failed=True."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "_CreateRoomBody": {
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/RoomType"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "_CreateRoomBody",
+        "description": "Request body for POST /rooms."
+      }
+    }
+  }
+}
