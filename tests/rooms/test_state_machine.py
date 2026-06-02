@@ -756,3 +756,112 @@ class TestRoomStateTransitionSchema:
                 triggering_event_type=EventType.UTTERANCE,
                 # rule_matched is missing
             )
+
+
+# ---------------------------------------------------------------------------
+# e2e: full lifecycle chains (source != sink — P2.7-S1 acceptance §Q3/§1)
+# ---------------------------------------------------------------------------
+
+
+class TestS1E2EFullChains:
+    """End-to-end full-chain tests: one test per scaffold RoomType driving the
+    room from 'setup' through every intermediate state to 'closed'.
+
+    Each test simulates the ``RoomRuntime`` caller pattern:
+    - Start room at 'setup'.
+    - Apply next_room_state with the trigger event.
+    - Update room.state to the new_state (simulating RoomRuntime persistence).
+    - Repeat until 'closed'.
+
+    Source: room at 'setup'. Sink: RoomStateTransition arriving at 'closed'.
+    """
+
+    def test_bug_fix_full_chain(self) -> None:
+        """setup → reproduced → diagnosed → fix_proposed → closed (BugFix e2e)."""
+        from orchestrator.core.room import Room
+
+        room = _make_room(room_type=RoomType.BUG_FIX, state="setup")
+
+        # setup → reproduced
+        t = next_room_state(room, [], current_event=_observation_event())
+        assert t is not None and t.new_state == "reproduced"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # reproduced → diagnosed
+        t = next_room_state(room, [], current_event=_make_event(event_type=EventType.HYPOTHESIS))
+        assert t is not None and t.new_state == "diagnosed"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # diagnosed → fix_proposed
+        t = next_room_state(room, [], current_event=_decision_event())
+        assert t is not None and t.new_state == "fix_proposed"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # fix_proposed → closed
+        t = next_room_state(room, [], current_event=_summary_snapshot_event())
+        assert t is not None and t.new_state == "closed"
+
+    def test_code_review_full_chain(self) -> None:
+        """setup → reviewing → changes_requested → approved → closed (CodeReview e2e)."""
+        from orchestrator.core.room import Room
+
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="setup")
+
+        # setup → reviewing
+        t = next_room_state(room, [], current_event=_observation_event())
+        assert t is not None and t.new_state == "reviewing"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # reviewing → changes_requested
+        t = next_room_state(room, [], current_event=_rejection_event())
+        assert t is not None and t.new_state == "changes_requested"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # changes_requested → approved
+        t = next_room_state(room, [], current_event=_decision_event())
+        assert t is not None and t.new_state == "approved"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # approved → closed
+        t = next_room_state(room, [], current_event=_summary_snapshot_event())
+        assert t is not None and t.new_state == "closed"
+
+    def test_idea_validation_full_chain(self) -> None:
+        """setup → pitching → validating → decided → closed (IdeaValidation e2e)."""
+        from orchestrator.core.room import Room
+
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="setup")
+
+        # setup → pitching
+        t = next_room_state(room, [], current_event=_utterance_event())
+        assert t is not None and t.new_state == "pitching"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # pitching → validating
+        t = next_room_state(room, [], current_event=_make_event(event_type=EventType.HYPOTHESIS))
+        assert t is not None and t.new_state == "validating"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # validating → decided
+        t = next_room_state(room, [], current_event=_decision_event())
+        assert t is not None and t.new_state == "decided"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # decided → closed
+        t = next_room_state(room, [], current_event=_summary_snapshot_event())
+        assert t is not None and t.new_state == "closed"
+
+    def test_free_chat_full_chain(self) -> None:
+        """setup → active → closed (FreeChat e2e)."""
+        from orchestrator.core.room import Room
+
+        room = _make_room(room_type=RoomType.FREE_CHAT, state="setup")
+
+        # setup → active
+        t = next_room_state(room, [], current_event=_utterance_event())
+        assert t is not None and t.new_state == "active"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # active → closed
+        t = next_room_state(room, [], current_event=_summary_snapshot_event())
+        assert t is not None and t.new_state == "closed"
