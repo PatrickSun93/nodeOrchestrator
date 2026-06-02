@@ -205,6 +205,35 @@ break on `api/` with import-not-found: set up with `uv sync --all-extras` (or ru
 the gate per-command as `uv run --extra api mypy --strict .` / `uv run --extra api
 pytest`). There is no CI workflow — the gates are these local commands.
 
+## Frontend gate (`ui/`)
+
+The frontend has its **own separate gate** (node/TS — the Python ruff/mypy/pytest do not
+apply to `ui/`). Run it from inside `ui/` after `nvm use` + `npm install`:
+
+```bash
+cd ui
+nvm use           # ensure node 24 per .nvmrc
+npm run gate      # lint + format:check + typecheck + test + codegen:check
+```
+
+The **codegen-freshness** step (`npm run codegen:check`) re-generates `src/api/schema.ts`
+from the committed `openapi.json` and fails if the committed file is stale. When the
+HTTP contract changes, run `npm run codegen` in `ui/` and commit the updated `schema.ts`.
+
+### Frontend PR checklist
+
+For any PR touching `ui/`:
+
+- [ ] **View+intent only?** No client-side state-machine/routing/autonomy decision logic.
+- [ ] **Binds-API-only?** No `fetch`/`WebSocket` outside `src/api/`; no DB/fs/sqlite dep
+  in `package.json`; no `orchestrator`-path import.
+- [ ] **`ui_strings` no-raw-vocab?** Every `EventType`/`RoomType`/state value shown in the
+  UI is mapped through `uiStrings.ts`; no raw wire token leaks to the rendered DOM.
+- [ ] **Partial-turn handled?** `IntentError`/`StreamError stage:"turn"` → reconcile via
+  replay, Composer does **not** re-post.
+- [ ] **Gate green?** `npm run gate` passes (lint + format + typecheck + vitest +
+  codegen-freshness).
+
 ## Commit messages
 
 Imperative mood, focus on the why. The diff already shows the what.
