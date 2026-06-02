@@ -1,6 +1,6 @@
 # ADR-023: LLM Layer-4 Global Override + Alt-Backend Trust Boundary + Startup-Error Contract
 
-**Status:** Proposed — 2026-06-02 (senior-drafted per P2.7 brief; awaiting architect accept)
+**Status:** Accepted — 2026-06-02 (architect-accepted after plan-stage dual-lens reviews clean: R0-A-on-plan + R0-B-cross-family both `clean`; Y1 → α (S2 cost_ceiling trace + configurable on_unknown_cost), Y2 → α MUST-FIX (S3 subprocess clears ANTHROPIC_BASE_URL when base_url=None), split → batched single task; c1 routing-is-code solid, c2 alt-backend env-inheritance leak closed)
 
 **Scope:** P2.7 — the P2 closing slice's LLM-layer + startup decisions. Governs **(S2)** the LLM **Layer-4 global cost/quality override** — a deterministic, config-driven transform over the existing code router (`llm/router.py` + a new global-override config), **(S3)** the **Claude Code alt-backend** (`ANTHROPIC_BASE_URL`) trust boundary — opt-in + allowlist-validated (`providers/claude_code_cli.py` + provider config), and **(S4)** the **friendly startup-error contract** + the pinned boot entry (`src/orchestrator/bootstrap.py` + `llm/exceptions.py`). Companion amendments: **ADR-002** (registers Layer-4 as the 4th config layer) and **ADR-012** (S1 — scaffold RoomType transition tables; a separate concern, its own amendment). Does NOT govern: an LLM-driven model chooser (**forbidden** — routing is code); a backend marketplace/auto-discovery (just the `ANTHROPIC_BASE_URL` mechanism + the trust posture); multi-source trust-weighting; P3 work.
 
