@@ -2,6 +2,7 @@
 
 Pure-derivation reader over the event log — no LLM, no writes.
 Returns PENDING hypotheses that have ≥1 confirmed external_validation event.
+Also provides advisory reader for refuted verdicts (no status mutation).
 
 Per ADR-019 D2: the event itself is the surface (no flag, no table).
 Per Principle 5 / ADR-016 Hard Requirements: memory/ calls no LLM.
@@ -53,6 +54,47 @@ def list_externally_validated_candidates(conn: sqlite3.Connection) -> list[Hypot
         f"SELECT * FROM hypothesis WHERE id IN ({placeholders}) AND status = 'pending'"
         " ORDER BY id ASC",
         tuple(sorted(confirmed_ids)),
+    ).fetchall()
+
+    return [_row_to_hypothesis(r) for r in hyp_rows]
+
+
+def list_refuted_candidates(conn: sqlite3.Connection) -> list[Hypothesis]:
+    """PENDING hypotheses with >=1 refuted external_validation event. Pure code, no LLM.
+
+    Advisory reader — structurally mirrors list_externally_validated_candidates but
+    collects validated_hypothesis_id where verdict == 'refuted'. Returns the subset
+    of hypothesis rows that are extant + status == 'pending', ordered by id ASC.
+
+    Writes nothing. No status mutation. Calling twice changes nothing.
+
+    Per ADR-019 D2: the reader trusts that every stored external_validation
+    event is well-formed (guaranteed by append-time validate_metadata +
+    ExternalValidationMeta extra="forbid"). A malformed row is unreachable
+    through the sanctioned path; any belt-and-suspenders guard must raise,
+    never silently skip (ADR-018 D4 fail-loud posture).
+    """
+    rows = conn.execute("SELECT metadata FROM events WHERE type = 'external_validation'").fetchall()
+
+    refuted_ids: set[str] = set()
+    for row in rows:
+        meta = json.loads(row[0])
+        # Direct subscript access (NOT .get()): every stored external_validation event is
+        # guaranteed well-formed by append-time validate_metadata + ExternalValidationMeta's
+        # extra="forbid", so verdict + validated_hypothesis_id are always present. A missing
+        # key means a raw INSERT bypassed EventStore.append — KeyError here is the
+        # constitutional canary (raise, never silently skip; ADR-019 D2 / ADR-018 D4 fail-loud).
+        if meta["verdict"] == "refuted":
+            refuted_ids.add(meta["validated_hypothesis_id"])
+
+    if not refuted_ids:
+        return []
+
+    placeholders = ",".join("?" * len(refuted_ids))
+    hyp_rows = conn.execute(
+        f"SELECT * FROM hypothesis WHERE id IN ({placeholders}) AND status = 'pending'"
+        " ORDER BY id ASC",
+        tuple(sorted(refuted_ids)),
     ).fetchall()
 
     return [_row_to_hypothesis(r) for r in hyp_rows]
