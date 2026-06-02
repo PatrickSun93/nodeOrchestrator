@@ -80,3 +80,11 @@ class LLMPurpose(StrEnum):
     # facts, then persisted via record_project_archive. A SECOND, distinct
     # content-gen surface (not REENTRY_DIGEST_RENDER). ADR-021 D5/D9.
     ARCHIVE_SUMMARY_RENDER = "archive_summary_render"
+
+    # ---- Tagging producer (P2.6 / ADR-022 D6) -------------------------
+    # Proposing descriptive topic_tags for a hypothesis based on its
+    # content + source events. Output is raw candidate strings —
+    # code normalizes via resolve_tags, run_matcher groups canonically.
+    # The LLM describes; it never selects, ranks, or gates promotability.
+    # Confined to producers/tagging.py (ADR-022 D3 c1 boundary).
+    HYPOTHESIS_TAG_PROPOSAL = "hypothesis_tag_proposal"
