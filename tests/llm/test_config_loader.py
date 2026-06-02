@@ -456,6 +456,7 @@ class TestExampleConfigs:
             "divergence_mapper",
             "logger",
             "operator",
+            "facilitator",
         }
 
     def test_validate_full_example_config(self) -> None:

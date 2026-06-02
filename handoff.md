@@ -363,21 +363,22 @@ P2.1 refinement (ADR-018 D7): both query AND stored tags normalized at match-tim
 
 ### 5.2 房间模板(5 个核心)
 
-| 模板 | type | 默认 agents |
-|------|------|------------|
-| 自由对话 | free_chat | prober, operator |
-| 修 bug | bug_fix | operator(单 agent) |
-| 做研究 | research | 全部 5 个 |
-| 评审代码 | code_review | operator, skeptic |
-| 验证想法 | idea_validation | 全部 5 个 + 强 skeptic |
+| 模板 | type | declared_agents (P3.1) |
+|------|------|------------------------|
+| 自由对话 | free_chat | facilitator, logger |
+| 修 bug | bug_fix | logger, operator, prober, skeptic |
+| 做研究 | research | divergence_mapper, logger, operator, prober, skeptic |
+| 评审代码 | code_review | logger, operator, skeptic |
+| 验证想法 | idea_validation | divergence_mapper, logger, operator, prober, skeptic |
 
-**P1.5 已落地**: 5 个房间模板已实装为 Python 数据结构。
+**P1.5 已落地**: 5 个房间模板已实装为 Python 数据结构。**P3.1 已落地**: 4 个 scaffold 模板 roster 已填充 (ADR-024 facilitator + 计划 §2a)。
 
 - 实现位置: `src/orchestrator/rooms/templates.py`
 - 模板常量: `ROOM_TEMPLATES: dict[RoomType, RoomTemplate]`
 - 加载 API: `orchestrator.rooms.templates.load_room(room_type, available_agents) -> tuple[Room, list[str]]`
-- Research 模板: 声明 5 个 agents (alphabetical) + `default_initial_state="setup"`; operator/divergence_mapper/logger 缺失时 graceful skip
-- 4 个 scaffold 模板: `declared_agents=[]`, `default_initial_state="setup"`
+- Research 模板: 声明 5 个 agents (alphabetical) + `default_initial_state="setup"`; 缺失时 graceful skip
+- Scaffold 模板: 各自声明 P3.1 roster (alphabetical); per-state activation 通过 `state_change` triggers (prober/skeptic/operator/divergence_mapper/facilitator 均已添加)
+- facilitator agent (ADR-024): 新角色; `applies_to.room_types=[free_chat]`, `room_states=[setup,active]`; `event_type:user_input` + `state_change→active` 触发器
 
 ### 5.3 Skill 库(MVP 10 个)
 

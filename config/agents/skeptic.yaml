@@ -21,6 +21,16 @@ speaking_triggers:
     event_type: hypothesis
   - type: state_change
     target_state: research
+  - type: state_change
+    target_state: diagnosed
+  - type: state_change
+    target_state: fix_proposed
+  - type: state_change
+    target_state: reviewing
+  - type: state_change
+    target_state: changes_requested
+  - type: state_change
+    target_state: validating
 
 cooldown_seconds: 60
 
@@ -36,3 +46,12 @@ autonomy_thresholds:
   threshold_auto: 8
   threshold_confirm: 5
   user_intent_modifier: 2
+
+applies_to:
+  room_types:
+    - research
+    - bug_fix
+    - code_review
+    - idea_validation
+  room_states:
+    - "*"
