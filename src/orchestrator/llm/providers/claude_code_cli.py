@@ -13,15 +13,31 @@ accept arbitrary third-party tool definitions. Agents that require
 tools (``required_capabilities: [tools]``) cannot route here, and
 ``config_loader.validate_full_config`` catches misconfiguration at
 startup.
+
+Alt-backend support (ADR-023 D4-D5):
+
+The optional ``base_url`` field redirects ANTHROPIC_BASE_URL in the
+child subprocess — allowing the CLI to talk to a trusted proxy or
+staging endpoint.  Security contract (Y2-alpha MUST-FIX):
+
+- ``base_url`` MUST be in ``trusted_base_urls`` (fail-closed allowlist,
+  checked at construction time in ``__post_init__``).  An untrusted URL
+  raises ``ConfigError`` immediately — the provider never reaches the
+  subprocess call stage.
+- The child subprocess env is built explicitly via ``_build_child_env()``,
+  which always strips any ANTHROPIC_BASE_URL inherited from the parent
+  process before optionally injecting the allowlisted ``base_url`` value.
+  This prevents a hostile parent-env value from bypassing the D5 allowlist.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from orchestrator.llm.exceptions import (
     PermanentProviderError,
@@ -70,6 +86,41 @@ class ClaudeCodeCliProvider:
     several minutes on hard prompts. Health checks use a separate
     short timeout."""
 
+    base_url: str | None = None
+    """Alt-backend endpoint. When set, must be in ``trusted_base_urls`` (D5 allowlist).
+    Plumbed to the subprocess env as ANTHROPIC_BASE_URL (the claude CLI honors it).
+    Unset (None) = default Anthropic endpoint."""
+
+    trusted_base_urls: list[str] = field(default_factory=list)
+    """Allowlist of trusted base URLs. A non-None ``base_url`` must be a member;
+    otherwise ConfigError at startup (ADR-023 D5 fail-closed)."""
+
+    def __post_init__(self) -> None:
+        """Validate allowlist at construction (ADR-023 D5 fail-closed)."""
+        if self.base_url is not None and self.base_url not in self.trusted_base_urls:
+            from orchestrator.llm.exceptions import ConfigError
+
+            raise ConfigError(
+                f"claude_code_cli provider: base_url {self.base_url!r} is not in "
+                f"trusted_base_urls {self.trusted_base_urls!r}. "
+                f"Add the URL to trusted_base_urls to authorize this redirect "
+                f"(ADR-023 D5 fail-closed allowlist).",
+                violations=[f"base_url {self.base_url!r} not in trusted_base_urls"],
+            )
+
+    def _build_child_env(self) -> dict[str, str]:
+        """Build the child subprocess env, explicitly controlling ANTHROPIC_BASE_URL.
+
+        Never inherits ANTHROPIC_BASE_URL from the parent process (Y2-alpha
+        MUST-FIX: a parent-env value would bypass the D5 allowlist). When
+        ``base_url`` is set (and has already passed allowlist validation in
+        ``__post_init__``), it is injected into the child env.
+        """
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_BASE_URL"}
+        if self.base_url is not None:
+            env["ANTHROPIC_BASE_URL"] = self.base_url
+        return env
+
     def can_use_orchestrator_tools(self) -> bool:
         # Structural property of the CLI; not a per-instance choice.
         # See ADR-003. Do not override.
@@ -92,6 +143,7 @@ class ClaudeCodeCliProvider:
                 capture_output=True,
                 timeout=3,
                 check=False,
+                env=self._build_child_env(),
             )
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
             return False
@@ -176,6 +228,7 @@ class ClaudeCodeCliProvider:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=self._build_child_env(),
             )
         except FileNotFoundError as e:
             raise ProviderUnhealthyError(f"claude CLI not found: {self.cli_path!r}") from e

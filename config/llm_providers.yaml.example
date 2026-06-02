@@ -21,6 +21,13 @@ providers:
     params:
       cli_path: claude          # absolute path or PATH-resolved
       timeout_s: 600            # generous for xhigh effort
+      # Alt-backend support (ADR-023 D4-D5): base_url redirects
+      # ANTHROPIC_BASE_URL in the subprocess.  MUST be in
+      # trusted_base_urls (fail-closed allowlist checked at startup).
+      # Omit both fields to use the default Anthropic endpoint.
+      # base_url: "https://my-trusted-proxy.internal/v1"
+      # trusted_base_urls:
+      #   - "https://my-trusted-proxy.internal/v1"
 
   # DeepSeek hosted API (OpenAI-compatible).
   deepseek:
