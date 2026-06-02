@@ -1,0 +1,13 @@
+# Global LLM cost/quality override — Layer-4 (ADR-023 D1-D2).
+# Copy to llm_override.yaml to activate. Remove llm_override.yaml to disable.
+#
+# All fields optional. Absent file = no override = original three-layer behavior.
+#
+# quality_tier controls chain reorder:
+#   economy  — cheapest-first (ascending cost_per_1m_output; unknown-cost models last)
+#   balanced — identity, no reorder (default)
+#   premium  — most-capable-first (descending capability count)
+quality_tier: balanced
+#
+# cost_ceiling_per_1m_output: 10.0   # drop models costing more per 1M output tokens (USD)
+# on_unknown_cost: keep              # keep|drop — what to do with unpriced models under a ceiling

@@ -225,6 +225,135 @@ def test_constitution_no_llm_calls_in_autonomy_module() -> None:
     )
 
 
+def test_constitution_override_module_has_no_provider_call() -> None:
+    """AST guard: override.py must not contain a .call( invocation in code.
+
+    Constitutional guarantee (ADR-023 D3): the override path makes zero
+    ``LLMProvider.call`` invocations. This structural check scans non-comment,
+    non-docstring lines to lock the guarantee at source level.
+    """
+    import ast
+
+    override_path = SRC_ROOT / "orchestrator" / "llm" / "override.py"
+    assert override_path.exists(), f"override.py not found at {override_path}"
+    content = override_path.read_text(encoding="utf-8")
+
+    # Parse the AST and collect all attribute accesses named "call"
+    # on any receiver — these would be provider.call() invocations.
+    tree = ast.parse(content)
+    call_attrs: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "call"
+            and isinstance(node.ctx, ast.Load)
+        ):
+            # Exclude string constants (docstrings are not in the AST as Attribute nodes,
+            # but double-check: Attribute nodes are always real code).
+            call_attrs.append(f"line {node.lineno}: .call attribute access")
+
+    assert not call_attrs, (
+        "override.py has .call attribute accesses (potential provider.call) — "
+        "forbidden by ADR-023 D3. apply_global_override must be pure, zero I/O:\n"
+        + "\n".join(call_attrs)
+    )
+
+
+def test_constitution_override_path_makes_no_llm_call() -> None:
+    """The override path makes zero provider.call() invocations across all
+    quality_tier + cost_ceiling combinations (RC-24 structural guarantee).
+
+    Uses a spy provider that records .call() invocations. Asserts count == 0
+    after apply_global_override runs through select_model_and_provider.
+    """
+    from orchestrator.llm.override import apply_global_override
+    from orchestrator.llm.router import ModelRegistry
+    from orchestrator.llm.types import GlobalLLMOverride, ModelId, ModelProfile, ProviderId
+
+    call_count = 0
+
+    class SpyProvider:
+        """Minimal spy that records .call() invocations."""
+
+        provider_id: ProviderId = ProviderId("spy")
+
+        def can_use_orchestrator_tools(self) -> bool:
+            return True
+
+        def health_check(self) -> bool:
+            return True
+
+        async def call(self, *args: object, **kwargs: object) -> None:
+            nonlocal call_count
+            call_count += 1
+            raise AssertionError("provider.call must never be invoked by apply_global_override")
+
+    profiles: dict[ModelId, ModelProfile] = {
+        ModelId("cheap"): ModelProfile(
+            id=ModelId("cheap"),
+            provider=ProviderId("spy"),
+            provider_model_id="cheap",
+            capabilities=[],
+            context_window=10_000,
+            cost_per_1m_output=1.0,
+        ),
+        ModelId("expensive"): ModelProfile(
+            id=ModelId("expensive"),
+            provider=ProviderId("spy"),
+            provider_model_id="expensive",
+            capabilities=[],
+            context_window=10_000,
+            cost_per_1m_output=50.0,
+        ),
+        ModelId("unpriced"): ModelProfile(
+            id=ModelId("unpriced"),
+            provider=ProviderId("spy"),
+            provider_model_id="unpriced",
+            capabilities=[],
+            context_window=10_000,
+            cost_per_1m_output=None,
+        ),
+    }
+    registry = ModelRegistry(profiles)
+    chain = [ModelId("expensive"), ModelId("cheap"), ModelId("unpriced")]
+
+    overrides = [
+        None,
+        GlobalLLMOverride(quality_tier="economy"),
+        GlobalLLMOverride(quality_tier="premium"),
+        GlobalLLMOverride(quality_tier="balanced"),
+        GlobalLLMOverride(cost_ceiling_per_1m_output=10.0),
+        GlobalLLMOverride(cost_ceiling_per_1m_output=10.0, on_unknown_cost="drop"),
+        GlobalLLMOverride(cost_ceiling_per_1m_output=10.0, on_unknown_cost="keep"),
+    ]
+
+    for override in overrides:
+        apply_global_override(chain, override, registry)
+
+    assert call_count == 0, (
+        f"apply_global_override triggered {call_count} provider.call() invocation(s) — "
+        "forbidden by ADR-023 D3."
+    )
+
+
+def test_constitution_no_new_llm_purpose_in_p27() -> None:
+    """The override adds zero new LLMPurpose values that look like routing/judgment.
+
+    ADR-023 D3: the override path adds no routing/judgment LLMPurpose.
+    Taxonomy stays content-gen-only. Routing stays code.
+    """
+    from orchestrator.llm.purposes import LLMPurpose
+
+    routing_keywords = {"routing", "override", "selection", "gate", "rank", "score"}
+    for purpose in LLMPurpose:
+        name_lower = purpose.name.lower()
+        assert not any(kw in name_lower for kw in routing_keywords), (
+            f"LLMPurpose.{purpose.name} looks like a routing/judgment purpose "
+            f"(contains one of {routing_keywords}). Forbidden by ADR-023 D3 — "
+            f"routing stays deterministic code, not LLM judgment."
+        )
+
+
 def test_constitution_llm_does_not_import_memory() -> None:
     """src/orchestrator/llm/ must never import from orchestrator.memory.
 

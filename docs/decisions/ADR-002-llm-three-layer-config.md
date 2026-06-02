@@ -190,7 +190,7 @@ the conceptual fit (effort is a model dial, not a task dial).
 
 ## Amendments
 
-### 2026-06-02 (P2.7 / ADR-023) — Proposed (senior-drafted; awaiting architect accept)
+### 2026-06-02 (P2.7 / ADR-023) — Implemented (ADR-023 accepted; P2.7 impl)
 
 **Amendment to Decision 1 — add a 4th layer: the global override.**
 

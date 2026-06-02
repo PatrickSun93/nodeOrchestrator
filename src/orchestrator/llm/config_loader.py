@@ -372,3 +372,36 @@ def validate_full_config(
             f"full config validation failed with {len(violations)} violation(s)",
             violations=violations,
         )
+
+
+def load_global_override(path: Path) -> GlobalLLMOverride | None:
+    """Load ``config/llm_override.yaml`` into a ``GlobalLLMOverride``.
+
+    Returns ``None`` if the file does not exist — no override active.
+
+    Raises:
+        ConfigError: file exists but is malformed yaml, not a dict,
+            or fails ``GlobalLLMOverride`` validation.
+    """
+    if not path.exists():
+        return None
+
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ConfigError(f"yaml parse error in {path}: {e}") from e
+
+    if raw is None:
+        # Empty yaml file — treat as "no override" rather than error.
+        return None
+
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path}: top-level must be a mapping, got {type(raw).__name__}")
+
+    try:
+        return GlobalLLMOverride.model_validate(raw)
+    except Exception as e:
+        raise ConfigError(
+            f"{path}: GlobalLLMOverride validation failed — {e}",
+            violations=[str(e)],
+        ) from e
