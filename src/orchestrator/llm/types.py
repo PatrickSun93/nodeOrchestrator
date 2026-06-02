@@ -392,3 +392,49 @@ class AgentLLMConfig(BaseModel):
                 f"See ADR-002 decision 3."
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Global override (Layer-4, ADR-023 D1)
+# ---------------------------------------------------------------------------
+
+
+class GlobalLLMOverride(BaseModel):
+    """Deployment-wide cost/quality override (Layer-4, ADR-023 D1).
+
+    Loaded from ``config/llm_override.yaml`` (optional file).  Absent
+    file → ``load_global_override`` returns ``None`` → no override
+    applied (original three-layer behavior preserved).
+
+    Constitutional guarantee (ADR-023 D3): this model is consumed
+    **only** by ``apply_global_override`` — a pure, zero-I/O function.
+    No ``LLMPurpose`` values; no provider calls.
+    """
+
+    quality_tier: Literal["economy", "balanced", "premium"] | None = None
+    """Reorder the candidate chain:
+
+    - ``"economy"`` → cheapest-first (ascending ``cost_per_1m_output``);
+      models with unknown cost sort last.
+    - ``"premium"`` → most-capable-first (descending capability count);
+      ties preserve original order.
+    - ``"balanced"`` / ``None`` → identity (no reorder).
+    """
+
+    cost_ceiling_per_1m_output: float | None = Field(default=None, ge=0.0)
+    """Drop any model whose ``cost_per_1m_output`` **strictly exceeds**
+    this value (USD per 1 M output tokens). ``None`` disables the
+    ceiling filter."""
+
+    on_unknown_cost: Literal["keep", "drop"] = "keep"
+    """What to do with models that have no ``cost_per_1m_output`` data
+    when a ceiling is active.
+
+    - ``"keep"`` (default) — treat unknown-cost models as free; keep
+      them in the chain.
+    - ``"drop"`` — exclude unknown-cost models conservatively.
+
+    Ignored when ``cost_ceiling_per_1m_output`` is ``None``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")

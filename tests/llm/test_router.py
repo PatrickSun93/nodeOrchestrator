@@ -19,6 +19,7 @@ from orchestrator.llm.types import (
     AgentAutonomyThresholds,
     AgentLLMConfig,
     Capability,
+    GlobalLLMOverride,
     LLMRequest,
     Message,
     ModelId,
@@ -37,6 +38,7 @@ def _profile(
     id_: str,
     provider: str,
     capabilities: list[Capability] | None = None,
+    cost_per_1m_output: float | None = None,
 ) -> ModelProfile:
     return ModelProfile(
         id=ModelId(id_),
@@ -44,6 +46,7 @@ def _profile(
         provider_model_id=id_,
         capabilities=capabilities or [],
         context_window=10_000,
+        cost_per_1m_output=cost_per_1m_output,
     )
 
 
@@ -356,3 +359,299 @@ class TestRouteResultShape:
         assert isinstance(result, RouteResult)
         with pytest.raises(dataclasses.FrozenInstanceError):
             result.model = None  # type: ignore[misc,assignment]
+
+
+# ---------------------------------------------------------------------------
+# Layer-4 global override tests
+# ---------------------------------------------------------------------------
+
+
+class TestOverrideNone:
+    async def test_override_none_returns_unchanged_chain(self) -> None:
+        """With override=None, routing is byte-identical to pre-S2 behavior."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {
+                ModelId("cheap"): _profile("cheap", "p", cost_per_1m_output=1.0),
+                ModelId("expensive"): _profile("expensive", "p", cost_per_1m_output=50.0),
+            }
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        agent = _agent("expensive", fallbacks=["cheap"])
+
+        # With override=None, expensive model is selected (no filtering).
+        result = await select_model_and_provider(agent, _request(), models, providers)
+        assert result.model.id == ModelId("expensive")
+        assert result.model_id_requested == ModelId("expensive")
+
+
+class TestCostCeilingFilter:
+    async def test_cost_ceiling_drops_expensive_model(self) -> None:
+        """DISCRIMINATING: without override, expensive model is selected;
+        with ceiling, it is dropped and cheaper fallback is used instead."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {
+                ModelId("expensive"): _profile("expensive", "p", cost_per_1m_output=20.0),
+                ModelId("cheap"): _profile("cheap", "p", cost_per_1m_output=2.0),
+            }
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        agent = _agent("expensive", fallbacks=["cheap"])
+
+        # Without override: expensive is selected.
+        result_no_override = await select_model_and_provider(agent, _request(), models, providers)
+        assert result_no_override.model.id == ModelId("expensive")
+
+        # With ceiling=10.0: expensive (20.0) is dropped; cheap (2.0) selected.
+        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0)
+        result = await select_model_and_provider(
+            agent, _request(), models, providers, override=override
+        )
+        assert result.model.id == ModelId("cheap")
+
+        # The trace must contain a pre-filter entry for the expensive model.
+        trace = result.decision_trace
+        model_ids_in_trace = [c.model_id for c in trace]
+        assert ModelId("expensive") in model_ids_in_trace
+        expensive_entry = next(c for c in trace if c.model_id == ModelId("expensive"))
+        assert not expensive_entry.accepted
+        assert "ceiling" in expensive_entry.reason
+
+    async def test_cost_ceiling_keeps_cheap_model(self) -> None:
+        """Model at or below ceiling passes through."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry({ModelId("cheap"): _profile("cheap", "p", cost_per_1m_output=2.0)})
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        agent = _agent("cheap")
+
+        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0)
+        result = await select_model_and_provider(
+            agent, _request(), models, providers, override=override
+        )
+        assert result.model.id == ModelId("cheap")
+
+
+class TestQualityTierReorder:
+    async def test_quality_tier_economy_reorders_cheapest_first(self) -> None:
+        """DISCRIMINATING: economy reorders cheapest to front (vs balanced identity)."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {
+                ModelId("expensive"): _profile("expensive", "p", cost_per_1m_output=20.0),
+                ModelId("cheap"): _profile("cheap", "p", cost_per_1m_output=2.0),
+            }
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        # Default chain: expensive first, cheap fallback.
+        agent = _agent("expensive", fallbacks=["cheap"])
+
+        # With economy tier: chain reorders to cheap first → cheap is selected.
+        override = GlobalLLMOverride(quality_tier="economy")
+        result = await select_model_and_provider(
+            agent, _request(), models, providers, override=override
+        )
+        assert result.model.id == ModelId("cheap")
+
+    async def test_quality_tier_premium_reorders_most_capable_first(self) -> None:
+        """premium reorders most-capable to front."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {
+                ModelId("basic"): _profile("basic", "p", capabilities=[]),
+                ModelId("full"): _profile(
+                    "full", "p", capabilities=[Capability.TOOLS, Capability.VISION]
+                ),
+            }
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        # Default chain: basic first, full fallback.
+        agent = _agent("basic", fallbacks=["full"])
+
+        # With premium tier: full (2 caps) moves to front → full selected.
+        override = GlobalLLMOverride(quality_tier="premium")
+        result = await select_model_and_provider(
+            agent, _request(), models, providers, override=override
+        )
+        assert result.model.id == ModelId("full")
+
+    async def test_quality_tier_balanced_no_reorder(self) -> None:
+        """balanced = identity: chain order unchanged."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {
+                ModelId("expensive"): _profile("expensive", "p", cost_per_1m_output=20.0),
+                ModelId("cheap"): _profile("cheap", "p", cost_per_1m_output=2.0),
+            }
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        agent = _agent("expensive", fallbacks=["cheap"])
+
+        override = GlobalLLMOverride(quality_tier="balanced")
+        result = await select_model_and_provider(
+            agent, _request(), models, providers, override=override
+        )
+        # balanced does not reorder: expensive is still first and selected.
+        assert result.model.id == ModelId("expensive")
+
+
+class TestOnUnknownCost:
+    async def test_on_unknown_cost_keep_keeps_unpriced_model(self) -> None:
+        """on_unknown_cost='keep' + ceiling set: unpriced model stays in chain."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {ModelId("unpriced"): _profile("unpriced", "p", cost_per_1m_output=None)}
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        agent = _agent("unpriced")
+
+        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0, on_unknown_cost="keep")
+        result = await select_model_and_provider(
+            agent, _request(), models, providers, override=override
+        )
+        assert result.model.id == ModelId("unpriced")
+
+    async def test_on_unknown_cost_drop_drops_unpriced_model(self) -> None:
+        """on_unknown_cost='drop' + ceiling set: unpriced model is dropped."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {
+                ModelId("unpriced"): _profile("unpriced", "p", cost_per_1m_output=None),
+                ModelId("cheap"): _profile("cheap", "p", cost_per_1m_output=1.0),
+            }
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        agent = _agent("unpriced", fallbacks=["cheap"])
+
+        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0, on_unknown_cost="drop")
+        result = await select_model_and_provider(
+            agent, _request(), models, providers, override=override
+        )
+        assert result.model.id == ModelId("cheap")
+
+    async def test_unknown_cost_trace_entry_present_in_drop_mode(self) -> None:
+        """Ceiling + unpriced model + drop: decision_trace has an entry about
+        the unknown-cost model being dropped (never silent)."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {
+                ModelId("unpriced"): _profile("unpriced", "p", cost_per_1m_output=None),
+                ModelId("cheap"): _profile("cheap", "p", cost_per_1m_output=1.0),
+            }
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        agent = _agent("unpriced", fallbacks=["cheap"])
+
+        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0, on_unknown_cost="drop")
+        result = await select_model_and_provider(
+            agent, _request(), models, providers, override=override
+        )
+        # The unpriced model must appear in the trace as rejected.
+        trace = result.decision_trace
+        unpriced_entries = [c for c in trace if c.model_id == ModelId("unpriced")]
+        assert len(unpriced_entries) >= 1
+        assert not unpriced_entries[0].accepted
+        assert "unknown" in unpriced_entries[0].reason.lower()
+
+    async def test_unknown_cost_trace_entry_present_in_keep_mode(self) -> None:
+        """Discriminating: ceiling + unknown-cost model + over-ceiling model + keep (default).
+
+        The decision_trace MUST contain a distinct entry for the unknown-cost model
+        recording that it bypassed the ceiling check (ADR-023 D2 visibility).
+        Fails if the trace entry is absent — guards against silent keep-mode softness.
+        """
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {
+                ModelId("unpriced"): _profile("unpriced", "p", cost_per_1m_output=None),
+                ModelId("expensive"): _profile("expensive", "p", cost_per_1m_output=50.0),
+            }
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        # Expensive is default (dropped by ceiling); unpriced is fallback (kept by policy).
+        agent = _agent("expensive", fallbacks=["unpriced"])
+
+        # Default on_unknown_cost="keep" — the soft-ceiling default path.
+        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0)
+        result = await select_model_and_provider(
+            agent, _request(), models, providers, override=override
+        )
+        assert result.model.id == ModelId("unpriced")
+
+        trace = result.decision_trace
+
+        # Over-ceiling model must be dropped.
+        expensive_entries = [c for c in trace if c.model_id == ModelId("expensive")]
+        assert len(expensive_entries) >= 1
+        assert not expensive_entries[0].accepted
+
+        # The unknown-cost model must have a distinct pre-walk visibility entry
+        # that mentions both "unknown" and "keep" — this is the ADR-023 D2 note.
+        # Without the fix, the only unpriced entry is "matched" (no unknown-cost note),
+        # and this assertion fails — making the test genuinely discriminating.
+        unpriced_entries = [c for c in trace if c.model_id == ModelId("unpriced")]
+        unknown_cost_note = [
+            c
+            for c in unpriced_entries
+            if "unknown" in c.reason.lower() and "keep" in c.reason.lower()
+        ]
+        assert len(unknown_cost_note) >= 1, (
+            "decision_trace must contain a visibility entry for the unknown-cost model "
+            "kept under a ceiling (ADR-023 D2). "
+            f"Actual trace entries for 'unpriced': {[c.reason for c in unpriced_entries]}"
+        )
+
+
+class TestOverrideEmptyChain:
+    async def test_override_empty_chain_raises_no_suitable_model(self) -> None:
+        """Override filters all candidates → NoSuitableModelError."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {
+                ModelId("expensive"): _profile("expensive", "p", cost_per_1m_output=50.0),
+                ModelId("also_expensive"): _profile("also_expensive", "p", cost_per_1m_output=30.0),
+            }
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        agent = _agent("expensive", fallbacks=["also_expensive"])
+
+        # Ceiling drops both models.
+        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0)
+        with pytest.raises(NoSuitableModelError):
+            await select_model_and_provider(agent, _request(), models, providers, override=override)
+
+
+class TestOverrideComposesWithLayer3:
+    async def test_override_does_not_bypass_layer3_capability_filter(self) -> None:
+        """Model passes override but fails required_capabilities → still rejected."""
+        prov = MockProvider(provider_id=ProviderId("p"))
+        models = ModelRegistry(
+            {
+                ModelId("no_tools"): _profile("no_tools", "p", cost_per_1m_output=1.0),
+            }
+        )
+        providers = ProviderRegistry({ProviderId("p"): prov})
+        # Agent requires TOOLS; model doesn't have it.
+        agent = _agent("no_tools", required=[Capability.TOOLS])
+
+        # Override keeps the model in chain (below ceiling).
+        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0)
+        with pytest.raises(NoSuitableModelError) as exc:
+            await select_model_and_provider(agent, _request(), models, providers, override=override)
+        trace = exc.value.decision_trace
+        # The model was not accepted (Layer-3 capability check still ran).
+        assert any("missing capability" in c["reason"] for c in trace)
+
+    async def test_override_does_not_bypass_layer3_health_check(self) -> None:
+        """Model passes override but fails health → still rejected by router."""
+        unhealthy = MockProvider(provider_id=ProviderId("p"), healthy=False)
+        models = ModelRegistry({ModelId("m"): _profile("m", "p", cost_per_1m_output=1.0)})
+        providers = ProviderRegistry({ProviderId("p"): unhealthy})
+        agent = _agent("m")
+
+        # Override keeps the model in chain.
+        override = GlobalLLMOverride(cost_ceiling_per_1m_output=10.0)
+        with pytest.raises(NoSuitableModelError) as exc:
+            await select_model_and_provider(agent, _request(), models, providers, override=override)
+        trace = exc.value.decision_trace
+        assert any("health_check" in c["reason"] for c in trace)

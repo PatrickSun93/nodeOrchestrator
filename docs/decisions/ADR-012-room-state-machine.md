@@ -476,7 +476,7 @@ replay can't reconstruct room state at any point in history.
 
 ## Amendments
 
-### 2026-06-02 (P2.7-S1) — Proposed (senior-drafted; awaiting architect accept)
+### 2026-06-02 (P2.7-S1) — Implemented (ADR-023 accepted; P2.7 impl)
 
 **Amendment to Decision 2 (+ Decision 1's scaffold note) — the four scaffold RoomTypes gain real, event-triggered transition tables ("state-machine evolution").**
 

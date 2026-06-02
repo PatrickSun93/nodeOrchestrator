@@ -24,6 +24,7 @@ from orchestrator.llm.exceptions import NoSuitableModelError
 from orchestrator.llm.protocol import LLMProvider
 from orchestrator.llm.types import (
     AgentLLMConfig,
+    GlobalLLMOverride,
     LLMRequest,
     ModelId,
     ModelProfile,
@@ -111,6 +112,7 @@ async def select_model_and_provider(
     request: LLMRequest,
     models: ModelRegistry,
     providers: ProviderRegistry,
+    override: GlobalLLMOverride | None = None,
 ) -> RouteResult:
     """Walk the agent's effective fallback chain; pick the first viable model.
 
@@ -160,13 +162,52 @@ async def select_model_and_provider(
             ``decision_trace`` attached to the exception explains
             each rejection in order.
     """
+    # Import here to avoid circular import at module level
+    # (override.py imports ModelRegistry from this module).
+    from orchestrator.llm.override import apply_global_override
+
     candidates: list[RouteCandidate] = []
     chain: list[ModelId] = [
         agent_config.default_model,
         *agent_config.fallback_chain,
     ]
 
-    for model_id in chain:
+    # Apply global override (Layer-4) before the router walks the chain.
+    effective_chain, drop_reasons, kept_unknown_cost = apply_global_override(
+        chain, override, models
+    )
+
+    # Emit pre-filter trace entries for models dropped by the override.
+    for model_id, reason in drop_reasons.items():
+        candidates.append(
+            RouteCandidate(
+                model_id=model_id,
+                provider_id=None,
+                accepted=False,
+                reason=reason,
+            )
+        )
+
+    # Emit visibility entries for models kept despite unknown cost under a ceiling
+    # (ADR-023 D2: softness is never silent; ceiling check was bypassed for these).
+    for model_id, reason in kept_unknown_cost.items():
+        candidates.append(
+            RouteCandidate(
+                model_id=model_id,
+                provider_id=None,
+                accepted=False,
+                reason=reason,
+            )
+        )
+
+    # If the override filtered everything, fail loudly (ADR-002 Decision 5).
+    if not effective_chain:
+        raise NoSuitableModelError(
+            f"global override filtered all models from chain {chain}",
+            decision_trace=[dataclasses.asdict(c) for c in candidates],
+        )
+
+    for model_id in effective_chain:
         profile = models.get(model_id)
         if profile is None:
             candidates.append(
@@ -241,6 +282,6 @@ async def select_model_and_provider(
         )
 
     raise NoSuitableModelError(
-        f"no suitable model in chain {chain}",
+        f"no suitable model in chain {effective_chain}",
         decision_trace=[dataclasses.asdict(c) for c in candidates],
     )

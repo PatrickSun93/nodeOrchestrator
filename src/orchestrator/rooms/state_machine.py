@@ -1,9 +1,10 @@
 """Per-RoomType state machine: per-RoomType Literals + `next_room_state`.
 
-Implements ADR-012 Decisions 1 and 2:
+Implements ADR-012 Decisions 1 and 2 (amended P2.7-S1):
 - Decision 1: code-driven, event-triggered state machines per RoomType.
 - Decision 2: per-RoomType `Literal` state sets (Research fully implemented;
-  the other 4 RoomTypes are scaffolded with ``{setup, closed}`` only).
+  all four scaffold RoomTypes now have real event-triggered transition tables
+  per the ADR-012 P2.7-S1 amendment).
 
 ``next_room_state`` is a **pure function**: no I/O, no LLM, no event_store
 calls.  The caller (``RoomRuntime``) passes in the event-stream snapshot and
@@ -25,9 +26,39 @@ Transition rules (Research):
 | convergence     | snapshot_pending | ``decision`` event appended (current_event)           |
 | snapshot_pending| closed           | ``summary_snapshot`` event appended (current_event)   |
 
-Scaffold RoomTypes (bug_fix, code_review, idea_validation, free_chat):
-  ``next_room_state`` returns ``None`` for all events — no automatic
-  transitions.  Architect-driven close is out of P1.5 scope (ADR-012 D1).
+Transition rules (BugFix):
+
+| From         | To           | Trigger           | rule_matched                     |
+|--------------|--------------|-------------------|----------------------------------|
+| setup        | reproduced   | OBSERVATION       | observation_triggers_reproduced  |
+| reproduced   | diagnosed    | HYPOTHESIS        | hypothesis_triggers_diagnosed    |
+| diagnosed    | fix_proposed | DECISION          | decision_triggers_fix_proposed   |
+| fix_proposed | closed       | SUMMARY_SNAPSHOT  | snapshot_triggers_closed         |
+
+Transition rules (CodeReview):
+
+| From              | To                | Trigger          | rule_matched                        |
+|-------------------|-------------------|------------------|-------------------------------------|
+| setup             | reviewing         | OBSERVATION      | observation_triggers_reviewing      |
+| reviewing         | changes_requested | REJECTION        | rejection_triggers_changes_requested|
+| changes_requested | approved          | DECISION         | decision_triggers_approved          |
+| approved          | closed            | SUMMARY_SNAPSHOT | snapshot_triggers_closed            |
+
+Transition rules (IdeaValidation):
+
+| From       | To         | Trigger           | rule_matched                    |
+|------------|------------|-------------------|---------------------------------|
+| setup      | pitching   | UTTERANCE         | utterance_triggers_pitching     |
+| pitching   | validating | HYPOTHESIS        | hypothesis_triggers_validating  |
+| validating | decided    | DECISION          | decision_triggers_decided       |
+| decided    | closed     | SUMMARY_SNAPSHOT  | snapshot_triggers_closed        |
+
+Transition rules (FreeChat):
+
+| From   | To     | Trigger           | rule_matched               |
+|--------|--------|-------------------|----------------------------|
+| setup  | active | UTTERANCE         | utterance_triggers_active  |
+| active | closed | SUMMARY_SNAPSHOT  | snapshot_triggers_closed   |
 
 No LLM imports — enforced by
 ``test_constitution_no_llm_calls_in_rooms_module`` (ADR-012 D7).
@@ -57,10 +88,10 @@ ResearchRoomState = Literal[
     "closed",
 ]
 
-BugFixRoomState = Literal["setup", "closed"]
-CodeReviewRoomState = Literal["setup", "closed"]
-IdeaValidationRoomState = Literal["setup", "closed"]
-FreeChatRoomState = Literal["setup", "closed"]
+BugFixRoomState = Literal["setup", "reproduced", "diagnosed", "fix_proposed", "closed"]
+CodeReviewRoomState = Literal["setup", "reviewing", "changes_requested", "approved", "closed"]
+IdeaValidationRoomState = Literal["setup", "pitching", "validating", "decided", "closed"]
+FreeChatRoomState = Literal["setup", "active", "closed"]
 
 RoomState = (
     ResearchRoomState
@@ -72,17 +103,16 @@ RoomState = (
 
 # Valid state sets per RoomType — used for defensive validation in
 # ``RoomStateError`` guard.
-_RESEARCH_STATES: frozenset[str] = frozenset(
-    {"setup", "exploration", "divergence", "convergence", "snapshot_pending", "closed"}
-)
-_SCAFFOLD_STATES: frozenset[str] = frozenset({"setup", "closed"})
-
 _VALID_STATES: dict[RoomType, frozenset[str]] = {
-    RoomType.RESEARCH: _RESEARCH_STATES,
-    RoomType.BUG_FIX: _SCAFFOLD_STATES,
-    RoomType.CODE_REVIEW: _SCAFFOLD_STATES,
-    RoomType.IDEA_VALIDATION: _SCAFFOLD_STATES,
-    RoomType.FREE_CHAT: _SCAFFOLD_STATES,
+    RoomType.RESEARCH: frozenset(
+        {"setup", "exploration", "divergence", "convergence", "snapshot_pending", "closed"}
+    ),
+    RoomType.BUG_FIX: frozenset({"setup", "reproduced", "diagnosed", "fix_proposed", "closed"}),
+    RoomType.CODE_REVIEW: frozenset(
+        {"setup", "reviewing", "changes_requested", "approved", "closed"}
+    ),
+    RoomType.IDEA_VALIDATION: frozenset({"setup", "pitching", "validating", "decided", "closed"}),
+    RoomType.FREE_CHAT: frozenset({"setup", "active", "closed"}),
 }
 
 # ---------------------------------------------------------------------------
@@ -216,18 +246,234 @@ def _next_research_state(
     return None
 
 
-def _next_scaffold_state(
+def _next_bug_fix_state(
     room: Room,
     snapshot_window: list[Event],
     current_event: Event,
 ) -> RoomStateTransition | None:
-    """Scaffold RoomType: no automatic transitions.
+    """BugFix state machine (ADR-012 P2.7-S1 amendment).
 
-    Per ADR-012 D1: scaffold types (bug_fix, code_review, idea_validation,
-    free_chat) only support ``setup → closed``, and that transition is
-    architect-driven (not automatic).  ``next_room_state`` always returns
-    ``None`` for these types in P1.5.
+    Arcs: setup→reproduced (OBSERVATION), reproduced→diagnosed (HYPOTHESIS),
+    diagnosed→fix_proposed (DECISION), fix_proposed→closed (SUMMARY_SNAPSHOT).
     """
+    state = room.state
+
+    if state == "setup":
+        if current_event.type == EventType.OBSERVATION:
+            new_state = "reproduced"
+            _guard_valid_state(room, new_state, "observation_triggers_reproduced")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.OBSERVATION,
+                rule_matched="observation_triggers_reproduced",
+            )
+        return None
+
+    if state == "reproduced":
+        if current_event.type == EventType.HYPOTHESIS:
+            new_state = "diagnosed"
+            _guard_valid_state(room, new_state, "hypothesis_triggers_diagnosed")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.HYPOTHESIS,
+                rule_matched="hypothesis_triggers_diagnosed",
+            )
+        return None
+
+    if state == "diagnosed":
+        if current_event.type == EventType.DECISION:
+            new_state = "fix_proposed"
+            _guard_valid_state(room, new_state, "decision_triggers_fix_proposed")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.DECISION,
+                rule_matched="decision_triggers_fix_proposed",
+            )
+        return None
+
+    if state == "fix_proposed":
+        if current_event.type == EventType.SUMMARY_SNAPSHOT:
+            new_state = "closed"
+            _guard_valid_state(room, new_state, "snapshot_triggers_closed")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.SUMMARY_SNAPSHOT,
+                rule_matched="snapshot_triggers_closed",
+            )
+        return None
+
+    # state == "closed" or any other state: no automatic transitions.
+    return None
+
+
+def _next_code_review_state(
+    room: Room,
+    snapshot_window: list[Event],
+    current_event: Event,
+) -> RoomStateTransition | None:
+    """CodeReview state machine (ADR-012 P2.7-S1 amendment).
+
+    Arcs: setup→reviewing (OBSERVATION), reviewing→changes_requested (REJECTION),
+    changes_requested→approved (DECISION), approved→closed (SUMMARY_SNAPSHOT).
+    """
+    state = room.state
+
+    if state == "setup":
+        if current_event.type == EventType.OBSERVATION:
+            new_state = "reviewing"
+            _guard_valid_state(room, new_state, "observation_triggers_reviewing")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.OBSERVATION,
+                rule_matched="observation_triggers_reviewing",
+            )
+        return None
+
+    if state == "reviewing":
+        if current_event.type == EventType.REJECTION:
+            new_state = "changes_requested"
+            _guard_valid_state(room, new_state, "rejection_triggers_changes_requested")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.REJECTION,
+                rule_matched="rejection_triggers_changes_requested",
+            )
+        return None
+
+    if state == "changes_requested":
+        if current_event.type == EventType.DECISION:
+            new_state = "approved"
+            _guard_valid_state(room, new_state, "decision_triggers_approved")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.DECISION,
+                rule_matched="decision_triggers_approved",
+            )
+        return None
+
+    if state == "approved":
+        if current_event.type == EventType.SUMMARY_SNAPSHOT:
+            new_state = "closed"
+            _guard_valid_state(room, new_state, "snapshot_triggers_closed")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.SUMMARY_SNAPSHOT,
+                rule_matched="snapshot_triggers_closed",
+            )
+        return None
+
+    # state == "closed" or any other state: no automatic transitions.
+    return None
+
+
+def _next_idea_validation_state(
+    room: Room,
+    snapshot_window: list[Event],
+    current_event: Event,
+) -> RoomStateTransition | None:
+    """IdeaValidation state machine (ADR-012 P2.7-S1 amendment).
+
+    Arcs: setup→pitching (UTTERANCE), pitching→validating (HYPOTHESIS),
+    validating→decided (DECISION), decided→closed (SUMMARY_SNAPSHOT).
+    """
+    state = room.state
+
+    if state == "setup":
+        if current_event.type == EventType.UTTERANCE:
+            new_state = "pitching"
+            _guard_valid_state(room, new_state, "utterance_triggers_pitching")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.UTTERANCE,
+                rule_matched="utterance_triggers_pitching",
+            )
+        return None
+
+    if state == "pitching":
+        if current_event.type == EventType.HYPOTHESIS:
+            new_state = "validating"
+            _guard_valid_state(room, new_state, "hypothesis_triggers_validating")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.HYPOTHESIS,
+                rule_matched="hypothesis_triggers_validating",
+            )
+        return None
+
+    if state == "validating":
+        if current_event.type == EventType.DECISION:
+            new_state = "decided"
+            _guard_valid_state(room, new_state, "decision_triggers_decided")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.DECISION,
+                rule_matched="decision_triggers_decided",
+            )
+        return None
+
+    if state == "decided":
+        if current_event.type == EventType.SUMMARY_SNAPSHOT:
+            new_state = "closed"
+            _guard_valid_state(room, new_state, "snapshot_triggers_closed")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.SUMMARY_SNAPSHOT,
+                rule_matched="snapshot_triggers_closed",
+            )
+        return None
+
+    # state == "closed" or any other state: no automatic transitions.
+    return None
+
+
+def _next_free_chat_state(
+    room: Room,
+    snapshot_window: list[Event],
+    current_event: Event,
+) -> RoomStateTransition | None:
+    """FreeChat state machine (ADR-012 P2.7-S1 amendment).
+
+    Arcs: setup→active (UTTERANCE), active→closed (SUMMARY_SNAPSHOT).
+    """
+    state = room.state
+
+    if state == "setup":
+        if current_event.type == EventType.UTTERANCE:
+            new_state = "active"
+            _guard_valid_state(room, new_state, "utterance_triggers_active")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.UTTERANCE,
+                rule_matched="utterance_triggers_active",
+            )
+        return None
+
+    if state == "active":
+        if current_event.type == EventType.SUMMARY_SNAPSHOT:
+            new_state = "closed"
+            _guard_valid_state(room, new_state, "snapshot_triggers_closed")
+            return RoomStateTransition(
+                prior_state=state,
+                new_state=new_state,
+                triggering_event_type=EventType.SUMMARY_SNAPSHOT,
+                rule_matched="snapshot_triggers_closed",
+            )
+        return None
+
+    # state == "closed" or any other state: no automatic transitions.
     return None
 
 
@@ -261,13 +507,6 @@ def _guard_valid_state(room: Room, new_state: str, rule: str) -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
-#: Dispatch table: RoomType → per-type transition function.
-_DISPATCH: dict[
-    RoomType,
-    type[None]  # placeholder for typing; actual type is a callable
-    | object,
-] = {}  # populated below to avoid forward-reference issues
-
 
 def next_room_state(
     room: Room,
@@ -299,10 +538,14 @@ def next_room_state(
     match room.type:
         case RoomType.RESEARCH:
             return _next_research_state(room, window, current_event)
-        case (
-            RoomType.BUG_FIX | RoomType.CODE_REVIEW | RoomType.IDEA_VALIDATION | RoomType.FREE_CHAT
-        ):
-            return _next_scaffold_state(room, window, current_event)
+        case RoomType.BUG_FIX:
+            return _next_bug_fix_state(room, window, current_event)
+        case RoomType.CODE_REVIEW:
+            return _next_code_review_state(room, window, current_event)
+        case RoomType.IDEA_VALIDATION:
+            return _next_idea_validation_state(room, window, current_event)
+        case RoomType.FREE_CHAT:
+            return _next_free_chat_state(room, window, current_event)
         case _:  # pragma: no cover — exhaustive; new RoomType requires update
             raise RoomStateError(
                 room_id=room.id,

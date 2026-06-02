@@ -5,7 +5,8 @@ Coverage:
      divergence→convergence, convergence→snapshot_pending, snapshot_pending→closed).
   2. No-transition case: events that should NOT fire a transition in a given state.
   3. Cycle case: exploration → divergence fires twice (no one-shot block).
-  4. Scaffold RoomType: next_room_state returns None for any event.
+  4. Scaffold RoomType discriminating tests: positive + negative per arc for all 4
+     scaffold RoomTypes (BugFix, CodeReview, IdeaValidation, FreeChat).
   5. Recency window: hypothesis events older than window N are excluded.
   6. RoomStateError: raised on internal contract violation.
   7. RoomStateTransition schema invariants: frozen + extra-forbid.
@@ -294,36 +295,329 @@ class TestCycleCase:
 
 
 # ---------------------------------------------------------------------------
-# 4. Scaffold RoomType: always returns None
+# 4. Scaffold RoomType discriminating tests (ADR-012 P2.7-S1 amendment)
 # ---------------------------------------------------------------------------
 
 
-class TestScaffoldRoomTypes:
-    @pytest.mark.parametrize(
-        "room_type",
-        [
-            RoomType.BUG_FIX,
-            RoomType.CODE_REVIEW,
-            RoomType.IDEA_VALIDATION,
-            RoomType.FREE_CHAT,
-        ],
+def _observation_event(room_id: RoomId | None = None) -> Event:
+    return _make_event(
+        event_type=EventType.OBSERVATION,
+        content="observed a bug",
+        author="agent:prober",
+        room_id=room_id,
     )
-    def test_scaffold_returns_none_for_any_event(self, room_type: RoomType) -> None:
-        """Scaffold RoomTypes: next_room_state always returns None (no automatic transitions)."""
-        room = _make_room(room_type=room_type, state="setup")
-        snapshot: list[Event] = [_hypothesis_event(), _hypothesis_event()]
-        for event_type in (
-            EventType.UTTERANCE,
-            EventType.HYPOTHESIS,
-            EventType.USER_INPUT,
-            EventType.DECISION,
-            EventType.SUMMARY_SNAPSHOT,
+
+
+def _rejection_event(room_id: RoomId | None = None) -> Event:
+    return _make_event(
+        event_type=EventType.REJECTION,
+        content="changes needed",
+        author="agent:skeptic",
+        room_id=room_id,
+        metadata={"rejects": generate_event_id(), "reason": "style violation"},
+    )
+
+
+class TestBugFixStateMachine:
+    """Per-arc positive + negative tests for BugFix state machine."""
+
+    # setup → reproduced
+    def test_setup_to_reproduced_on_observation(self) -> None:
+        room = _make_room(room_type=RoomType.BUG_FIX, state="setup")
+        current = _observation_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "setup"
+        assert result.new_state == "reproduced"
+        assert result.triggering_event_type == EventType.OBSERVATION
+        assert result.rule_matched == "observation_triggers_reproduced"
+
+    def test_setup_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.BUG_FIX, state="setup")
+        current = _utterance_event()  # WRONG: setup needs OBSERVATION
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # reproduced → diagnosed
+    def test_reproduced_to_diagnosed_on_hypothesis(self) -> None:
+        room = _make_room(room_type=RoomType.BUG_FIX, state="reproduced")
+        current = _hypothesis_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "reproduced"
+        assert result.new_state == "diagnosed"
+        assert result.triggering_event_type == EventType.HYPOTHESIS
+        assert result.rule_matched == "hypothesis_triggers_diagnosed"
+
+    def test_reproduced_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.BUG_FIX, state="reproduced")
+        current = _observation_event()  # WRONG: reproduced needs HYPOTHESIS
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # diagnosed → fix_proposed
+    def test_diagnosed_to_fix_proposed_on_decision(self) -> None:
+        room = _make_room(room_type=RoomType.BUG_FIX, state="diagnosed")
+        current = _decision_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "diagnosed"
+        assert result.new_state == "fix_proposed"
+        assert result.triggering_event_type == EventType.DECISION
+        assert result.rule_matched == "decision_triggers_fix_proposed"
+
+    def test_diagnosed_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.BUG_FIX, state="diagnosed")
+        current = _hypothesis_event()  # WRONG: diagnosed needs DECISION
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # fix_proposed → closed
+    def test_fix_proposed_to_closed_on_summary_snapshot(self) -> None:
+        room = _make_room(room_type=RoomType.BUG_FIX, state="fix_proposed")
+        current = _summary_snapshot_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "fix_proposed"
+        assert result.new_state == "closed"
+        assert result.triggering_event_type == EventType.SUMMARY_SNAPSHOT
+        assert result.rule_matched == "snapshot_triggers_closed"
+
+    def test_fix_proposed_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.BUG_FIX, state="fix_proposed")
+        current = _decision_event()  # WRONG: fix_proposed needs SUMMARY_SNAPSHOT
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # closed → None
+    def test_closed_returns_none_for_any_event(self) -> None:
+        room = _make_room(room_type=RoomType.BUG_FIX, state="closed")
+        for event in (
+            _observation_event(),
+            _hypothesis_event(),
+            _decision_event(),
+            _summary_snapshot_event(),
         ):
-            current = _make_event(event_type=event_type)
-            result = next_room_state(room, snapshot, current_event=current)
-            assert result is None, (
-                f"RoomType.{room_type.name} should return None for {event_type.value}"
-            )
+            result = next_room_state(room, [], current_event=event)
+            assert result is None, f"closed BUG_FIX should return None for {event.type}"
+
+
+class TestCodeReviewStateMachine:
+    """Per-arc positive + negative tests for CodeReview state machine."""
+
+    # setup → reviewing
+    def test_setup_to_reviewing_on_observation(self) -> None:
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="setup")
+        current = _observation_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "setup"
+        assert result.new_state == "reviewing"
+        assert result.triggering_event_type == EventType.OBSERVATION
+        assert result.rule_matched == "observation_triggers_reviewing"
+
+    def test_setup_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="setup")
+        current = _utterance_event()  # WRONG: setup needs OBSERVATION
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # reviewing → changes_requested
+    def test_reviewing_to_changes_requested_on_rejection(self) -> None:
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="reviewing")
+        current = _rejection_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "reviewing"
+        assert result.new_state == "changes_requested"
+        assert result.triggering_event_type == EventType.REJECTION
+        assert result.rule_matched == "rejection_triggers_changes_requested"
+
+    def test_reviewing_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="reviewing")
+        current = _decision_event()  # WRONG: reviewing needs REJECTION
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # changes_requested → approved
+    def test_changes_requested_to_approved_on_decision(self) -> None:
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="changes_requested")
+        current = _decision_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "changes_requested"
+        assert result.new_state == "approved"
+        assert result.triggering_event_type == EventType.DECISION
+        assert result.rule_matched == "decision_triggers_approved"
+
+    def test_changes_requested_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="changes_requested")
+        current = _rejection_event()  # WRONG: changes_requested needs DECISION
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # approved → closed
+    def test_approved_to_closed_on_summary_snapshot(self) -> None:
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="approved")
+        current = _summary_snapshot_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "approved"
+        assert result.new_state == "closed"
+        assert result.triggering_event_type == EventType.SUMMARY_SNAPSHOT
+        assert result.rule_matched == "snapshot_triggers_closed"
+
+    def test_approved_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="approved")
+        current = _decision_event()  # WRONG: approved needs SUMMARY_SNAPSHOT
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # closed → None
+    def test_closed_returns_none_for_any_event(self) -> None:
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="closed")
+        for event in (
+            _observation_event(),
+            _rejection_event(),
+            _decision_event(),
+            _summary_snapshot_event(),
+        ):
+            result = next_room_state(room, [], current_event=event)
+            assert result is None, f"closed CODE_REVIEW should return None for {event.type}"
+
+
+class TestIdeaValidationStateMachine:
+    """Per-arc positive + negative tests for IdeaValidation state machine."""
+
+    # setup → pitching
+    def test_setup_to_pitching_on_utterance(self) -> None:
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="setup")
+        current = _utterance_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "setup"
+        assert result.new_state == "pitching"
+        assert result.triggering_event_type == EventType.UTTERANCE
+        assert result.rule_matched == "utterance_triggers_pitching"
+
+    def test_setup_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="setup")
+        current = _hypothesis_event()  # WRONG: setup needs UTTERANCE
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # pitching → validating
+    def test_pitching_to_validating_on_hypothesis(self) -> None:
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="pitching")
+        current = _hypothesis_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "pitching"
+        assert result.new_state == "validating"
+        assert result.triggering_event_type == EventType.HYPOTHESIS
+        assert result.rule_matched == "hypothesis_triggers_validating"
+
+    def test_pitching_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="pitching")
+        current = _utterance_event()  # WRONG: pitching needs HYPOTHESIS
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # validating → decided
+    def test_validating_to_decided_on_decision(self) -> None:
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="validating")
+        current = _decision_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "validating"
+        assert result.new_state == "decided"
+        assert result.triggering_event_type == EventType.DECISION
+        assert result.rule_matched == "decision_triggers_decided"
+
+    def test_validating_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="validating")
+        current = _hypothesis_event()  # WRONG: validating needs DECISION
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # decided → closed
+    def test_decided_to_closed_on_summary_snapshot(self) -> None:
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="decided")
+        current = _summary_snapshot_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "decided"
+        assert result.new_state == "closed"
+        assert result.triggering_event_type == EventType.SUMMARY_SNAPSHOT
+        assert result.rule_matched == "snapshot_triggers_closed"
+
+    def test_decided_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="decided")
+        current = _decision_event()  # WRONG: decided needs SUMMARY_SNAPSHOT
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # closed → None
+    def test_closed_returns_none_for_any_event(self) -> None:
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="closed")
+        for event in (
+            _utterance_event(),
+            _hypothesis_event(),
+            _decision_event(),
+            _summary_snapshot_event(),
+        ):
+            result = next_room_state(room, [], current_event=event)
+            assert result is None, f"closed IDEA_VALIDATION should return None for {event.type}"
+
+
+class TestFreeChatStateMachine:
+    """Per-arc positive + negative tests for FreeChat state machine."""
+
+    # setup → active
+    def test_setup_to_active_on_utterance(self) -> None:
+        room = _make_room(room_type=RoomType.FREE_CHAT, state="setup")
+        current = _utterance_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "setup"
+        assert result.new_state == "active"
+        assert result.triggering_event_type == EventType.UTTERANCE
+        assert result.rule_matched == "utterance_triggers_active"
+
+    def test_setup_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.FREE_CHAT, state="setup")
+        current = _hypothesis_event()  # WRONG: setup needs UTTERANCE
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # active → closed
+    def test_active_to_closed_on_summary_snapshot(self) -> None:
+        room = _make_room(room_type=RoomType.FREE_CHAT, state="active")
+        current = _summary_snapshot_event()
+        result = next_room_state(room, [], current_event=current)
+        assert result is not None
+        assert result.prior_state == "active"
+        assert result.new_state == "closed"
+        assert result.triggering_event_type == EventType.SUMMARY_SNAPSHOT
+        assert result.rule_matched == "snapshot_triggers_closed"
+
+    def test_active_wrong_event_type_returns_none(self) -> None:
+        room = _make_room(room_type=RoomType.FREE_CHAT, state="active")
+        current = _utterance_event()  # WRONG: active needs SUMMARY_SNAPSHOT
+        result = next_room_state(room, [], current_event=current)
+        assert result is None
+
+    # closed → None
+    def test_closed_returns_none_for_any_event(self) -> None:
+        room = _make_room(room_type=RoomType.FREE_CHAT, state="closed")
+        for event in (
+            _utterance_event(),
+            _hypothesis_event(),
+            _decision_event(),
+            _summary_snapshot_event(),
+        ):
+            result = next_room_state(room, [], current_event=event)
+            assert result is None, f"closed FREE_CHAT should return None for {event.type}"
 
 
 # ---------------------------------------------------------------------------
@@ -462,3 +756,112 @@ class TestRoomStateTransitionSchema:
                 triggering_event_type=EventType.UTTERANCE,
                 # rule_matched is missing
             )
+
+
+# ---------------------------------------------------------------------------
+# e2e: full lifecycle chains (source != sink — P2.7-S1 acceptance §Q3/§1)
+# ---------------------------------------------------------------------------
+
+
+class TestS1E2EFullChains:
+    """End-to-end full-chain tests: one test per scaffold RoomType driving the
+    room from 'setup' through every intermediate state to 'closed'.
+
+    Each test simulates the ``RoomRuntime`` caller pattern:
+    - Start room at 'setup'.
+    - Apply next_room_state with the trigger event.
+    - Update room.state to the new_state (simulating RoomRuntime persistence).
+    - Repeat until 'closed'.
+
+    Source: room at 'setup'. Sink: RoomStateTransition arriving at 'closed'.
+    """
+
+    def test_bug_fix_full_chain(self) -> None:
+        """setup → reproduced → diagnosed → fix_proposed → closed (BugFix e2e)."""
+        from orchestrator.core.room import Room
+
+        room = _make_room(room_type=RoomType.BUG_FIX, state="setup")
+
+        # setup → reproduced
+        t = next_room_state(room, [], current_event=_observation_event())
+        assert t is not None and t.new_state == "reproduced"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # reproduced → diagnosed
+        t = next_room_state(room, [], current_event=_make_event(event_type=EventType.HYPOTHESIS))
+        assert t is not None and t.new_state == "diagnosed"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # diagnosed → fix_proposed
+        t = next_room_state(room, [], current_event=_decision_event())
+        assert t is not None and t.new_state == "fix_proposed"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # fix_proposed → closed
+        t = next_room_state(room, [], current_event=_summary_snapshot_event())
+        assert t is not None and t.new_state == "closed"
+
+    def test_code_review_full_chain(self) -> None:
+        """setup → reviewing → changes_requested → approved → closed (CodeReview e2e)."""
+        from orchestrator.core.room import Room
+
+        room = _make_room(room_type=RoomType.CODE_REVIEW, state="setup")
+
+        # setup → reviewing
+        t = next_room_state(room, [], current_event=_observation_event())
+        assert t is not None and t.new_state == "reviewing"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # reviewing → changes_requested
+        t = next_room_state(room, [], current_event=_rejection_event())
+        assert t is not None and t.new_state == "changes_requested"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # changes_requested → approved
+        t = next_room_state(room, [], current_event=_decision_event())
+        assert t is not None and t.new_state == "approved"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # approved → closed
+        t = next_room_state(room, [], current_event=_summary_snapshot_event())
+        assert t is not None and t.new_state == "closed"
+
+    def test_idea_validation_full_chain(self) -> None:
+        """setup → pitching → validating → decided → closed (IdeaValidation e2e)."""
+        from orchestrator.core.room import Room
+
+        room = _make_room(room_type=RoomType.IDEA_VALIDATION, state="setup")
+
+        # setup → pitching
+        t = next_room_state(room, [], current_event=_utterance_event())
+        assert t is not None and t.new_state == "pitching"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # pitching → validating
+        t = next_room_state(room, [], current_event=_make_event(event_type=EventType.HYPOTHESIS))
+        assert t is not None and t.new_state == "validating"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # validating → decided
+        t = next_room_state(room, [], current_event=_decision_event())
+        assert t is not None and t.new_state == "decided"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # decided → closed
+        t = next_room_state(room, [], current_event=_summary_snapshot_event())
+        assert t is not None and t.new_state == "closed"
+
+    def test_free_chat_full_chain(self) -> None:
+        """setup → active → closed (FreeChat e2e)."""
+        from orchestrator.core.room import Room
+
+        room = _make_room(room_type=RoomType.FREE_CHAT, state="setup")
+
+        # setup → active
+        t = next_room_state(room, [], current_event=_utterance_event())
+        assert t is not None and t.new_state == "active"
+        room = Room(id=room.id, type=room.type, state=t.new_state)
+
+        # active → closed
+        t = next_room_state(room, [], current_event=_summary_snapshot_event())
+        assert t is not None and t.new_state == "closed"

@@ -379,3 +379,183 @@ class TestHealthCheck:
         monkeypatch.setattr(subprocess, "run", fake_run)
         provider = ClaudeCodeCliProvider(provider_id=ProviderId("cli"), cli_path="claude")
         assert provider.health_check() is False
+
+
+# ---------------------------------------------------------------------------
+# S3: Alt-backend trust boundary (ADR-023 D4-D5)
+# ---------------------------------------------------------------------------
+
+
+class TestS3Allowlist:
+    def test_base_url_in_allowlist_is_accepted(self) -> None:
+        """Trusted base_url passes construction (no ConfigError)."""
+        provider = ClaudeCodeCliProvider(
+            provider_id=ProviderId("test"),
+            base_url="https://trusted.example.com",
+            trusted_base_urls=["https://trusted.example.com"],
+        )
+        assert provider.base_url == "https://trusted.example.com"
+
+    def test_base_url_not_in_allowlist_raises_config_error(self) -> None:
+        """Untrusted base_url raises ConfigError at construction (fail-closed)."""
+        from orchestrator.llm.exceptions import ConfigError
+
+        with pytest.raises(ConfigError, match="not in trusted_base_urls"):
+            ClaudeCodeCliProvider(
+                provider_id=ProviderId("test"),
+                base_url="https://untrusted.evil.com",
+                trusted_base_urls=["https://trusted.example.com"],
+            )
+
+    def test_base_url_empty_allowlist_raises_config_error(self) -> None:
+        """Empty allowlist + set base_url raises ConfigError (fail-closed)."""
+        from orchestrator.llm.exceptions import ConfigError
+
+        with pytest.raises(ConfigError):
+            ClaudeCodeCliProvider(
+                provider_id=ProviderId("test"),
+                base_url="https://somewhere.com",
+                trusted_base_urls=[],
+            )
+
+    def test_no_base_url_no_validation(self) -> None:
+        """Unset base_url (None) skips allowlist validation entirely."""
+        provider = ClaudeCodeCliProvider(
+            provider_id=ProviderId("test"),
+            # No base_url, no trusted_base_urls needed
+        )
+        assert provider.base_url is None
+
+    def test_config_error_message_includes_url_and_allowlist(self) -> None:
+        """ConfigError message names both the rejected URL and the allowlist."""
+        from orchestrator.llm.exceptions import ConfigError
+
+        with pytest.raises(ConfigError) as exc_info:
+            ClaudeCodeCliProvider(
+                provider_id=ProviderId("test"),
+                base_url="https://bad.example.com",
+                trusted_base_urls=["https://good.example.com"],
+            )
+        msg = str(exc_info.value)
+        assert "https://bad.example.com" in msg
+        assert "trusted_base_urls" in msg
+
+    def test_config_error_has_violations(self) -> None:
+        """ConfigError.violations is populated (ADR-023 D5)."""
+        from orchestrator.llm.exceptions import ConfigError
+
+        with pytest.raises(ConfigError) as exc_info:
+            ClaudeCodeCliProvider(
+                provider_id=ProviderId("test"),
+                base_url="https://bad.example.com",
+                trusted_base_urls=["https://good.example.com"],
+            )
+        assert len(exc_info.value.violations) == 1
+        assert "not in trusted_base_urls" in exc_info.value.violations[0]
+
+
+class TestS3ChildEnv:
+    def test_child_env_clears_anthropic_base_url_when_base_url_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Y2-alpha: parent env ANTHROPIC_BASE_URL=<untrusted> + config base_url=None
+        => _build_child_env does NOT contain ANTHROPIC_BASE_URL."""
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://evil-parent.example.com")
+        provider = ClaudeCodeCliProvider(provider_id=ProviderId("test"))
+        child_env = provider._build_child_env()
+        assert "ANTHROPIC_BASE_URL" not in child_env
+
+    def test_child_env_sets_base_url_when_configured(self) -> None:
+        """base_url set + allowlisted => child env has ANTHROPIC_BASE_URL=base_url."""
+        provider = ClaudeCodeCliProvider(
+            provider_id=ProviderId("test"),
+            base_url="https://trusted.example.com",
+            trusted_base_urls=["https://trusted.example.com"],
+        )
+        child_env = provider._build_child_env()
+        assert child_env.get("ANTHROPIC_BASE_URL") == "https://trusted.example.com"
+
+    def test_child_env_does_not_inherit_parent_base_url_when_allowlisted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Even with a parent env value, only the allowlisted config base_url flows to child."""
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://evil-parent.example.com")
+        provider = ClaudeCodeCliProvider(
+            provider_id=ProviderId("test"),
+            base_url="https://trusted.example.com",
+            trusted_base_urls=["https://trusted.example.com"],
+        )
+        child_env = provider._build_child_env()
+        assert child_env.get("ANTHROPIC_BASE_URL") == "https://trusted.example.com"
+        assert child_env.get("ANTHROPIC_BASE_URL") != "https://evil-parent.example.com"
+
+    def test_child_env_no_base_url_no_anthropic_base_url_key(self) -> None:
+        """Unset base_url: child env has no ANTHROPIC_BASE_URL key."""
+        provider = ClaudeCodeCliProvider(provider_id=ProviderId("test"))
+        child_env = provider._build_child_env()
+        assert "ANTHROPIC_BASE_URL" not in child_env
+
+    def test_child_env_preserves_other_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_build_child_env preserves unrelated env vars from parent."""
+        monkeypatch.setenv("MY_CUSTOM_VAR", "custom_value")
+        provider = ClaudeCodeCliProvider(provider_id=ProviderId("test"))
+        child_env = provider._build_child_env()
+        assert child_env.get("MY_CUSTOM_VAR") == "custom_value"
+
+    async def test_call_passes_child_env_to_subprocess(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call() passes the explicit child env (with ANTHROPIC_BASE_URL stripped)
+        to asyncio.create_subprocess_exec."""
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://evil-parent.example.com")
+        captured = _patch_exec(monkeypatch, lambda args: FakeProc(0, _ok_envelope()))
+        provider = ClaudeCodeCliProvider(
+            provider_id=ProviderId("test"),
+            cli_path="claude",
+        )
+        await _call(provider, _request(), _model())
+
+        kwargs = captured["calls"][0]["kwargs"]
+        assert "env" in kwargs
+        assert "ANTHROPIC_BASE_URL" not in kwargs["env"]
+
+    async def test_call_injects_base_url_into_child_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call() with an allowlisted base_url injects it as ANTHROPIC_BASE_URL
+        in the child env passed to asyncio.create_subprocess_exec."""
+        captured = _patch_exec(monkeypatch, lambda args: FakeProc(0, _ok_envelope()))
+        provider = ClaudeCodeCliProvider(
+            provider_id=ProviderId("test"),
+            cli_path="claude",
+            base_url="https://trusted.example.com",
+            trusted_base_urls=["https://trusted.example.com"],
+        )
+        await _call(provider, _request(), _model())
+
+        kwargs = captured["calls"][0]["kwargs"]
+        assert kwargs["env"].get("ANTHROPIC_BASE_URL") == "https://trusted.example.com"
+
+    def test_health_check_passes_child_env_to_subprocess_run(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """health_check() passes the explicit child env to subprocess.run."""
+        import shutil
+
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://evil-parent.example.com")
+        monkeypatch.setattr(shutil, "which", lambda name: "/fake/path/claude")
+
+        captured_kwargs: dict[str, Any] = {}
+
+        def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+            captured_kwargs.update(kwargs)
+            return subprocess.CompletedProcess(
+                args=args[0], returncode=0, stdout=b"claude 1.0.0", stderr=b""
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        provider = ClaudeCodeCliProvider(provider_id=ProviderId("cli"), cli_path="claude")
+        provider.health_check()
+
+        assert "env" in captured_kwargs
+        assert "ANTHROPIC_BASE_URL" not in captured_kwargs["env"]
