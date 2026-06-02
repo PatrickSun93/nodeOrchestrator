@@ -211,6 +211,7 @@
     "/rooms/{room_id}/intent": {
       "post": {
         "summary": " Post Intent",
+        "description": "Write path: forge-check \u2192 append \u2192 run_turn \u2192 cursor-diff \u2192 publish.\n\nSecurity spine (ADR-025 D4):\n  - author hardcoded \"user\" \u2014 cannot be forged by client\n  - id + timestamp server-stamped\n  - type allowlist enforced before any append (fail-closed)\n  - metadata validated by validate_metadata (shape-only, not authority)\nError semantics (ADR-025 D5, R0-B Y3):\n  - append-fail \u2192 _AppendFailedError \u2192 422 IntentError{stage:\"append\"}\n  - turn-fail  \u2192 _TurnFailedError  \u2192 500 IntentError{stage:\"turn\"}",
         "operationId": "_post_intent_rooms__room_id__intent_post",
         "parameters": [
           {
@@ -245,14 +246,24 @@
             }
           },
           "422": {
-            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/IntentError"
                 }
               }
-            }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         }
       }
@@ -381,6 +392,41 @@
           "event_id"
         ],
         "title": "HypothesisRef"
+      },
+      "IntentError": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "append",
+              "turn"
+            ],
+            "title": "Stage"
+          },
+          "appended_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appended Event Id"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "stage",
+          "reason"
+        ],
+        "title": "IntentError",
+        "description": "Partial-turn error envelope (ADR-025 D5, R0-B Y3).\n\nstage=\"append\": nothing persisted \u2014 safe to retry.\nstage=\"turn\":  intent persisted \u2014 do NOT re-post; reconcile via replay."
       },
       "IntentRequest": {
         "properties": {
