@@ -473,3 +473,51 @@ replay can't reconstruct room state at any point in history.
   Pydantic models declared in Decisions 3 + 6; P1.5-4 state
   machine module lands Decisions 1 + 2; P1.5-5 selection update
   lands Decision 4; P1.5-7 RoomRuntime lands Decision 5.
+
+## Amendments
+
+### 2026-06-02 (P2.7-S1) — Proposed (senior-drafted; awaiting architect accept)
+
+**Amendment to Decision 2 (+ Decision 1's scaffold note) — the four scaffold RoomTypes gain real, event-triggered transition tables ("state-machine evolution").**
+
+**Context / what was deferred.** P1.5 shipped Research as a full 6-state machine; the other four RoomTypes (`bug_fix`, `code_review`, `idea_validation`, `free_chat`) shipped as 2-state `setup → closed` **scaffolds** with **no automatic transitions** (`_next_scaffold_state` returns `None` for every event — `state_machine.py:219-231`). Decision 2 noted this ("other 4 RoomTypes ship as 2-state scaffolds") and Decision 1 deferred their transitions per the P1.3 "scaffold-now, content-later" pattern. P2.7-S1 is that content: real per-RoomType lifecycles.
+
+> **Note (senior self-discovery, surfaced + architect-confirmed).** P2.7-S1 was *initially* framed as "consume the ADR-012 🟡#3 deferred `room_type`/`room_state` params." That consumption is **already shipped** (P1.5): load-time `room_type` filtering at `agents/selection.py:50-65`, dispatch-time `room_state` filtering at `rooms/runtime.py:111-115`, both tested (`tests/rooms/test_runtime.py:269-323`). The `_ = room_state` discard at `selection.py:46` is intentional (room_state is filtered at dispatch-time, not load-time, per Decision 4's two-layer split); the "deferred to P1.5-7" comments are stale. The architect re-pinned S1 to the scaffold-buildout interpretation of "状态机演化" — this amendment.
+
+**Amended state sets (Decision 2).** The four scaffold `Literal`s extend from `{setup, closed}` to real lifecycles. `setup` and `closed` are **preserved** in every set (additive Literal extension — ADR-012 Reversibility row 2; existing events/replay stay valid since scaffolds never auto-transitioned):
+
+```python
+BugFixRoomState = Literal[
+    "setup", "reproduced", "diagnosed", "fix_proposed", "closed"
+]
+CodeReviewRoomState = Literal[
+    "setup", "reviewing", "changes_requested", "approved", "closed"
+]
+IdeaValidationRoomState = Literal[
+    "setup", "pitching", "validating", "decided", "closed"
+]
+FreeChatRoomState = Literal["setup", "active", "closed"]
+```
+
+**Transition tables (new — replacing the always-`None` `_next_scaffold_state` with one `_next_<type>_state` per RoomType, each mirroring `_next_research_state`'s idiom: pattern-match on `room.state` + `current_event.type`, `_guard_valid_state`, return a typed `RoomStateTransition`).** Each arc is a **pure code** match on the event stream (Principle 11; no LLM — Hard Requirement 1 unchanged); `SUMMARY_SNAPSHOT` is the universal close trigger (consistent with Research's `snapshot_pending → closed`):
+
+| RoomType | Arc | Trigger (`current_event.type`) | `rule_matched` |
+|---|---|---|---|
+| **bug_fix** | setup → reproduced | `OBSERVATION` | `observation_triggers_reproduced` |
+| | reproduced → diagnosed | `HYPOTHESIS` | `hypothesis_triggers_diagnosed` |
+| | diagnosed → fix_proposed | `DECISION` | `decision_triggers_fix_proposed` |
+| | fix_proposed → closed | `SUMMARY_SNAPSHOT` | `snapshot_triggers_closed` |
+| **code_review** | setup → reviewing | `OBSERVATION` | `observation_triggers_reviewing` |
+| | reviewing → changes_requested | `REJECTION` | `rejection_triggers_changes_requested` |
+| | changes_requested → approved | `DECISION` | `decision_triggers_approved` |
+| | approved → closed | `SUMMARY_SNAPSHOT` | `snapshot_triggers_closed` |
+| **idea_validation** | setup → pitching | `UTTERANCE` | `utterance_triggers_pitching` |
+| | pitching → validating | `HYPOTHESIS` | `hypothesis_triggers_validating` |
+| | validating → decided | `DECISION` | `decision_triggers_decided` |
+| | decided → closed | `SUMMARY_SNAPSHOT` | `snapshot_triggers_closed` |
+| **free_chat** | setup → active | `UTTERANCE` | `utterance_triggers_active` |
+| | active → closed | `SUMMARY_SNAPSHOT` | `snapshot_triggers_closed` |
+
+These state sets + triggers are a **senior design fork** (the "6-state Research lifecycle is an architect-partner lean, not a binding constraint" precedent — Consequences/Neutral). They are deliberately linear (no branches) for determinism + discriminating tests; per-state agent activation continues to work through the *existing* `applies_to.room_states` dispatch-time filter (`runtime.py:111-115`) — agents reference the new states with no code change. `next_room_state`'s `match`/`case` dispatch (`state_machine.py:299-305`) is updated to route each of the four RoomTypes to its own function; `_VALID_STATES` is updated to the new sets.
+
+**Out of scope (this amendment):** populating the four scaffold **room templates'** agent lists (`rooms/templates.py:11-12` — currently `[]`, marked "P2 content work") is *related but separate content* — the state machine (code decision) is the S1 deliverable; the per-room agent rosters are a follow-on content task (noted in P2.7 plan §2-S1, architect to scope). Backward-compat: the `Room.state` field stays a free string (Decision 2 unchanged); cross-RoomType validation stays at transition time via `_guard_valid_state`.
