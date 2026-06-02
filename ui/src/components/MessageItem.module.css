@@ -1,0 +1,44 @@
+.item {
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  margin-bottom: 0.4rem;
+  max-width: 80%;
+}
+
+.user {
+  background: #eff6ff;
+  align-self: flex-end;
+  margin-left: auto;
+}
+
+.agent {
+  background: #f9fafb;
+  align-self: flex-start;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.25rem;
+}
+
+.author {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: #374151;
+}
+
+.chip {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  background: #f3f4f6;
+  border-radius: 3px;
+  padding: 0 0.3rem;
+}
+
+.content {
+  font-size: 0.95rem;
+  white-space: pre-wrap;
+  color: #111827;
+}
