@@ -187,3 +187,19 @@ the conceptual fit (effort is a model dial, not a task dial).
 - `chat-history.md` §17–18 (LLM layer reasoning, v2)
 - `docs/architecture/llm-layer.md` (full design)
 - ADR-003 (companion: why Claude Code can't have orchestrator tools)
+
+## Amendments
+
+### 2026-06-02 (P2.7 / ADR-023) — Proposed (senior-drafted; awaiting architect accept)
+
+**Amendment to Decision 1 — add a 4th layer: the global override.**
+
+P2.7-S2 (ADR-023 D1–D3) introduces a deployment-wide cost/quality override that sits **above** the agent layer. The layer model extends from three to four:
+
+**Original (Decision 1):** the chain is provider ← model ← agent. Each layer is independent.
+
+**Amended:** the chain is provider ← model ← agent ← **global override**. The 4th layer (`config/llm_override.yaml`, parsed into `GlobalLLMOverride`) is **optional** (absent file = no override = the original three-layer behavior, unchanged) and **deployment-global** (one per deployment, distinct from the per-agent layer-3 `AgentLLMConfig`).
+
+The 4th layer is a **deterministic code transform**, not a new judgment surface (ADR-023 D2): a pure function `apply_global_override(chain, override, models) -> chain` filters/reorders the candidate `[default_model, *fallback_chain]` over **static `ModelProfile` attributes** (cost, capability count) *before* the router (`select_model_and_provider`) walks it. It **composes with — never bypasses** — Decision 4's fallback semantics: the transformed chain is still subject to the per-candidate required-capability / provider-exists / tools-support / health filters. If the override empties the chain, the router raises `NoSuitableModelError` (Decision 5 fail-loud), never a silent unfiltered fallback.
+
+This amendment is **additive**: every existing config (no `llm_override.yaml`) loads and routes exactly as before; the new `override` parameter on `select_model_and_provider` defaults to `None`. Effort-on-model (Decision 2), `fallback_chain` excludes `default_model` (Decision 3), and fail-loud startup validation (Decision 5) are **unchanged**. Constitutional guarantee (ADR-023 D3): the override path makes **no** `LLMProvider.call` (structural test) and adds **no** routing/judgment `LLMPurpose` — routing stays code (Principle 5; `llm-layer.md:11-14`).
