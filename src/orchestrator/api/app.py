@@ -217,8 +217,60 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.websocket("/rooms/{room_id}/stream")
     async def _room_stream(websocket: WebSocket, room_id: str) -> None:
-        # P3.2-3: subscribe-then-replay+dedup WS handler.
-        await websocket.close(code=1011)
+        """Subscribe-then-replay+dedup WS stream (ADR-025 D6, R0-B Y1).
+
+        Order: (1) subscribe → queue captures all events from now;
+               (2) replay current events from reader conn;
+               (3) send replay_complete sentinel;
+               (4) drain queue, skipping ids already sent in replay (dedup).
+        This order guarantees no event is lost between replay and live stream.
+        """
+        from starlette.websockets import WebSocketDisconnect
+
+        from orchestrator.api.wire import StreamEventMessage, StreamReplayCompleteMessage
+
+        await websocket.accept()
+        rid = RoomId(room_id)
+        loop = asyncio.get_running_loop()
+
+        # (1) Subscribe FIRST — every event published from this instant is queued.
+        q = ctx.bus.subscribe(rid)
+        sent_ids: set[str] = set()
+
+        try:
+            # (2) Replay current events from the read-only reader connection.
+            replay_events = await loop.run_in_executor(
+                ctx.reader_executor,
+                lambda: ctx.reader_store.get_room_events(rid),
+            )
+            for event in replay_events:
+                await websocket.send_text(StreamEventMessage(event=event).model_dump_json())
+                sent_ids.add(event.id)
+
+            # (3) Replay-complete sentinel — client knows history is done.
+            await websocket.send_text(StreamReplayCompleteMessage().model_dump_json())
+
+            # (4) Live stream — dedup any event already sent in replay.
+            keepalive_s = 30.0
+            while True:
+                try:
+                    live_event = await asyncio.wait_for(q.get(), timeout=keepalive_s)
+                except TimeoutError:
+                    try:
+                        await websocket.send_text('{"kind":"ping"}')
+                    except Exception:
+                        break
+                    continue
+                if live_event.id not in sent_ids:
+                    await websocket.send_text(
+                        StreamEventMessage(event=live_event).model_dump_json()
+                    )
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+        finally:
+            ctx.bus.unsubscribe(rid, q)
 
 
 def create_app(config_dir: Path, db_path: Path) -> FastAPI:
