@@ -10,7 +10,8 @@ verdict_history:
   - verdict: needs_architect
     at_commit: ce0d043
     findings_count: { red: 0, yellow: 1, green: 11 }
-    note: initial R0-A (impl-stage, in-family; the FINAL P2 slice). Both cruxes plant-bypass-PROVEN — c1 (planted .call in override.py → AST guard + spy both fail) and c2/Y2 (planted strip-regression → 3 env-inheritance tests fail). Gates all green incl. mypy (173 files); no new LLMPurpose; S1 pure; allowlist fail-closed; _build_child_env live. Y1 (the only 🟡) — the Y1 absorb is incomplete: the kept-unknown-cost decision_trace (the "kept-despite" visibility the architect routed α for) is NOT emitted (override.py defers to the router via a comment; the router doesn't implement it), so the default on_unknown_cost=keep softness is still silent — contradicting the absorb's "never silent". Nothing blocking.
+    note: >-
+      initial R0-A (impl-stage, in-family; the FINAL P2 slice). Both cruxes plant-bypass-PROVEN — c1 (planted .call in override.py → AST guard + spy both fail) and c2/Y2 (planted strip-regression → 3 env-inheritance tests fail). Gates all green incl. mypy (173 files); no new LLMPurpose; S1 pure; allowlist fail-closed; _build_child_env live. Y1 (the only 🟡) — the Y1 absorb is incomplete: the kept-unknown-cost decision_trace (the "kept-despite" visibility the architect routed α for) is NOT emitted (override.py defers to the router via a comment; the router doesn't implement it), so the default on_unknown_cost=keep softness is still silent — contradicting the absorb's "never silent". Nothing blocking.
   - verdict: clean
     at_commit: d25cf7f
     findings_count: { red: 0, yellow: 0, green: 12 }
