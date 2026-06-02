@@ -46,6 +46,7 @@ from orchestrator.llm.types import (
     AgentAutonomyThresholds,
     AgentLLMConfig,
     Capability,
+    GlobalLLMOverride,
     ModelId,
     ModelProfile,
     ProviderId,
@@ -238,6 +239,28 @@ def load_agent_llm_config(path: Path, models: ModelRegistry) -> AgentLLMConfig:
             violations=violations,
         )
     return config
+
+
+def load_global_override(path: Path) -> GlobalLLMOverride | None:
+    """Load ``config/llm_override.yaml`` → ``GlobalLLMOverride`` | None.
+
+    Absent file → ``None`` (no override; Layer-3 routing unchanged). This
+    is the normal production state — the override is opt-in (ADR-023 D1).
+
+    Raises:
+        ConfigError: the file exists but cannot be parsed or fails schema
+            validation (``GlobalLLMOverride`` frozen + ``extra="forbid"``).
+    """
+    if not path.exists():
+        return None
+    raw = _read_yaml(path)
+    try:
+        return GlobalLLMOverride.model_validate(raw)
+    except Exception as e:
+        raise ConfigError(
+            f"{path}: llm_override.yaml validation failed — {e}",
+            violations=[str(e)],
+        ) from e
 
 
 def load_tools_config(path: Path) -> dict[str, ToolMeta]:

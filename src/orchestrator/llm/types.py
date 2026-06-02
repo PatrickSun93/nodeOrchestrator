@@ -337,6 +337,38 @@ class AgentAutonomyThresholds(BaseModel):
         return self
 
 
+class GlobalLLMOverride(BaseModel):
+    """Deployment-wide cost/quality override (Layer-4; ADR-023 D1-D2).
+
+    Optional config loaded from ``config/llm_override.yaml``. Absent file
+    ⇒ ``None`` override ⇒ routing byte-identical to pre-S2 behavior.
+
+    ``quality_tier`` reorders the candidate chain by static ``ModelProfile``
+    attributes:
+    - ``"economy"`` → ascending cost (cheapest first; ``None``-cost sorts last).
+    - ``"premium"`` → descending capability count (most-capable first).
+    - ``"balanced"`` / ``None`` → identity (no reorder).
+
+    ``cost_ceiling_per_1m_output`` drops models whose
+    ``ModelProfile.cost_per_1m_output`` is known and strictly exceeds the
+    ceiling. Unknown-cost models (``cost_per_1m_output is None``) are
+    handled by ``on_unknown_cost``.
+
+    ``on_unknown_cost`` governs unpriced candidates under a set ceiling:
+    - ``"keep"`` (default) — do not drop them; emit a decision_trace entry
+      recording the kept-despite-unknown-cost state.
+    - ``"drop"`` — exclude them; emit a decision_trace entry recording the
+      dropped-as-unknown-cost state.
+    With no ceiling set, ``on_unknown_cost`` is inert.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    quality_tier: Literal["economy", "balanced", "premium"] | None = None
+    cost_ceiling_per_1m_output: float | None = Field(default=None, ge=0.0)
+    on_unknown_cost: Literal["keep", "drop"] = "keep"
+
+
 class AgentLLMConfig(BaseModel):
     """The ``llm_config`` block of an agent's YAML, plus ``autonomy_thresholds``.
 
