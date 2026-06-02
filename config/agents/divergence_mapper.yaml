@@ -13,6 +13,10 @@ forbidden_behaviors:
   - "TODO: synthesizing_perspectives"
   - "TODO: false_convergence"
 
+speaking_triggers:
+  - type: state_change
+    target_state: validating
+
 cooldown_seconds: 30
 
 llm_config:

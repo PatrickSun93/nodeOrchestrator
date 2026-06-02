@@ -9,7 +9,7 @@ Design invariants:
   does not read files itself.
 - ``declared_agents`` lists are alphabetical (plan §P1.5-6 requirement).
 - The Research template declares 5 agents.  The 4 scaffold templates declare
-  ``[]`` — content is P2 work (ADR-012 D1 "scaffold" pattern).
+  their P3.1 rosters per ADR-024 + P3.1 plan §2a.
 - ``default_initial_state`` is ``"setup"`` for all 5 RoomTypes — the Research
   state machine starts in ``setup`` (ADR-012 D2); scaffold types also open
   in ``setup`` (their only non-closed state).
@@ -69,27 +69,30 @@ ROOM_TEMPLATES: dict[RoomType, RoomTemplate] = {
         ],
         default_initial_state="setup",
     ),
-    # Scaffold templates: agent list is empty; content is P2 work.
-    # ADR-012 D1: same pattern as P1.3 "2 sample skills + full library is
-    # content task".
+    # Scaffold templates: rosters populated per ADR-024 + P3.1 plan §2a.
+    # bug_fix: prober surfaces assumptions, skeptic challenges, operator acts, logger records.
+    # code_review: skeptic challenges, operator acts, logger records (no assumption-surfacing).
+    # idea_validation: full analytical roster — prober + skeptic + divergence_mapper + operator +
+    #   logger.
+    # free_chat: facilitator (ADR-024 new role) + logger.
     RoomType.BUG_FIX: RoomTemplate(
         room_type=RoomType.BUG_FIX,
-        declared_agents=[],
+        declared_agents=["logger", "operator", "prober", "skeptic"],
         default_initial_state="setup",
     ),
     RoomType.CODE_REVIEW: RoomTemplate(
         room_type=RoomType.CODE_REVIEW,
-        declared_agents=[],
+        declared_agents=["logger", "operator", "skeptic"],
         default_initial_state="setup",
     ),
     RoomType.IDEA_VALIDATION: RoomTemplate(
         room_type=RoomType.IDEA_VALIDATION,
-        declared_agents=[],
+        declared_agents=["divergence_mapper", "logger", "operator", "prober", "skeptic"],
         default_initial_state="setup",
     ),
     RoomType.FREE_CHAT: RoomTemplate(
         room_type=RoomType.FREE_CHAT,
-        declared_agents=[],
+        declared_agents=["facilitator", "logger"],
         default_initial_state="setup",
     ),
 }

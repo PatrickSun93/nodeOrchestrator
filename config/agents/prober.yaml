@@ -7,6 +7,10 @@ persona: >
 speaking_triggers:
   - type: regex
     pattern: "\\?"
+  - type: state_change
+    target_state: reproduced
+  - type: state_change
+    target_state: pitching
 
 cooldown_seconds: 30
 
@@ -20,3 +24,11 @@ autonomy_thresholds:
   threshold_auto: 8
   threshold_confirm: 5
   user_intent_modifier: 2
+
+applies_to:
+  room_types:
+    - research
+    - bug_fix
+    - idea_validation
+  room_states:
+    - "*"

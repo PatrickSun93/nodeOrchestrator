@@ -18,6 +18,12 @@ speaking_triggers:
     event_type: user_input
   - type: event_type
     event_type: hypothesis
+  - type: state_change
+    target_state: fix_proposed
+  - type: state_change
+    target_state: reviewing
+  - type: state_change
+    target_state: validating
 
 cooldown_seconds: 10
 

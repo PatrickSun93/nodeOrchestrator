@@ -6,11 +6,11 @@ Covers:
    → returned in missing list.
 3. Research: missing-agent list is non-empty when not all declared agents
    are available.
-4. Scaffold templates each load with empty agent lists.
+4. Scaffold templates load with correct P3.1 rosters (not empty).
 5. ``default_initial_state`` equals ``"setup"`` for all templates.
 6. ``RoomTemplate`` schema invariants (frozen + extra-forbid).
-7. ``load_room`` with empty available_agents returns empty room + all declared
-   agents as missing.
+7. ``load_room`` with empty available_agents returns all declared agents as missing
+   (for Research and for each scaffold room per its P3.1 roster).
 
 Agents are constructed synthetically (no yaml I/O) per plan §P1.5-6.
 """
@@ -107,25 +107,46 @@ def test_load_room_research_missing_list_nonempty_when_partial() -> None:
 
 
 # ---------------------------------------------------------------------------
-# §4 — Scaffold templates each load with empty agent lists
+# §4 — Scaffold templates load with correct P3.1 rosters
 # ---------------------------------------------------------------------------
 
+_SCAFFOLD_ROSTERS: dict[RoomType, list[str]] = {
+    RoomType.BUG_FIX: ["logger", "operator", "prober", "skeptic"],
+    RoomType.CODE_REVIEW: ["logger", "operator", "skeptic"],
+    RoomType.IDEA_VALIDATION: ["divergence_mapper", "logger", "operator", "prober", "skeptic"],
+    RoomType.FREE_CHAT: ["facilitator", "logger"],
+}
 
-@pytest.mark.parametrize(
-    "room_type",
-    [
-        RoomType.BUG_FIX,
-        RoomType.CODE_REVIEW,
-        RoomType.IDEA_VALIDATION,
-        RoomType.FREE_CHAT,
-    ],
-)
-def test_scaffold_templates_load_with_empty_agents(room_type: RoomType) -> None:
-    """Each scaffold template constructs a Room with no missing agents (empty list)."""
-    room, missing = load_room(room_type, {})
+
+@pytest.mark.parametrize("room_type", list(_SCAFFOLD_ROSTERS))
+def test_scaffold_templates_load_room_type_and_state(room_type: RoomType) -> None:
+    """Each scaffold template constructs a Room with the correct type and initial state."""
+    room, _ = load_room(room_type, {})
 
     assert room.type == room_type
     assert room.state == "setup"
+
+
+@pytest.mark.parametrize("room_type", list(_SCAFFOLD_ROSTERS))
+def test_scaffold_templates_declared_agents_per_p3_1_roster(room_type: RoomType) -> None:
+    """Each scaffold template declares the P3.1 roster (alphabetical)."""
+    template = ROOM_TEMPLATES[room_type]
+    assert template.declared_agents == _SCAFFOLD_ROSTERS[room_type]
+
+
+@pytest.mark.parametrize("room_type", list(_SCAFFOLD_ROSTERS))
+def test_scaffold_templates_all_missing_when_no_agents_available(room_type: RoomType) -> None:
+    """load_room with empty available_agents: missing == declared roster."""
+    _, missing = load_room(room_type, {})
+    assert missing == _SCAFFOLD_ROSTERS[room_type]
+
+
+@pytest.mark.parametrize("room_type", list(_SCAFFOLD_ROSTERS))
+def test_scaffold_templates_no_missing_when_all_declared_available(room_type: RoomType) -> None:
+    """load_room with all declared agents present: missing == []."""
+    roster = _SCAFFOLD_ROSTERS[room_type]
+    available = {aid: _make_agent(aid) for aid in roster}
+    _, missing = load_room(room_type, available)
     assert missing == []
 
 
@@ -185,11 +206,11 @@ def test_load_room_empty_available_agents_returns_all_declared_as_missing() -> N
     assert room.state == "setup"
 
 
-def test_load_room_empty_available_agents_scaffold_returns_empty_missing() -> None:
-    """Scaffold load_room with empty available_agents returns empty missing list."""
+def test_load_room_empty_available_agents_scaffold_returns_full_roster_as_missing() -> None:
+    """Scaffold load_room with empty available_agents: missing == full declared roster."""
     room, missing = load_room(RoomType.BUG_FIX, {})
 
-    assert missing == []
+    assert missing == ["logger", "operator", "prober", "skeptic"]
     assert room.type == RoomType.BUG_FIX
     assert room.state == "setup"
 

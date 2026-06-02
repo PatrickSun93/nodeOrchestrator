@@ -340,10 +340,10 @@ def _make_full_registry() -> ModelRegistry:
     return ModelRegistry(profiles)
 
 
-def test_all_five_canonical_agents_load() -> None:
-    """All 5 canonical agents load without error; count == 5."""
+def test_all_six_canonical_agents_load() -> None:
+    """All 6 canonical agents load without error; count == 6 (includes facilitator, ADR-024)."""
     registry = _make_full_registry()
     agents, _reg = load_agents(_CANONICAL_DIR, models=registry)
-    assert len(agents) == 5, f"expected 5 canonical agents, got {len(agents)}: {sorted(agents)}"
-    expected = {"divergence_mapper", "logger", "operator", "prober", "skeptic"}
+    assert len(agents) == 6, f"expected 6 canonical agents, got {len(agents)}: {sorted(agents)}"
+    expected = {"divergence_mapper", "facilitator", "logger", "operator", "prober", "skeptic"}
     assert set(agents) == expected
