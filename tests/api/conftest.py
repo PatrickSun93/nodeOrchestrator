@@ -97,8 +97,9 @@ def app(ctx: AppContext) -> FastAPI:
 
 
 @pytest.fixture
-def client(app: FastAPI) -> TestClient:
-    return TestClient(app)
+def client(app: FastAPI) -> Generator[TestClient, None, None]:
+    with TestClient(app) as client:
+        yield client
 
 
 # ---------------------------------------------------------------------------

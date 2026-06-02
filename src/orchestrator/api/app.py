@@ -17,22 +17,28 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from orchestrator.agents.dispatch import LLMRouterProtocol
 from orchestrator.agents.loader import load_agents
 from orchestrator.agents.schema import Agent
 from orchestrator.api.pubsub import RoomEventBus
-from orchestrator.api.wire import Event, IntentRequest, IntentResponse, Room, Snapshot
+from orchestrator.api.wire import Event, IntentError, IntentRequest, IntentResponse, Room, Snapshot
 from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.bootstrap import load_and_validate_llm_layer
 from orchestrator.core.event import (
     EventId,
     EventNotFoundError,
+    InvalidParentError,
+    MetadataValidationError,
     RoomId,
+    RoomNotFoundError,
+    generate_event_id,
     generate_room_id,
     now_ms,
+    validate_metadata,
 )
 from orchestrator.core.event_store import EventStore
 from orchestrator.core.room import Room as _CoreRoom
@@ -87,7 +93,7 @@ class _AppendFailedError(Exception):
 class _TurnFailedError(Exception):
     """run_turn failed after a successful append — intent IS persisted (ADR-025 D5)."""
 
-    def __init__(self, reason: str, event_id: str) -> None:
+    def __init__(self, reason: str, event_id: EventId) -> None:
         self.reason = reason
         self.event_id = event_id
         super().__init__(reason)
@@ -131,8 +137,14 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     skills = load_skills(config_dir / "skills")
     tools = load_tools_config(config_dir / "tools.yaml")
 
-    # P3.2-4: RealLLMRouter imported and installed here.
-    llm_router: LLMRouterProtocol = _NoopLLMRouter()
+    from orchestrator.api.llm_adapter import RealLLMRouter
+
+    llm_router: LLMRouterProtocol = RealLLMRouter(
+        agent_configs=llm_layer.agent_configs,
+        models=llm_layer.models,
+        providers=llm_layer.providers,
+        override=llm_layer.override,
+    )
 
     return AppContext(
         writer_store=writer_store,
@@ -210,10 +222,117 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         except EventNotFoundError as exc:
             raise HTTPException(status_code=404, detail=f"event {event_id!r} not found") from exc
 
-    @app.post("/rooms/{room_id}/intent", response_model=IntentResponse)
+    @app.post(
+        "/rooms/{room_id}/intent",
+        response_model=IntentResponse,
+        responses={422: {"model": IntentError}, 500: {"model": IntentError}},
+    )
     async def _post_intent(room_id: str, body: IntentRequest) -> IntentResponse:
-        # P3.2-4: full forge-prevention + run_turn + publish implementation.
-        raise HTTPException(status_code=501, detail="not implemented")
+        """Write path: forge-check → append → run_turn → cursor-diff → publish.
+
+        Security spine (ADR-025 D4):
+          - author hardcoded "user" — cannot be forged by client
+          - id + timestamp server-stamped
+          - type allowlist enforced before any append (fail-closed)
+          - metadata validated by validate_metadata (shape-only, not authority)
+        Error semantics (ADR-025 D5, R0-B Y3):
+          - append-fail → _AppendFailedError → 422 IntentError{stage:"append"}
+          - turn-fail  → _TurnFailedError  → 500 IntentError{stage:"turn"}
+        """
+        from orchestrator.api.wire import INTENT_TYPE_ALLOWLIST
+        from orchestrator.rooms.runtime import run_turn
+
+        rid = RoomId(room_id)
+
+        # Payload size guard (D7 trust boundary)
+        if len(body.model_dump_json().encode()) > PAYLOAD_LIMIT_BYTES:
+            raise HTTPException(status_code=422, detail="payload exceeds size limit")
+
+        # Forge-prevention: allowlist check (D4a) — before any I/O
+        if body.type not in INTENT_TYPE_ALLOWLIST:
+            raise HTTPException(
+                status_code=422,
+                detail=f"type {body.type!r} not in intent allowlist",
+            )
+
+        # Forge-prevention: metadata shape validation (D4) — before any I/O
+        try:
+            validated_meta = validate_metadata(body.type, body.metadata)
+        except MetadataValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        # Server-stamp: author/id/timestamp — client cannot set these (D4)
+        user_event = Event(
+            id=generate_event_id(),
+            parent_id=body.parent_id,
+            room_id=rid,
+            type=body.type,
+            author="user",  # HARDCODED — never read from request
+            timestamp=now_ms(),
+            content=body.content,
+            metadata=validated_meta,
+        )
+
+        loop = asyncio.get_running_loop()
+
+        def _write_and_turn() -> IntentResponse:
+            room = ctx.writer_store.get_room(rid)
+            if room is None:
+                raise _AppendFailedError(f"room {room_id!r} not found")
+
+            pre_cursor = len(ctx.writer_store.get_room_events(rid))
+
+            try:
+                ctx.writer_store.append(user_event)
+            except (RoomNotFoundError, InvalidParentError, MetadataValidationError) as exc:
+                raise _AppendFailedError(str(exc)) from exc
+
+            try:
+                turn_result = run_turn(
+                    room,
+                    user_event,
+                    available_agents=ctx.available_agents,
+                    available_skills=ctx.available_skills,
+                    event_store=ctx.writer_store,
+                    llm_router=ctx.llm_router,
+                    regex_registry=ctx.regex_registry,
+                    tools=ctx.tools,
+                )
+            except Exception as exc:
+                raise _TurnFailedError(str(exc), user_event.id) from exc
+
+            new_events = ctx.writer_store.get_room_events(rid)[pre_cursor:]
+            loop.call_soon_threadsafe(ctx.bus.publish, rid, new_events)
+
+            return IntentResponse(appended_event=user_event, turn=turn_result)
+
+        return await loop.run_in_executor(ctx.writer_executor, _write_and_turn)
+
+    # ---------------------------------------------------------------------------
+    # Exception handlers for the partial-turn error envelope (ADR-025 D5)
+    # ---------------------------------------------------------------------------
+
+    @app.exception_handler(_AppendFailedError)
+    async def _append_failed_handler(request: Request, exc: _AppendFailedError) -> JSONResponse:
+        from orchestrator.api.wire import IntentError
+
+        return JSONResponse(
+            status_code=422,
+            content=IntentError(
+                stage="append", appended_event_id=None, reason=exc.reason
+            ).model_dump(),
+        )
+
+    @app.exception_handler(_TurnFailedError)
+    async def _turn_failed_handler(request: Request, exc: _TurnFailedError) -> JSONResponse:
+        from orchestrator.api.wire import IntentError
+
+        return JSONResponse(
+            status_code=500,
+            content=IntentError(
+                stage="turn", appended_event_id=exc.event_id, reason=exc.reason
+            ).model_dump(),
+        )
 
     @app.websocket("/rooms/{room_id}/stream")
     async def _room_stream(websocket: WebSocket, room_id: str) -> None:
