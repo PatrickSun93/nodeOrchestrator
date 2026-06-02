@@ -1,6 +1,6 @@
 # ADR-026: GUI Frontend Boundary — React/TS view+intent over the frozen API contract
 
-**Status:** Proposed — 2026-06-02 (senior-drafted per P3.3 brief; awaiting architect accept)
+**Status:** Accepted — 2026-06-02 (architect-accepted; P3.3 R0-A-on-plan clean after Y1 → α-lite-fold (codegen-freshness gate + WS-type conformance drift-guards); constitutional spine — view+intent only, binds-API-only, state-machine-not-exposed via ui_strings, partial-turn correctness, no-forge — inscribed; dual-lens skipped (frozen-contract consumer))
 
 **Scope:** P3.3 — the first frontend: a read-mostly React/TS GUI (top-level `ui/`) that **reads** a room (HTTP snapshot + WS live stream) and **sends user intent** (`POST /intent`), binding the **frozen ADR-025 API contract** (`api/openapi.json` + `api/asyncapi.md`). Governs the frontend's **constitutional posture** (view+intent only / backend-authoritative / binds-API-only / 状态机不暴露 via `ui_strings` / partial-turn correctness / no-forge), the **stack** (React+Vite+TS+Zustand, CSS modules, Tabler Icons), the **`ui/` location + gate + node setup**, and the **role/review** arrangement. Adds **zero Python** — the API is the sole boundary. Does NOT govern: any backend/API change (surface, don't backdoor); the rich §6.4 GUI patterns / `DECISION`/`RETRACTION` UX / theming (P3.6); auth (localhost-trust MVP, ADR-025 D7); the backend track (P3.4/P3.5).
 
