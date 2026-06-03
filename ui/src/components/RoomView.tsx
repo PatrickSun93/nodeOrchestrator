@@ -4,6 +4,7 @@ import { MessageList } from "./MessageList.tsx";
 import { Composer } from "./Composer.tsx";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { PendingDecisionList } from "./PendingDecision.tsx";
+import { ProgressPanel } from "./ProgressPanel.tsx";
 import { roomStateLabel, roomTypeLabel } from "../uiStrings.ts";
 import styles from "./RoomView.module.css";
 
@@ -33,9 +34,14 @@ export function RoomView({ onLeave }: RoomViewProps) {
           </button>
         )}
       </header>
-      <MessageList events={events} />
-      <PendingDecisionList />
-      <Composer />
+      <div className={styles.body}>
+        <div className={styles.main}>
+          <MessageList events={events} />
+          <PendingDecisionList />
+          <Composer />
+        </div>
+        <ProgressPanel roomId={roomId} />
+      </div>
     </div>
   );
 }

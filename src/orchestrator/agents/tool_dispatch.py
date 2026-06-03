@@ -138,9 +138,7 @@ def process_tool_calls(
                         tool_name=tc.name,
                         call_id=tc.id,
                         params=tc.arguments,
-                        tier=cast(
-                            Literal["countdown_confirm", "hard_confirm"], result.tier.value
-                        ),
+                        tier=cast(Literal["countdown_confirm", "hard_confirm"], result.tier.value),
                         initiating_agent=agent_id,
                     ).model_dump(),
                 )

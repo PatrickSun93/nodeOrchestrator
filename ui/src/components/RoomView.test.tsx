@@ -10,7 +10,8 @@ vi.mock("../api/client.ts", () => ({
   getRoom: vi.fn(),
   createRoom: vi.fn(),
   getEvents: vi.fn(),
-  getSnapshot: vi.fn(),
+  // ProgressPanel calls getSnapshot on mount — default to null so blocks don't render
+  getSnapshot: vi.fn().mockResolvedValue(null),
   getThread: vi.fn(),
 }));
 
