@@ -2,9 +2,10 @@
 task_id: P3.6
 stage: R0-A-on-plan
 reviewer: architect-partner
-verdict: needs_architect
+verdict: clean
 verdict_history:
   - needs_architect
+  - [2026-06-03, clean, "Architect routed Y1+Y2 → α (Y1 ratified as the ADR-028 D6 t4 two-appender broadening). Senior absorbed: ADR-030 D1 retracts 'preserved verbatim' + inscribes the broadening; t4 test amended in B3; B1 acceptance scoped to B1; Y2 predicates position-anchored + consistent; N1-N3 absorbed. See architect-routing-on-plan.md."]
 adr_under_review: ADR-030
 plan_under_review: docs/process/senior-plans/P3.6.md
 date: 2026-06-03

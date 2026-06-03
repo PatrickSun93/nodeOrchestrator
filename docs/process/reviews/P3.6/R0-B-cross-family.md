@@ -1,13 +1,14 @@
 ---
 task_id: P3.6
 round: R0-B
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
   yellow: 4
   green: 3
 verdict_history:
   - [2026-06-03, cross-family, needs_architect, "Plan-stage review of ADR-030 + senior plan P3.6. Design is correct; 4 🟡 internal-consistency / underspecification findings. No 🔴: the forge-prevention, idempotency, downstream-of-gate, and partial-turn designs are all sound."]
+  - [2026-06-03, cross-family, clean, "Architect routed all 4 🟡 → α. Senior absorbed: Y1 ADR-030 D1 inscribes the two-appender broadening (t4 test amended in B3); Y2 crash-window analysis added (recoverable pre-execute; inherited post-append window noted out-of-scope); Y3 explicit terminal-room gate added; Y4 superseded-brief-statements enumerated in ADR-030 Context. No design change. See architect-routing-on-plan.md."]
 ---
 
 # R0-B cross-family review — P3.6 plan-stage (ADR-030 + senior plan)
