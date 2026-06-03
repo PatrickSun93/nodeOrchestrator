@@ -1,7 +1,15 @@
 task_id: P3.5
-state: awaiting_architect_accept
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-03T17:05:30.485565Z'
+last_transition_at: '2026-06-03T17:28:45.759093Z'
 cycle_started_at: '2026-06-03T16:28:35.878103Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-03T17:28:45.759093Z'
+  actor: architect
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: ADR-029 (plugin system; admit-code Posture A, full exposure inscribed) accepted
+    by architect; plan-stage dual-lens clean after routing-absorption; plan branch
+    merged to main. Advancing to junior impl. (advance no-op'd on ADR-status snapshot
+    read — RC-28-adjacent; override is deterministic.)
 requires_cross_family_review: true
