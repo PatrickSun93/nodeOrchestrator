@@ -1,7 +1,15 @@
 task_id: P3.6
-state: awaiting_senior_plan
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-03T19:59:11.944769Z'
+last_transition_at: '2026-06-03T22:03:25.965384Z'
 cycle_started_at: '2026-06-03T19:52:19.058922Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-03T22:03:25.965384Z'
+  actor: architect
+  from_state: awaiting_senior_plan
+  to_state: awaiting_junior_impl
+  reason: ADR-030 (confirm-then-execute / human-in-the-loop gating-approval) accepted
+    by architect; 2 embedded amendments ratified (ADR-027/028 narrow + ADR-028 D6
+    t4 broadening); plan-stage dual-lens clean; plan merged to main. Advancing cross-track
+    impl to junior.
 requires_cross_family_review: true
