@@ -1,0 +1,23 @@
+schema_version: 1
+id: demo
+name: "Demo plugin bundle"
+version: "0.1.0"
+
+contributions:
+  roles:
+    - demo_facilitator
+  skills:
+    - demo-research
+  tools:
+    - word_count
+  tool_impls:
+    word_count: "tools_impl:word_count"
+  mcp_servers:
+    - demo_filesystem
+
+dependencies:
+  model_ids:
+    - claude_code_haiku_45
+  room_types:
+    - free_chat
+  min_host_contract: 1

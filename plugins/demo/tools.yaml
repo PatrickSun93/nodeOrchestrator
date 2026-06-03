@@ -1,0 +1,6 @@
+# Demo plugin tool classifications.
+# The host-side config/tools.yaml also classifies word_count (rev=10)
+# so it clears the default-0 cap and reaches AUTO_EXECUTE (ADR-029 D5/D7).
+tools:
+  word_count:
+    reversibility: 10
