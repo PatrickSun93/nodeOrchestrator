@@ -1,7 +1,31 @@
 task_id: P3.4
-state: awaiting_junior_impl
-cycle: 1
-last_transition_at: '2026-06-02T22:44:22.633632Z'
-cycle_started_at: '2026-06-02T22:05:15.536821Z'
-override_history: []
+state: awaiting_senior_plan
+cycle: 2
+last_transition_at: '2026-06-03T02:40:39.758553Z'
+cycle_started_at: '2026-06-03T02:40:38.087702Z'
+override_history:
+- timestamp: '2026-06-03T02:40:36.411237Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: awaiting_architect_decision
+  reason: 'Restore impl-stage post-review state: cycle-1 impl reviews returned needs_architect
+    (R0-B caught Y2; R0-A conceded; senior plan-vs-impl clean). Architect ruling required.
+    (Was rolled back to awaiting_junior_impl earlier by arch-partner.)'
+- timestamp: '2026-06-03T02:40:38.087702Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 rework (ADR-008 Decision 11): Y2 to alpha wire-now is a new architectural
+    increment (ADR-028 runtime tool-executor + senior design), not a junior patch.
+    This rework override increments cycle 1->2 and re-stamps cycle_started_at so cycle-1
+    review files become out-of-cycle for the snapshot (avoids P1.6 cascade). Immediately
+    redirected to awaiting_senior_plan in the next override since cycle-2 needs the
+    plan stage (ADR-008 has no replan-rework-to-plan transition; see P3.4 retro candidate).'
+- timestamp: '2026-06-03T02:40:39.758553Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: awaiting_senior_plan
+  reason: 'Redirect cycle-2 to the plan stage: the runtime tool-executor needs a fresh
+    senior plan + ADR-028 before junior impl. Retains cycle 2 and the re-stamped cycle
+    boundary from the prior rework override.'
 requires_cross_family_review: true
