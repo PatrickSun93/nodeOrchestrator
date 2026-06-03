@@ -1,0 +1,18 @@
+# Demo plugin MCP server (ADR-027 D5 shape — same as config/mcp_servers.yaml).
+# Named demo_filesystem (not filesystem) to avoid collision with the host server.
+servers:
+  demo_filesystem:
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    api_key_env: null
+    env: {}
+    timeouts:
+      connect: 15.0
+      list_tools: 15.0
+      call_tool: 30.0
+    tools:
+      read_file:
+        reversibility: 10
+      list_directory:
+        reversibility: 10

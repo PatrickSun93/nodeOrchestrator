@@ -48,3 +48,7 @@ tools:
     reversibility: 3    # delivery has external visibility (P1.3)
   git_push:
     reversibility: 1    # public history rewrite cost is high
+  # Demo plugin tool classification (ADR-029 D7 / D5): host-authoritative,
+  # raises word_count above default-0 so the demo reaches AUTO_EXECUTE.
+  word_count:
+    reversibility: 10   # pure function, no I/O, fully reversible

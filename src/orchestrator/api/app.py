@@ -157,6 +157,33 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     sandbox_root = config_dir.parent
     local_tools = build_local_tool_registry(sandbox_root)
 
+    # Plugin aggregation pass (ADR-029 D2 / P3.5-5): discover + validate + merge
+    # all valid plugins from plugins/ (repo-root sibling of config/).
+    # Absent plugins/ → no-op. Any-stage plugin failure refuses only that plugin.
+    from orchestrator.core.room import RoomType as _RoomType
+    from orchestrator.plugins.loader import load_plugins
+    from orchestrator.plugins.schema import PLUGIN_HOST_CONTRACT_VERSION
+
+    plugin_result = load_plugins(
+        sandbox_root / "plugins",
+        models=llm_layer.models,
+        host_room_types=frozenset(rt.value for rt in _RoomType),
+        host_contract_version=PLUGIN_HOST_CONTRACT_VERSION,
+        host_agents=agents,
+        host_skills=skills,
+        host_tools=tools,
+        host_local_tool_names=frozenset(local_tools.keys()),
+        host_mcp_server_names=frozenset(mcp_sessions.keys()),
+    )
+    # Atomic per-plugin merge: plugin contributions that passed all stages are
+    # merged here; partial or refused plugins leave no trace in these registries.
+    agents = {**agents, **plugin_result.agents}
+    regex_registry = {**regex_registry, **plugin_result.regex_registry}
+    skills = {**skills, **plugin_result.skills}
+    tools = {**tools, **plugin_result.tools}
+    local_tools = {**local_tools, **plugin_result.local_tools}
+    mcp_sessions = {**mcp_sessions, **plugin_result.mcp_sessions}
+
     from orchestrator.api.llm_adapter import RealLLMRouter
 
     llm_router: LLMRouterProtocol = RealLLMRouter(

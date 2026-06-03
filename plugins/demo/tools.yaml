@@ -1,0 +1,7 @@
+# Plugin-classified tool: text_stats (contributions.tools path, ADR-029 D2 step 3/6).
+# No host pre-classification → default-0 cap → HARD_CONFIRM (ADR-029 D5 default-0 semantics).
+# Classification-only: no tool_impls entry. Demonstrates that a plugin may classify a tool
+# even without providing its implementation; the operator controls the reversibility tier.
+tools:
+  text_stats:
+    reversibility: 5  # capped to 0 (HARD_CONFIRM) — no host entry in config/tools.yaml
