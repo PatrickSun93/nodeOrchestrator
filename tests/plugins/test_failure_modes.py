@@ -502,7 +502,13 @@ def test_collision_refused_plugin_not_imported(tmp_path: Path) -> None:
 
 
 def test_broken_module_import_refused(tmp_path: Path) -> None:
-    """A plugin with a broken tools_impl.py (SyntaxError) is fail-closed refused."""
+    """A plugin with a broken tools_impl.py (ModuleNotFoundError) is fail-closed refused (D4).
+
+    my_tool is in tool_impls only (NOT in contributions.tools) — no collision against host_tools
+    so the collision-check passes and the broken import is actually reached (code-load path).
+    Previous version had my_tool in both contributions.tools and host_tools, triggering
+    collision-refusal before the code-load path was ever exercised (short-circuit).
+    """
     plugins_dir = tmp_path / "plugins"
     pdir = plugins_dir / "brokenimport"
     pdir.mkdir(parents=True)
@@ -513,16 +519,12 @@ def test_broken_module_import_refused(tmp_path: Path) -> None:
             name: 'x'
             version: '1.0'
             contributions:
-              tools: ['my_tool']
               tool_impls:
                 my_tool: 'tools_impl:my_fn'
         """),
         encoding="utf-8",
     )
-    (pdir / "tools.yaml").write_text(
-        "tools:\n  my_tool:\n    reversibility: 10\n", encoding="utf-8"
-    )
-    # tools_impl.py fails at import time (ModuleNotFoundError)
+    # tools_impl.py fails at import time (ModuleNotFoundError) — code-load path
     (pdir / "tools_impl.py").write_text(
         "import nonexistent_module_xyz_99\ndef my_fn(params): pass\n", encoding="utf-8"
     )
@@ -534,16 +536,22 @@ def test_broken_module_import_refused(tmp_path: Path) -> None:
         host_contract_version=PLUGIN_HOST_CONTRACT_VERSION,
         host_agents={},
         host_skills={},
-        host_tools={"my_tool": ToolMeta(reversibility=10)},
+        host_tools={},
         host_local_tool_names=frozenset(),
         host_mcp_server_names=frozenset(),
     )
-    # Plugin refused, not crashed
+    # Fail-closed: code-load error refuses the plugin, does not crash the loader
     assert result.local_tools == {}
 
 
 def test_missing_callable_in_module_refused(tmp_path: Path) -> None:
-    """A plugin tool_impl referencing a non-existent callable → refused."""
+    """A plugin tool_impl referencing a non-existent callable → refused (D4 getattr-None path).
+
+    my_tool is in tool_impls only (NOT in contributions.tools) — no collision against host_tools
+    so the collision-check passes; the module imports successfully but getattr returns None →
+    PluginCodeLoadError → plugin refused.  Previous version had my_tool in contributions.tools
+    + host_tools causing collision-refusal before the missing-callable path was reached.
+    """
     plugins_dir = tmp_path / "plugins"
     pdir = plugins_dir / "missingfn"
     pdir.mkdir(parents=True)
@@ -554,15 +562,12 @@ def test_missing_callable_in_module_refused(tmp_path: Path) -> None:
             name: 'x'
             version: '1.0'
             contributions:
-              tools: ['my_tool']
               tool_impls:
                 my_tool: 'tools_impl:nonexistent_fn'
         """),
         encoding="utf-8",
     )
-    (pdir / "tools.yaml").write_text(
-        "tools:\n  my_tool:\n    reversibility: 10\n", encoding="utf-8"
-    )
+    # Module imports fine; nonexistent_fn is not defined → getattr returns None → refused
     (pdir / "tools_impl.py").write_text("def other_fn(params): pass\n", encoding="utf-8")
 
     result = load_plugins(
@@ -572,7 +577,7 @@ def test_missing_callable_in_module_refused(tmp_path: Path) -> None:
         host_contract_version=PLUGIN_HOST_CONTRACT_VERSION,
         host_agents={},
         host_skills={},
-        host_tools={"my_tool": ToolMeta(reversibility=10)},
+        host_tools={},
         host_local_tool_names=frozenset(),
         host_mcp_server_names=frozenset(),
     )

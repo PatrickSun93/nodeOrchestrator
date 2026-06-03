@@ -109,7 +109,18 @@ def test_two_plugins_merge_without_collision(tmp_path: Path) -> None:
 
 
 def test_partial_plugin_leaves_no_trace(tmp_path: Path) -> None:
-    """A plugin that passes manifest validation but fails code loading → zero trace."""
+    """A plugin whose non-code surfaces load but whose code-load fails leaves zero trace (HR#5 / Y4).
+
+    bad_tool is in tool_impls only (NOT in contributions.tools or host_tools) — the
+    collision-check passes, non-code surfaces (bad_role agent) load into the per-plugin
+    intermediate, then code-load fails (broken import) → PluginCodeLoadError → return None
+    → entire intermediate discarded.  bad_role was loaded into the intermediate and then
+    atomically discarded — this genuinely exercises the HR#5 atomicity guarantee.
+
+    Previous version had bad_tool in contributions.tools + host_tools, causing
+    collision-refusal before any non-code surface loaded — bad_role never entered the
+    intermediate, so the atomicity guarantee was never exercised (short-circuit).
+    """
     plugins_dir = tmp_path / "plugins"
     pdir = plugins_dir / "badcode"
     (pdir / "agents").mkdir(parents=True)
@@ -121,13 +132,12 @@ def test_partial_plugin_leaves_no_trace(tmp_path: Path) -> None:
             version: '0.1.0'
             contributions:
               roles: ['bad_role']
-              tools: ['bad_tool']
               tool_impls:
                 bad_tool: 'tools_impl:bad_fn'
         """),
         encoding="utf-8",
     )
-    # Agent file (valid)
+    # Agent file (valid) — loads into per-plugin intermediate before code-load fails
     (pdir / "agents" / "bad_role.yaml").write_text(
         dedent("""\
             id: bad_role
@@ -147,10 +157,7 @@ def test_partial_plugin_leaves_no_trace(tmp_path: Path) -> None:
         """),
         encoding="utf-8",
     )
-    (pdir / "tools.yaml").write_text(
-        "tools:\n  bad_tool:\n    reversibility: 10\n", encoding="utf-8"
-    )
-    # tools_impl.py with a broken import — triggers PluginCodeLoadError
+    # tools_impl.py with a broken import — triggers PluginCodeLoadError at step 5
     (pdir / "tools_impl.py").write_text(
         "import nonexistent_module_xyz_12345\ndef bad_fn(params): pass\n", encoding="utf-8"
     )
@@ -162,13 +169,13 @@ def test_partial_plugin_leaves_no_trace(tmp_path: Path) -> None:
         host_contract_version=PLUGIN_HOST_CONTRACT_VERSION,
         host_agents={},
         host_skills={},
-        host_tools={"bad_tool": ToolMeta(reversibility=10)},
+        host_tools={},
         host_local_tool_names=frozenset(),
         host_mcp_server_names=frozenset(),
     )
-    # Atomic merge: the whole plugin is discarded — no partial registration
+    # Atomic merge: the whole per-plugin intermediate is discarded on code-load failure
+    # bad_role was loaded into the intermediate (step 4 succeeded) then atomically dropped
     assert "bad_role" not in result.agents
-    assert "bad_tool" not in result.tools
     assert "bad_tool" not in result.local_tools
 
 
