@@ -178,9 +178,7 @@ describe("pendingCalls store (F1 — ADR-030 D6)", () => {
 
   it("applyEvent removes pending call on TOOL_CALL resolution", () => {
     useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc"));
-    useRoomStore
-      .getState()
-      .applyEvent(makeResolutionEvent("r1", "call_abc", "tool_call"));
+    useRoomStore.getState().applyEvent(makeResolutionEvent("r1", "call_abc", "tool_call"));
     expect(useRoomStore.getState().pendingCalls.size).toBe(0);
   });
 
@@ -194,17 +192,13 @@ describe("pendingCalls store (F1 — ADR-030 D6)", () => {
 
   it("applyEvent removes pending call on TOOL_RESULT", () => {
     useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc"));
-    useRoomStore
-      .getState()
-      .applyEvent(makeResolutionEvent("r1", "call_abc", "tool_result"));
+    useRoomStore.getState().applyEvent(makeResolutionEvent("r1", "call_abc", "tool_result"));
     expect(useRoomStore.getState().pendingCalls.size).toBe(0);
   });
 
   it("resolution for unknown call_id does not crash or modify set", () => {
     useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc"));
-    useRoomStore
-      .getState()
-      .applyEvent(makeResolutionEvent("r1", "call_other", "tool_call"));
+    useRoomStore.getState().applyEvent(makeResolutionEvent("r1", "call_other", "tool_call"));
     // "call_abc" pending call remains since "call_other" doesn't match
     expect(useRoomStore.getState().pendingCalls.size).toBe(1);
   });

@@ -3,6 +3,7 @@ import { useRoomStream } from "../hooks/useRoomStream.ts";
 import { MessageList } from "./MessageList.tsx";
 import { Composer } from "./Composer.tsx";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
+import { PendingDecisionList } from "./PendingDecision.tsx";
 import { roomStateLabel, roomTypeLabel } from "../uiStrings.ts";
 import styles from "./RoomView.module.css";
 
@@ -24,6 +25,7 @@ export function RoomView() {
         <ConnectionStatus phase={phase} />
       </header>
       <MessageList events={events} />
+      <PendingDecisionList />
       <Composer />
     </div>
   );
