@@ -1,7 +1,7 @@
 task_id: P3.4
-state: awaiting_senior_plan
+state: awaiting_junior_impl
 cycle: 2
-last_transition_at: '2026-06-03T02:40:39.758553Z'
+last_transition_at: '2026-06-03T03:46:58.449515Z'
 cycle_started_at: '2026-06-03T02:40:38.087702Z'
 override_history:
 - timestamp: '2026-06-03T02:40:36.411237Z'
@@ -28,4 +28,12 @@ override_history:
   reason: 'Redirect cycle-2 to the plan stage: the runtime tool-executor needs a fresh
     senior plan + ADR-028 before junior impl. Retains cycle 2 and the re-stamped cycle
     boundary from the prior rework override.'
+- timestamp: '2026-06-03T03:46:58.449515Z'
+  actor: architect
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: ADR-028 (runtime tool-executor) accepted by architect; cycle-2 plan-stage
+    dual-lens clean + routing absorbed. Advancing cycle-2 to junior impl (C2-1..C2-4)
+    on claude/P3.4-impl. cycle stays 2 (not the rework transition); cycle_started_at
+    boundary retained.
 requires_cross_family_review: true
