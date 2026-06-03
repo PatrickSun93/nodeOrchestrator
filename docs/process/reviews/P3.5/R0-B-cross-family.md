@@ -31,6 +31,15 @@ verdict_history:
       R1 + Y1-Y6 all alpha-absorbed into ADR-029 + senior-plans/P3.5.md;
       Posture A confirmed (A-now-B-later) with full exposure inscribed.
       See architect-routing-on-plan.md.
+  - verdict: clean
+    at_commit: 7bec33d (impl-stage)
+    findings_count: { red: 0, yellow: 0, green: 7 }
+    note: >-
+      Impl-stage dual-lens R0-B (DeepSeek V4 Pro). All 7 probe areas verified
+      against origin/claude/P3.5-impl @ 7bec33d. R1 (collision-before-import),
+      shadow-bypass, Posture A L1/L1b/L2 honesty, atomic merge, fail-closed,
+      reversibility cap, constitution all confirmed in code + tests. Zero
+      findings — clean design execution. See Impl-Stage Review § below.
 ---
 
 # P3.5 R0-B cross-family review (plan + ADR-029)
@@ -322,3 +331,223 @@ unstated migration surface. All are cheap to resolve at plan stage.
 **Net assessment**: the design is correct but the ADR's threat-model framing
 needs tightening. One ADR amendment (R1) + six clarifications before the
 architect's D4 posture Accept.
+
+---
+
+# P3.5 R0-B cross-family review — Impl Stage
+
+**Reviewed**: `origin/claude/P3.5-impl` @ `7bec33d` (8 atomics, 17 files, +2169
+lines). Plan-stage R1 + Y1–Y6 all α-absorbed per `architect-routing-on-plan.md`;
+this review verifies absorption fidelity in code + tests. Seven probe areas
+checked against source and test artifacts.
+
+## Probe Results
+
+### (1) R1 — Collision-check BEFORE importlib ✓
+
+**Loader** (`loader.py:1-7`): step order explicitly in module docstring:
+Discover(1) → Validate(2) → Collision(3) → Non-code(4) → Code(5) → Rev-cap(6) →
+Merge(7). The function `_load_plugin` calls `_collision_check` (step 3) before
+the deferred `from orchestrator.plugins.code import ...` (step 5). The import of
+`code.py` itself is a local import inside the `if manifest.contributions.tool_impls`
+block — it never executes for a collision-refused plugin.
+
+**Test** (`test_failure_modes.py:452-487`): `test_collision_refused_plugin_not_imported`
+writes a `tools_impl.py` containing `raise RuntimeError('IMPORT GUARD: ...')`,
+declares `tool_impls: {read_file: ...}`, and passes `host_local_tool_names=
+frozenset({"read_file"})`. The collision check detects `read_file` in
+`host_local_tool_names` → plugin refused → module never imported → no
+RuntimeError. **The test proves the invariant**: a collision-refused plugin's
+code module is never imported.
+
+**ADR-029 D2** (post-absorption): step order in docstring matches plan execution
+order. The plan-stage R1 gap (ADR code-import-before-collision-check) is closed.
+
+### (2) tool_impls Shadow Coverage ✓
+
+**Collision check** (`loader.py:166-191`): `_collision_check` checks tool_impl
+names against `host_local_tool_names` (the keys of host `local_tools` — actual
+implementations, not ToolMeta-only classifications). A plugin declaring
+`tool_impls: {read_file: ...}` hits this check → refused.
+
+**Intentional non-check** (`loader.py:167-175`): tool_impl names are NOT checked
+against `host_tools` (ToolMeta-only entries from `config/tools.yaml`). This is
+the "host pre-classifies" pattern — the operator pre-classifies a plugin tool in
+`config/tools.yaml` (like the demo's `word_count` with rev=10), and the plugin
+provides the implementation. If the check were against `host_tools`, the demo
+couldn't work. The trade-off is explicit in the code comment.
+
+**Test** (`test_failure_modes.py:381-418`): `test_tool_impl_shadow_host_local_tool_refused` —
+plugin declares `tool_impls: {read_file: ...}` against host with `read_file` in
+`host_local_tool_names` → refused, `read_file` not in `result.local_tools`. **The
+shadow-bypass R0-A Y1 concern is closed**: a plugin cannot shadow a host builtin
+implementation.
+
+**Demo pattern** (`plugins/demo/plugin.yaml`, `config/tools.yaml`): the demo's
+`word_count` is NOT declared in `contributions.tools`; it's only in
+`contributions.tool_impls`. The host `config/tools.yaml` pre-classifies it with
+rev=10. The demo's own `plugins/demo/tools.yaml` is parsed but its content is
+filtered out (not in `declared_tools`) — the host classification is the sole
+authoritative ToolMeta. This is the intended "host pre-classifies" flow.
+
+### (3) Posture A Exposure Honesty ✓
+
+**`code.py` docstring** (lines 1-24): all three exposures are explicitly
+inscribed with architect-Accepted language:
+
+- **L1**: "No technical isolation + zero credential/env protection.
+  In-process plugin code runs with full host privilege (FS, network, os.environ
+  — every API key/secret). ADR-027 D4 credential-indirection + scoped-env are
+  MCP-subprocess-only; they provide ZERO protection here."
+- **L1b**: "Import-time code is ungated by construction. importlib exec_module()
+  runs the module top-level at boot before any gate/room/turn exists. Curation
+  is the only control; step-ordering ensures this runs only after the
+  validate+collision gauntlet, never before a refusal."
+- **L2**: "Posture A VOIDS ADR-028 D5's absolute per-turn liveness bound for
+  the plugin-local path — server-wide DoS blast radius. One buggy curated tool
+  blocks the max_workers=1 writer for every room, indefinitely, with no cap and
+  no kill (in-process is unkillable)."
+
+The `_import_module_from_file` function (`code.py:49-56`) uses
+`spec_from_file_location` + `module_from_spec` + `exec_module` — the module runs
+in-process. No sandbox, no timeout, no env scoping. The comment on L1 is not
+hyperbole: `import os; os.environ` in a plugin tool reads every host secret.
+**No pretend isolation.** The gap between Posture A's "fail-closed-against-
+breakage" (HR#5 — import error/raise → refused/TOOL_FAILED) and "contains
+malicious code" (which A does NOT do) is explicitly stated in the docstring's
+first sentence: "Fail-closed-against-breakage IS fully delivered."
+
+### (4) Atomic Merge — Zero Trace ✓
+
+**`_load_plugin`** (`loader.py:260-355`): returns `PluginLoadResult | None`.
+`None` on any failure — collision, non-code load error, code load error, or
+reversibility cap. The intermediate `PluginLoadResult` is the per-plugin
+accumulator; it's only merged into the host registries in `load_plugins` after
+`_load_plugin` returns a non-None result.
+
+**`load_plugins`** (`loader.py:374-410`): the `for candidate in candidates` loop
+calls `_load_plugin`, checks `if result is None: continue`, and only updates
+`seen_*` sets + `merged.*` dicts on success. The `seen_*` sets are updated
+atomically AFTER `_load_plugin` succeeds — not incrementally during loading. A
+cross-plugin collision is detected by the next `_collision_check` call.
+
+**`_build_context`** (`app.py:158-179`): the merge uses `{**dict1, **dict2}`
+pattern which creates a new dict — the host registries are never mutated in-place
+by a partially-loaded plugin. Plugin contributions that passed all stages are
+merged; refused/partial plugins leave no trace.
+
+**Test** (`test_merge.py:117-167`): `test_partial_plugin_leaves_no_trace` — a
+plugin with valid manifest + agent + tool classification + broken code import →
+`PluginCodeLoadError` → returned `None` → `assert "bad_role" not in result.agents`
++ `assert "bad_tool" not in result.tools` + `assert "bad_tool" not in result.
+local_tools`. **Zero trace.** Test `test_valid_sibling_survives_failing_plugin`
+confirms per-plugin isolation.
+
+### (5) Fail-Closed Loading ✓
+
+Every failure mode from HR#5 has a test in `test_failure_modes.py`:
+
+| Failure mode | Test | Mechanism |
+|---|---|---|
+| Extra manifest field | `test_manifest_extra_field_rejected` | Pydantic `extra="forbid"` |
+| Frozen mutation | `test_manifest_frozen` | Pydantic frozen |
+| Bad YAML | `test_bad_yaml_manifest_refused` | `yaml.safe_load` exception |
+| Non-mapping YAML | `test_manifest_not_mapping_refused` | `isinstance(raw, dict)` |
+| Unknown schema_version | `test_unknown_schema_version_refused` | `field_validator("schema_version")` |
+| Manifest id ≠ dir name | Implicit in `_discover_and_validate` | `manifest.id != plugin_id` check |
+| Unmet model_id | `test_unmet_model_id_dependency_refused` | `models.get(mid) is None` |
+| Unmet room_type | `test_unmet_room_type_dependency_refused` | `rt not in host_room_types` |
+| min_host_contract too high | `test_min_host_contract_too_high_refused` | `> host_contract_version` |
+| Role collision | `test_role_collision_with_host_refused` | `_collision_check` host check |
+| Tool collision | `test_tool_collision_with_host_refused` | `_collision_check` host check |
+| Cross-plugin skill collision | `test_cross_plugin_skill_collision_refused` | `_collision_check` cross-plugin |
+| MCP server collision | `test_mcp_server_collision_with_host_refused` | `_collision_check` host check |
+| Shadow host local_tool | `test_tool_impl_shadow_host_local_tool_refused` | `_collision_check` host_local_tool_names |
+| Broken import | `test_broken_module_import_refused` | `PluginCodeLoadError` catch |
+| Missing callable | `test_missing_callable_in_module_refused` | `getattr(module, name)` → None |
+
+All refused plugins leave host registries unmodified (verified per-test via
+`assert result.<field> == {}`). No case silently half-registers.
+
+### (6) Reversibility Cap ✓
+
+**`_apply_reversibility_cap`** (`loader.py:229-248`):
+- Host classification present → `min(plugin_value, host_value)` — plugin can
+  only lower, never raise (ADR-027 HR#2 analog).
+- No host classification → default 0 → HARD_CONFIRM.
+
+**Tests** (`test_loader.py:266-326`):
+- `test_unclassified_plugin_tool_defaults_hard_confirm`: plugin tool with no
+  host classification → reversibility 0 → `decide_tier` returns HARD_CONFIRM.
+- `test_reversibility_cap_new_tool_defaults_zero`: plugin's `tools.yaml` claims
+  rev=10, no host classification → capped to 0.
+- `test_host_preclassified_tool_impl_gates_auto`: host pre-classifies tool with
+  rev=10, plugin provides only impl (no `contributions.tools`) → combined
+  registry shows rev=10 → `decide_tier` returns AUTO_EXECUTE. **The demo's
+  word_count flow is tested.**
+
+### (7) Constitution — No Gate/Executor/LLM Decision Symbols ✓
+
+**`test_constitution.py`** (4 assertions, 150 lines):
+- **p1**: AST scan forbids `decide_tier`/`emit_gate_decision`/`score`/`gate`(Name)/
+  `select_model_and_provider` in `plugins/` — zero violations.
+- **p2**: AST scan forbids `orchestrator.llm.providers.*` imports in `plugins/` —
+  zero violations.
+- **p3**: Frozen `LLMPurpose` set unchanged — no new purpose.
+- **p4**: Grep confirms `select_model_and_provider` absent from `plugins/`;
+  non-vacuous assertion confirms the symbol IS in `llm/router.py`.
+
+**Imports verified**: `loader.py` imports `ToolMeta` from `orchestrator.autonomy.
+scoring` — this is a Pydantic data model, not a decision function. `code.py`
+imports `LocalToolFn` from `orchestrator.tools.executor` — a type alias, not the
+executor function. Neither triggers the constitution test's forbidden-symbol set.
+The `plugins/` package makes zero autonomy/routing/LLM decisions.
+
+## Additional Checks
+
+**Import mechanism** (`code.py:49-56`): `spec_from_file_location` +
+`module_from_spec` + `exec_module` — the module is NOT registered in
+`sys.modules` by `module_from_spec` (standard importlib behavior for
+non-import-path modules). Each plugin gets a unique module name
+(`orchestrator_plugin_{plugin_id}_{module_name}`) ensuring no cross-plugin
+module-name collision. The plugin's own imports (`import os`, etc.) DO register
+in `sys.modules` — standard Python, covered by L1.
+
+**Manifest id ↔ directory name**: `_discover_and_validate` checks
+`manifest.id != plugin_id` → refused. Prevents a plugin from claiming a
+different identity than its directory.
+
+**Absent plugins/ dir**: `load_plugins` returns empty `PluginLoadResult()` —
+clean no-op boot.
+
+**Demo plugin five-surface exercise**: roles (`demo_facilitator`) + skills
+(`demo-research`) + MCP server (`demo_filesystem`) + tool classification
+(`word_count` via host `config/tools.yaml`) + executable code (`word_count`
+via `tools_impl.py`). The demo `tools_impl.py` is a pure, no-I/O, deterministic
+function — exactly as specified.
+
+## Synthesis
+
+The implementation is a **faithful, disciplined execution** of the absorbed plan.
+Every plan-stage concern (R1 + Y1–Y6) is verifiably addressed in code + tests:
+
+| Plan-stage concern | Disposition |
+|---|---|
+| R1 (ADR ordering: code before collision) | Code step order is collision-first; test `test_collision_refused_plugin_not_imported` proves it |
+| Y1 (src/ analogy) | Retired from ADR; code uses operator-curation framing |
+| Y2 (default-0 ambiguity) | Resolved: unclassified → 0 → HARD_CONFIRM; demo uses host pre-classification |
+| Y3 (L2 understatement) | `code.py` docstring: "server-wide DoS blast radius … no cap and no kill" |
+| Y4 (atomic merge implicit) | Explicit per-plugin intermediate; test `test_partial_plugin_leaves_no_trace` |
+| Y5 (credential/env scope) | `code.py` docstring: "ADR-027 D4 … provide ZERO protection here" |
+| Y6 (A→B migration) | ADR-029 Reversibility table itemizes migration surface |
+
+The 8-atom commit structure (schema → discover → collision → code → wire →
+constitution → demo → tests) follows the plan's execution order exactly. The
+empty-gate-diff + empty-executor-diff invariant holds: the only change to
+`app.py` is one aggregation pass in `_build_context`; `process_tool_calls`,
+`_execute_local_call`, and the MCP client are untouched.
+
+**Verdict: clean.** Zero findings. The cross-family lens confirms what the
+plan-stage absorption promised: secure-by-construction loading order, honest
+Posture A exposure, atomic merge, comprehensive fail-closed coverage. The
+implementation is ready for architect Accept + merge.
