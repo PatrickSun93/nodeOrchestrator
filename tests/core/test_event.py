@@ -6,7 +6,7 @@ is tested in test_constitution.py; store behaviors in test_event_store.py.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from pydantic import ValidationError
@@ -613,7 +613,7 @@ class TestDecisionMetaPromotionExtension:
 class TestToolCallPendingMeta:
     """ToolCallPendingMeta schema invariants (ADR-030 D1 / B1)."""
 
-    _VALID: dict[str, Any] = {
+    _VALID: ClassVar[dict[str, Any]] = {
         "tool_name": "apply_edit",
         "call_id": "call_abc",
         "params": {"path": "/tmp/x"},
@@ -624,7 +624,7 @@ class TestToolCallPendingMeta:
     def test_frozen(self) -> None:
         m = ToolCallPendingMeta(**self._VALID)
         with pytest.raises((ValidationError, TypeError)):
-            m.tool_name = "other"  # type: ignore[misc]
+            m.tool_name = "other"
 
     def test_extra_forbid(self) -> None:
         with pytest.raises(ValidationError):
@@ -676,7 +676,7 @@ class TestToolCallCancelledMeta:
     def test_frozen(self) -> None:
         m = ToolCallCancelledMeta(call_id="call_x")
         with pytest.raises((ValidationError, TypeError)):
-            m.call_id = "other"  # type: ignore[misc]
+            m.call_id = "other"
 
     def test_extra_forbid(self) -> None:
         with pytest.raises(ValidationError):

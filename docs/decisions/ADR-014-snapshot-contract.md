@@ -1,6 +1,6 @@
 # ADR-014: Snapshot contract — pure-function derived view + persisted-via-event
 
-**Status:** Accepted — 2026-05-28 · Amended — 2026-05-28 (impl-stage R0 routing absorption: D2.3 `"unknown"` tier expansion, D2.1/D2.2 any-vs-subsequent clarification, new D2.6 `decision_count` predicate, new D7 error-semantic subsection — per `docs/process/reviews/P1.6/architect-routing-on-impl.md` M-R1 + M-Y1 + M-Y2 + Y2).
+**Status:** Accepted — 2026-05-28 · Amended — 2026-05-28 (impl-stage R0 routing absorption: D2.3 `"unknown"` tier expansion, D2.1/D2.2 any-vs-subsequent clarification, new D2.6 `decision_count` predicate, new D7 error-semantic subsection — per `docs/process/reviews/P1.6/architect-routing-on-impl.md` M-R1 + M-Y1 + M-Y2 + Y2) · **Amended — 2026-06-03 (ADR-030 D2 / P3.6-B2): D2.3 `tool_calls_pending_confirm` predicate re-pointed from TOOL_CALL+AD-correlation to TOOL_CALL_PENDING events with position-anchored still-pending scan; "unknown" anomaly tier superseded; see ADR-030 D2 for the new predicate spec.**
 **Scope:** Locks the structural vocabulary, producer semantic, persistence shape, error semantic, and consumer protocol for the `Snapshot` type. Governs every future producer of `summary_snapshot` events and every consumer of derived state-at-time-X views. Does not govern decision log (separate ADR-015) or cross-room memory persistence (deferred).
 
 ## Context

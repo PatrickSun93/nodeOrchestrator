@@ -19,6 +19,8 @@ from orchestrator.core.event import (
     Event,
     EventType,
     TimestampMs,
+    ToolCallCancelledMeta,
+    ToolCallPendingMeta,
     generate_event_id,
     generate_room_id,
     now_ms,
@@ -369,68 +371,115 @@ def test_produce_snapshot_decision_count() -> None:
     assert snap.decision_count == 4
 
 
+def _pending_evt(
+    *,
+    call_id: str,
+    tool_name: str = "apply_edit",
+    tier: str = "countdown_confirm",
+    timestamp: int = 1000,
+) -> Event:
+    """Helper: make a TOOL_CALL_PENDING event for snapshot B2 tests."""
+    return _evt(
+        event_type=EventType.TOOL_CALL_PENDING,
+        author="agent:operator",
+        metadata=ToolCallPendingMeta(
+            tool_name=tool_name,
+            call_id=call_id,
+            params={},
+            tier=tier,  # type: ignore[arg-type]
+            initiating_agent="operator",
+        ).model_dump(),
+        timestamp=timestamp,
+    )
+
+
 def test_produce_snapshot_tool_call_pending_confirm() -> None:
-    """TOOL_CALL with preceding countdown_confirm AUTONOMY_DECISION → in pending list."""
-    autonomy_event = _evt(
-        event_type=EventType.AUTONOMY_DECISION,
-        author="agent:operator",
-        metadata={
-            "operation_tool_id": "write_file",
-            "operation_initiating_agent": "operator",
-            "user_explicit_intent": False,
-            "score": 3,
-            "tier": "countdown_confirm",
-            "reversibility_score": 3,
-            "threshold_auto_raw": 8,
-            "threshold_confirm_raw": 5,
-            "user_intent_modifier": 2,
-            "threshold_auto_effective": 6,
-            "threshold_confirm_effective": 3,
-            "rule": "score_between_confirm_and_auto",
-        },
-        timestamp=1000,
-    )
-    tc_event = _evt(
-        event_type=EventType.TOOL_CALL,
-        author="agent:operator",
-        metadata={"tool_name": "write_file", "call_id": "call_001", "params": {}},
-        timestamp=1001,
-    )
-    snap = produce_snapshot([autonomy_event, tc_event], _ROOM, snapshot_at=_TS)
+    """B2: unconfirmed TOOL_CALL_PENDING → in pending list with correct fields (ADR-030 D2)."""
+    p = _pending_evt(call_id="call_001", tool_name="write_file", tier="countdown_confirm")
+    snap = produce_snapshot([p], _ROOM, snapshot_at=_TS)
     assert len(snap.tool_calls_pending_confirm) == 1
-    assert snap.tool_calls_pending_confirm[0].tool_name == "write_file"
-    assert snap.tool_calls_pending_confirm[0].autonomy_tier == "countdown_confirm"
+    ref = snap.tool_calls_pending_confirm[0]
+    assert ref.event_id == p.id
+    assert ref.tool_name == "write_file"
+    assert ref.autonomy_tier == "countdown_confirm"
 
 
 def test_produce_snapshot_auto_execute_not_pending() -> None:
-    """TOOL_CALL with AUTO_EXECUTE AUTONOMY_DECISION → NOT in pending list."""
-    autonomy_event = _evt(
-        event_type=EventType.AUTONOMY_DECISION,
-        author="agent:operator",
-        metadata={
-            "operation_tool_id": "read_file",
-            "operation_initiating_agent": "operator",
-            "user_explicit_intent": True,
-            "score": 10,
-            "tier": "auto_execute",
-            "reversibility_score": 10,
-            "threshold_auto_raw": 8,
-            "threshold_confirm_raw": 5,
-            "user_intent_modifier": 2,
-            "threshold_auto_effective": 6,
-            "threshold_confirm_effective": 3,
-            "rule": "score_ge_auto",
-        },
-        timestamp=1000,
-    )
+    """AUTO_EXECUTE TOOL_CALL (no TOOL_CALL_PENDING) → NOT in pending list."""
     tc_event = _evt(
         event_type=EventType.TOOL_CALL,
         author="agent:operator",
         metadata={"tool_name": "read_file", "call_id": "call_002", "params": {}},
         timestamp=1001,
     )
-    snap = produce_snapshot([autonomy_event, tc_event], _ROOM, snapshot_at=_TS)
+    snap = produce_snapshot([tc_event], _ROOM, snapshot_at=_TS)
     assert snap.tool_calls_pending_confirm == []
+
+
+def test_produce_snapshot_pending_resolved_by_tool_call() -> None:
+    """B2: TOOL_CALL after pending event for same call_id → drops from pending list."""
+    p = _pending_evt(call_id="call_003", timestamp=1000)
+    approval = _evt(
+        event_type=EventType.TOOL_CALL,
+        author="agent:operator",
+        metadata={"tool_name": "apply_edit", "call_id": "call_003", "params": {}},
+        timestamp=1001,
+    )
+    snap = produce_snapshot([p, approval], _ROOM, snapshot_at=_TS)
+    assert snap.tool_calls_pending_confirm == []
+
+
+def test_produce_snapshot_pending_resolved_by_tool_result() -> None:
+    """B2: TOOL_RESULT after pending event for same call_id → drops from pending list."""
+    p = _pending_evt(call_id="call_res", timestamp=1000)
+    result = _evt(
+        event_type=EventType.TOOL_RESULT,
+        author="agent:operator",
+        metadata={"call_id": "call_res", "success": True},
+        timestamp=1001,
+    )
+    snap = produce_snapshot([p, result], _ROOM, snapshot_at=_TS)
+    assert snap.tool_calls_pending_confirm == []
+
+
+def test_produce_snapshot_pending_resolved_by_cancelled() -> None:
+    """B2: TOOL_CALL_CANCELLED after pending event for same call_id → drops from pending list."""
+    p = _pending_evt(call_id="call_cancel", timestamp=1000)
+    cancelled = _evt(
+        event_type=EventType.TOOL_CALL_CANCELLED,
+        author="agent:operator",
+        metadata=ToolCallCancelledMeta(call_id="call_cancel").model_dump(),
+        timestamp=1001,
+    )
+    snap = produce_snapshot([p, cancelled], _ROOM, snapshot_at=_TS)
+    assert snap.tool_calls_pending_confirm == []
+
+
+def test_produce_snapshot_pending_cross_turn_collision_y2() -> None:
+    """B2 Y2: prior-turn TOOL_RESULT with same call_id does NOT resolve a later TOOL_CALL_PENDING.
+
+    A turn-1 TOOL_RESULT(abc) followed by a turn-5 TOOL_CALL_PENDING(abc): the result
+    is BEFORE the pending event, so position-anchored scan ignores it — turn-5 still listed.
+    """
+    prior_result = _evt(
+        event_type=EventType.TOOL_RESULT,
+        author="agent:operator",
+        metadata={"call_id": "abc", "success": True},
+        timestamp=1000,
+    )
+    later_pending = _pending_evt(call_id="abc", timestamp=5000)
+    snap = produce_snapshot([prior_result, later_pending], _ROOM, snapshot_at=_TS)
+    # The prior result is BEFORE the pending event; position-anchored scan ignores it.
+    assert len(snap.tool_calls_pending_confirm) == 1
+    assert snap.tool_calls_pending_confirm[0].event_id == later_pending.id
+
+
+def test_produce_snapshot_hard_confirm_pending() -> None:
+    """B2: TOOL_CALL_PENDING with hard_confirm tier → autonomy_tier preserved."""
+    p = _pending_evt(call_id="call_hc", tier="hard_confirm")
+    snap = produce_snapshot([p], _ROOM, snapshot_at=_TS)
+    assert len(snap.tool_calls_pending_confirm) == 1
+    assert snap.tool_calls_pending_confirm[0].autonomy_tier == "hard_confirm"
 
 
 def test_produce_snapshot_purity_same_inputs_same_output() -> None:
@@ -457,25 +506,25 @@ def test_produce_snapshot_event_count() -> None:
 
 
 # ---------------------------------------------------------------------------
-# M-R1: TC without preceding AD → included with autonomy_tier="unknown"
+# ADR-030 D2 supersedes old M-R1 "unknown" tier behavior:
+# The pending list is now derived from TOOL_CALL_PENDING events only.
+# A plain TOOL_CALL (AUTO_EXECUTE path) never appears in tool_calls_pending_confirm.
 # ---------------------------------------------------------------------------
 
 
-def test_produce_snapshot_tc_without_preceding_ad_gets_unknown_tier() -> None:
-    """TOOL_CALL without a preceding correlated AUTONOMY_DECISION → tier='unknown'.
+def test_produce_snapshot_plain_tool_call_not_in_pending_list() -> None:
+    """ADR-030 D2: plain TOOL_CALL (AUTO_EXECUTE) → NOT in tool_calls_pending_confirm.
 
-    Per ADR-014 D2.3 conservative-include semantic: anomaly TC still appears in
-    tool_calls_pending_confirm with autonomy_tier='unknown'.
+    The new predicate derives pending from TOOL_CALL_PENDING only; the old
+    'unknown' anomaly path (ADR-014 M-R1) is superseded by ADR-030 D2.
     """
     tc_event = _evt(
         event_type=EventType.TOOL_CALL,
         author="agent:operator",
-        metadata={"tool_name": "read_file", "call_id": "call_anomaly", "params": {}},
+        metadata={"tool_name": "read_file", "call_id": "call_auto", "params": {}},
     )
     snap = produce_snapshot([tc_event], _ROOM, snapshot_at=_TS)
-    assert len(snap.tool_calls_pending_confirm) == 1
-    assert snap.tool_calls_pending_confirm[0].autonomy_tier == "unknown"
-    assert snap.tool_calls_pending_confirm[0].tool_name == "read_file"
+    assert snap.tool_calls_pending_confirm == []
 
 
 # ---------------------------------------------------------------------------
