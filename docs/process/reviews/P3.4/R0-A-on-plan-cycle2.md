@@ -4,11 +4,30 @@ cycle: 2
 round: R0-A-on-plan
 stage: plan + ADR-028 (Proposed)
 reviewer: architect-partner (in-family, single-lens)
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 7
+  yellow: 0
+  green: 9
+verdict_history:
+  - verdict: needs_architect
+    at_commit: a34c2fc
+    findings_count: { red: 0, yellow: 2, green: 7 }
+    note: >-
+      Cycle-2 R0-A-on-plan. Spine carry-forward verified structural; 2🟡 on the net-new
+      local FS surface (Y1 read-cap-on-read memory-DoS; Y2 local-FS threat model unstated).
+  - verdict: clean
+    at_commit: 3b122cb
+    findings_count: { red: 0, yellow: 0, green: 9 }
+    note: >-
+      Both 🟡 absorbed into ADR-028 + P3.4-cycle2 per architect routing
+      (architect-routing-on-plan-cycle2.md, 2026-06-03; all-α). Y1 → α-fold into C2-2:
+      read_file does a bounded read (≤ MAX_RESULT_BYTES(+1)), never loads the whole file
+      (D3 + C2-2 + §3 no-OOM test). Y2 → α-lite: local-FS threat model stated in D3
+      (untrusted = LLM-proposed path param; resolve→open TOCTOU out-of-MVP-scope). The 4
+      surfaced §5 calls confirmed (breadth as-is; keep-classified-fail-closed + get()→
+      not_available; no-re-dispatch deferred; inline-liveness accepted, now bounded by the
+      R0-B R1 fix). 2 findings → 2 new 🟢 (9🟢 total). ADR-028 stays Proposed.
 artifacts_reviewed:
   - docs/process/senior-plans/P3.4-cycle2.md            # atomic graph C2-1..C2-4
   - docs/decisions/ADR-028-runtime-tool-executor.md     # Proposed (D1..D6)
@@ -26,6 +45,21 @@ note: >-
 ---
 
 # P3.4 cycle-2 R0-A-on-plan — the runtime tool-executor (plan + ADR-028)
+
+> **Verdict bump 2026-06-03 (RC-10 — frontmatter as live signal): `needs_architect → clean`.**
+> Original verdict `needs_architect` reflected 2🟡 on the net-new local FS surface. Architect
+> routed both α via the orchestrator session (`architect-routing-on-plan-cycle2.md`); the senior
+> absorbed into ADR-028 + `P3.4-cycle2.md` at commit `3b122cb`:
+>
+> - **Y1 (read-cap-on-read memory-DoS)** → α-fold into C2-2: `read_file` does a **bounded read**
+>   (≤ `MAX_RESULT_BYTES (+1)`, never loads the whole file) — ADR-028 D3, plan C2-2 + a §3
+>   oversized-file-no-OOM test.
+> - **Y2 (local-FS threat model unstated)** → α-lite: ADR-028 D3 now states the threat model
+>   (untrusted = the LLM-proposed path param; the sandbox root is trusted; resolve→open TOCTOU
+>   out-of-MVP-scope, no `O_NOFOLLOW`/fd-re-validate).
+>
+> The 4 surfaced §5 architect calls are confirmed (this review only ACK'd + leaned them; it did
+> not route). The 7🟢 spine/plant confirmations stand. Original finding bodies preserved below.
 
 | Field | Value |
 |---|---|

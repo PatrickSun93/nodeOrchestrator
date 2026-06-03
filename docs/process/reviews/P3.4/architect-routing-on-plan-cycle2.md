@@ -15,7 +15,7 @@ decisions:
   R0B-Y4: α — document a per-turn MCP AUTO tool-call cap; bound the Σ-liveness in ADR-028 D5.
   R0A-Y1: α-fold into C2-2 — read_file reads AT MOST MAX_RESULT_BYTES(+1) bytes (bounded read, not read-all-then-truncate); + acceptance criterion + §3 large-file no-OOM test.
   R0B-Y2_R0A-Y2: α-lite — ADR-028 D3 states the local-FS threat model (untrusted = the LLM-proposed path param; the sandbox root is a trusted workspace; resolve→open TOCTOU is out-of-MVP-scope; no O_NOFOLLOW/fd-re-validate in the MVP).
-  R0B-Y3: α-lite — ADR-028 D6 t4 reworded: input-boundary STRUCTURAL (sole TOOL_CALL appender → the executor's input window can only hold gate-approved events) + executor-internal BEHAVIORAL filter (keys on EventType.TOOL_CALL), backed by the C2-4 behavioral test. NOT a type-level invariant.
+  R0B-Y3: "α-lite — ADR-028 D6 t4 reworded to input-boundary STRUCTURAL (sole TOOL_CALL appender → the executor's input window can only hold gate-approved events) + executor-internal BEHAVIORAL filter (keys on EventType.TOOL_CALL), backed by the C2-4 behavioral test. NOT a type-level invariant."
   S5-1: confirm — local-tool MVP breadth = {get_current_time, read_file, list_files} + sandbox (the architect's pre-set line; R0-A noted convergence).
   S5-2: confirm — keep deferred-but-classified tools classified + fail-closed (not_implemented); + the executor's MCP session lookup uses mcp_sessions.get(server) → explicit not_available, never a bare KeyError.
   S5-3: confirm-defer — no-re-dispatch MVP (agent reacts on the next turn); in-turn re-dispatch is deferred ADR-011 work.

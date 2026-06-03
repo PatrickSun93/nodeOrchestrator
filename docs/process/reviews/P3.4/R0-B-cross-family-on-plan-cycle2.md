@@ -8,11 +8,11 @@ reviews_acked:
   - senior-plans/P3.4-cycle2.md
   - reviews/P3.4/external-r0b-prompt.md
   - reviews/P3.4/R0-B-cross-family.md
-verdict: blocking
+verdict: clean
 findings_count:
-  red: 1
-  yellow: 4
-  green: 5
+  red: 0
+  yellow: 0
+  green: 10
 verdict_history:
   - verdict: blocking
     at_commit: a34c2fc
@@ -29,9 +29,43 @@ verdict_history:
       autonomy-bypass surface genuinely fail-closed; session-retention safe; not_implemented
       fail-closed honest; feed-the-gate diff verifiably empty; local-tool breadth correctly
       conservative.
+  - verdict: clean
+    at_commit: 3b122cb
+    findings_count: { red: 0, yellow: 0, green: 10 }
+    note: >-
+      All 1🔴 + 4🟡 absorbed into ADR-028 + P3.4-cycle2 per architect routing
+      (architect-routing-on-plan-cycle2.md, 2026-06-03; all-α). R1 → bounded interpret
+      deadline (D2/D5 + C2-1; timeout → raw TOOL_RESULT stands, no OBSERVATION); the D5
+      liveness bound is now true (≤ MAX_MCP_CALLS_PER_TURN × (MCP timeout + interpret
+      timeout)). Y1 → full-room call_id double-exec scope (D2). Y2 → local-FS threat model
+      stated (D3). Y3 → t4 reworded input-boundary-structural + behavioral-filter (D6).
+      Y4 → per-turn MCP AUTO call cap (D5). 5 findings → 5 new 🟢 (10🟢 total); the 5
+      original 🟢 confirmations stand. ADR-028 stays Proposed (RC-23-safe) pending
+      architect Accept.
 ---
 
 # P3.4 cycle-2 R0-B cross-family review (plan-stage) — runtime tool-executor (ADR-028 + senior plan)
+
+> **Verdict bump 2026-06-03 (RC-10 — frontmatter as live signal): `blocking → clean`.**
+> Original verdict `blocking` reflected R1 (🔴 the unbounded MCP-interpret LLM call on
+> the single writer) + 4🟡. Architect routed all-α via the orchestrator session
+> (`architect-routing-on-plan-cycle2.md`); the senior absorbed into ADR-028 + `P3.4-cycle2.md`
+> at commit `3b122cb`:
+>
+> - **R1 (🔴)** → α: `interpret_mcp_tool_result` now runs under a **bounded deadline**
+>   (ADR-028 D2/D5 + plan C2-1); on timeout → keep the raw `TOOL_RESULT`, skip the
+>   interpret (advisory). D5's liveness claim is made true: worst-case writer block ≤
+>   `MAX_MCP_CALLS_PER_TURN × (MCP-call timeout + interpret timeout)`.
+> - **Y1** → α: double-exec guard pinned to a **full-room `call_id` scan** (D2) —
+>   LLM-generated `call_id`s can collide cross-turn.
+> - **Y2** → α-lite: the **local-FS threat model** is now stated in D3 (untrusted = the
+>   LLM-proposed path param; resolve→open TOCTOU out-of-MVP-scope).
+> - **Y3** → α-lite: D6 **t4 reworded** — input-boundary structural (sole `TOOL_CALL`
+>   appender) + executor-internal behavioral filter (keys on `EventType.TOOL_CALL`), not
+>   a type-level invariant.
+> - **Y4** → α: a documented **per-turn MCP `AUTO_EXECUTE` call cap** bounds the Σ-liveness (D5).
+>
+> The 5🟢 confirmations stand. Original finding bodies preserved below (audit trail).
 
 | Field | Value |
 |---|---|
