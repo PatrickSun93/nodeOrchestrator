@@ -18,6 +18,9 @@ from orchestrator.derived.snapshot import Snapshot
 
 __all__ = [
     "INTENT_TYPE_ALLOWLIST",
+    "ConfirmError",
+    "ConfirmRequest",
+    "ConfirmResponse",
     "Event",
     "IntentError",
     "IntentRequest",
@@ -108,3 +111,43 @@ StreamMessage = Annotated[
     Field(discriminator="kind"),
 ]
 """Discriminated WS envelope — kind field dispatches to the concrete type."""
+
+
+# ---------------------------------------------------------------------------
+# Confirm-then-execute wire types (ADR-030 D3/D5)
+# ---------------------------------------------------------------------------
+
+
+class ConfirmRequest(BaseModel):
+    """Client-to-server confirm/cancel of a pending gated tool call (ADR-030 D3).
+
+    Only pending_event_id + decision are accepted — extra="forbid" makes it
+    type-impossible to smuggle tool_name/params/author (forge guard at schema layer,
+    mirroring IntentRequest ADR-025 D4).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    pending_event_id: EventId
+    decision: Literal["approve", "cancel"]
+
+
+class ConfirmResponse(BaseModel):
+    """Successful confirm result: the appended TOOL_CALL or TOOL_CALL_CANCELLED + turn events."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    appended_event: Event
+    turn_events: list[Event]
+
+
+class ConfirmError(BaseModel):
+    """Partial-confirm error envelope (ADR-030 D5, mirrors IntentError).
+
+    stage='append': nothing persisted — safe to refresh-and-retry.
+    stage='execute': TOOL_CALL appended — do NOT re-confirm; reconcile via replay.
+    reason: 'already_resolved' | 'room_closed' | 'not_found' | <executor error>
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    stage: Literal["append", "execute"]
+    appended_event_id: EventId | None = None
+    reason: str

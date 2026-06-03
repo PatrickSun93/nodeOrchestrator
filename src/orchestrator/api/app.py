@@ -25,16 +25,31 @@ from orchestrator.agents.dispatch import LLMRouterProtocol
 from orchestrator.agents.loader import load_agents
 from orchestrator.agents.schema import Agent
 from orchestrator.api.pubsub import RoomEventBus
-from orchestrator.api.wire import Event, IntentError, IntentRequest, IntentResponse, Room, Snapshot
+from orchestrator.api.wire import (
+    ConfirmError,
+    ConfirmRequest,
+    ConfirmResponse,
+    Event,
+    IntentError,
+    IntentRequest,
+    IntentResponse,
+    Room,
+    Snapshot,
+)
 from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.bootstrap import load_and_validate_llm_layer
 from orchestrator.core.event import (
     EventId,
     EventNotFoundError,
+    EventType,
     InvalidParentError,
     MetadataValidationError,
     RoomId,
     RoomNotFoundError,
+    ToolCallCancelledMeta,
+    ToolCallMeta,
+    ToolCallPendingMeta,
+    build_author,
     generate_event_id,
     generate_room_id,
     now_ms,
@@ -53,6 +68,17 @@ from orchestrator.tools.executor import LocalToolRegistry, execute_pending_tool_
 from orchestrator.tools.local import build_local_tool_registry
 
 PAYLOAD_LIMIT_BYTES = 65_536  # 64 KiB
+
+# Resolution event types for position-anchored still-pending check (ADR-030 D3 step 2).
+# Must be identical to snapshot.py _PENDING_RESOLUTION_TYPES (B2/B3 consistency invariant).
+_CONFIRM_RESOLUTION_TYPES: frozenset[EventType] = frozenset(
+    {
+        EventType.TOOL_CALL,
+        EventType.TOOL_RESULT,
+        EventType.TOOL_FAILED,
+        EventType.TOOL_CALL_CANCELLED,
+    }
+)
 
 
 @dataclass
@@ -99,6 +125,23 @@ class _AppendFailedError(Exception):
 
 class _TurnFailedError(Exception):
     """run_turn failed after a successful append — intent IS persisted (ADR-025 D5)."""
+
+    def __init__(self, reason: str, event_id: EventId) -> None:
+        self.reason = reason
+        self.event_id = event_id
+        super().__init__(reason)
+
+
+class _ConfirmAppendError(Exception):
+    """confirm append failed — nothing persisted, safe to retry (ADR-030 D5)."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+class _ConfirmExecuteError(Exception):
+    """Executor raised after TOOL_CALL appended — do NOT re-confirm (ADR-030 D5)."""
 
     def __init__(self, reason: str, event_id: EventId) -> None:
         self.reason = reason
@@ -369,6 +412,154 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             return IntentResponse(appended_event=user_event, turn=turn_result)
 
         return await loop.run_in_executor(ctx.writer_executor, _write_and_turn)
+
+    # ---------------------------------------------------------------------------
+    # POST /rooms/{room_id}/confirm — human-in-the-loop gating approval (ADR-030 D3)
+    # ---------------------------------------------------------------------------
+
+    @app.post(
+        "/rooms/{room_id}/confirm",
+        response_model=ConfirmResponse,
+        responses={422: {"model": ConfirmError}, 500: {"model": ConfirmError}},
+    )
+    async def _post_confirm(room_id: str, body: ConfirmRequest) -> ConfirmResponse:
+        """Confirm or cancel a pending gated tool call (ADR-030 D3).
+
+        Handler logic (backend-authoritative, atomic on writer_executor):
+        1. Resolve room; find the TOOL_CALL_PENDING by pending_event_id.
+        2. Room-state gate: closed room → ConfirmError{stage:'append', reason:'room_closed'}.
+        3. Still-pending check (layer 1) — position-anchored after the pending event.
+        4. cancel → append TOOL_CALL_CANCELLED, return.
+        5. approve → append agent-authored TOOL_CALL from record, execute, publish.
+
+        No decision surface: gate decision already made; human approval second factor only.
+        """
+        rid = RoomId(room_id)
+        loop = asyncio.get_running_loop()
+
+        def _confirm_on_writer() -> ConfirmResponse:
+            # Step 1: Resolve room and load events.
+            room = ctx.writer_store.get_room(rid)
+            if room is None:
+                raise _ConfirmAppendError("not_found")
+
+            # Step 2: Room-state gate — reject terminal (closed) rooms.
+            if room.state == "closed":
+                raise _ConfirmAppendError("room_closed")
+
+            all_events = ctx.writer_store.get_room_events(rid)
+            sorted_events = sorted(all_events, key=lambda e: (e.timestamp, e.id))
+
+            # Find the TOOL_CALL_PENDING event by pending_event_id.
+            pending_event = next(
+                (
+                    e
+                    for e in sorted_events
+                    if e.id == body.pending_event_id and e.type == EventType.TOOL_CALL_PENDING
+                ),
+                None,
+            )
+            if pending_event is None:
+                raise _ConfirmAppendError("not_found")
+
+            pending_meta = ToolCallPendingMeta.model_validate(pending_event.metadata)
+            pending_idx = sorted_events.index(pending_event)
+
+            # Step 3: Still-pending check (idempotency layer 1) — position-anchored.
+            # Scan events AFTER the pending event's position for the same call_id resolved.
+            already_resolved = any(
+                later.type in _CONFIRM_RESOLUTION_TYPES
+                and str(later.metadata.get("call_id", "")) == pending_meta.call_id
+                for later in sorted_events[pending_idx + 1 :]
+            )
+            if already_resolved:
+                raise _ConfirmAppendError("already_resolved")
+
+            pre_cursor = len(all_events)
+
+            if body.decision == "cancel":
+                # Step 4: Cancel — append TOOL_CALL_CANCELLED, done.
+                cancelled_event = Event(
+                    id=generate_event_id(),
+                    room_id=rid,
+                    type=EventType.TOOL_CALL_CANCELLED,
+                    author=build_author(pending_meta.initiating_agent),
+                    timestamp=now_ms(),
+                    content="",
+                    metadata=ToolCallCancelledMeta(
+                        call_id=pending_meta.call_id,
+                    ).model_dump(),
+                )
+                try:
+                    ctx.writer_store.append(cancelled_event)
+                except (RoomNotFoundError, InvalidParentError, MetadataValidationError) as exc:
+                    raise _ConfirmAppendError(str(exc)) from exc
+
+                new_events = ctx.writer_store.get_room_events(rid)[pre_cursor:]
+                loop.call_soon_threadsafe(ctx.bus.publish, rid, new_events)
+                return ConfirmResponse(appended_event=cancelled_event, turn_events=new_events)
+
+            # Step 5: Approve — reconstruct TOOL_CALL from persisted record (backend-authoritative).
+            # tool_name/params/author come from the gate-produced record, NEVER from the request.
+            tool_call_event = Event(
+                id=generate_event_id(),
+                room_id=rid,
+                type=EventType.TOOL_CALL,
+                author=build_author(pending_meta.initiating_agent),
+                timestamp=now_ms(),
+                content="",
+                metadata=ToolCallMeta(
+                    tool_name=pending_meta.tool_name,
+                    call_id=pending_meta.call_id,
+                    params=pending_meta.params,
+                ).model_dump(),
+            )
+            try:
+                ctx.writer_store.append(tool_call_event)
+            except (RoomNotFoundError, InvalidParentError, MetadataValidationError) as exc:
+                raise _ConfirmAppendError(str(exc)) from exc
+
+            # Idempotency layer 2: executor's full-room call_id guard handles duplicates.
+            try:
+                execute_pending_tool_calls(
+                    window_events=[tool_call_event],
+                    room_id=rid,
+                    event_store=ctx.writer_store,
+                    mcp_sessions=ctx.mcp_sessions,
+                    local_tools=ctx.local_tools,
+                    llm_router=ctx.llm_router,
+                )
+            except Exception as exc:
+                # stage="execute": TOOL_CALL already appended — do NOT re-confirm.
+                raise _ConfirmExecuteError(str(exc), tool_call_event.id) from exc
+
+            new_events = ctx.writer_store.get_room_events(rid)[pre_cursor:]
+            loop.call_soon_threadsafe(ctx.bus.publish, rid, new_events)
+            return ConfirmResponse(appended_event=tool_call_event, turn_events=new_events)
+
+        return await loop.run_in_executor(ctx.writer_executor, _confirm_on_writer)
+
+    @app.exception_handler(_ConfirmAppendError)
+    async def _confirm_append_failed_handler(
+        request: Request, exc: _ConfirmAppendError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content=ConfirmError(
+                stage="append", appended_event_id=None, reason=exc.reason
+            ).model_dump(),
+        )
+
+    @app.exception_handler(_ConfirmExecuteError)
+    async def _confirm_execute_failed_handler(
+        request: Request, exc: _ConfirmExecuteError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=500,
+            content=ConfirmError(
+                stage="execute", appended_event_id=exc.event_id, reason=exc.reason
+            ).model_dump(),
+        )
 
     # ---------------------------------------------------------------------------
     # Exception handlers for the partial-turn error envelope (ADR-025 D5)

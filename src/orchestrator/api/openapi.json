@@ -1,8 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Orchestrator API",
-    "description": "HTTP/WS API over the event store and room runtime (ADR-025)",
+    "title": "Orchestrator API [test]",
     "version": "0.1.0"
   },
   "paths": {
@@ -267,10 +266,151 @@
           }
         }
       }
+    },
+    "/rooms/{room_id}/confirm": {
+      "post": {
+        "summary": " Post Confirm",
+        "description": "Confirm or cancel a pending gated tool call (ADR-030 D3).\n\nHandler logic (backend-authoritative, atomic on writer_executor):\n1. Resolve room; find the TOOL_CALL_PENDING by pending_event_id.\n2. Room-state gate: closed room \u2192 ConfirmError{stage:'append', reason:'room_closed'}.\n3. Still-pending check (layer 1) \u2014 position-anchored after the pending event.\n4. cancel \u2192 append TOOL_CALL_CANCELLED, return.\n5. approve \u2192 append agent-authored TOOL_CALL from record, execute, publish.\n\nNo decision surface: gate decision already made; human approval second factor only.",
+        "operationId": "_post_confirm_rooms__room_id__confirm_post",
+        "parameters": [
+          {
+            "name": "room_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Room Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ConfirmError": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "append",
+              "execute"
+            ],
+            "title": "Stage"
+          },
+          "appended_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Appended Event Id"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "stage",
+          "reason"
+        ],
+        "title": "ConfirmError",
+        "description": "Partial-confirm error envelope (ADR-030 D5, mirrors IntentError).\n\nstage='append': nothing persisted \u2014 safe to refresh-and-retry.\nstage='execute': TOOL_CALL appended \u2014 do NOT re-confirm; reconcile via replay.\nreason: 'already_resolved' | 'room_closed' | 'not_found' | <executor error>"
+      },
+      "ConfirmRequest": {
+        "properties": {
+          "pending_event_id": {
+            "type": "string",
+            "title": "Pending Event Id"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "cancel"
+            ],
+            "title": "Decision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pending_event_id",
+          "decision"
+        ],
+        "title": "ConfirmRequest",
+        "description": "Client-to-server confirm/cancel of a pending gated tool call (ADR-030 D3).\n\nOnly pending_event_id + decision are accepted \u2014 extra=\"forbid\" makes it\ntype-impossible to smuggle tool_name/params/author (forge guard at schema layer,\nmirroring IntentRequest ADR-025 D4)."
+      },
+      "ConfirmResponse": {
+        "properties": {
+          "appended_event": {
+            "$ref": "#/components/schemas/Event"
+          },
+          "turn_events": {
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "type": "array",
+            "title": "Turn Events"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "appended_event",
+          "turn_events"
+        ],
+        "title": "ConfirmResponse",
+        "description": "Successful confirm result: the appended TOOL_CALL or TOOL_CALL_CANCELLED + turn events."
+      },
       "DecisionRef": {
         "properties": {
           "event_id": {
@@ -361,10 +501,12 @@
           "decision_pivot",
           "autonomy_decision",
           "autonomy_refusal",
-          "external_validation"
+          "external_validation",
+          "tool_call_pending",
+          "tool_call_cancelled"
         ],
         "title": "EventType",
-        "description": "The 19 constitutional event types.\n\nSee docs/architecture/event-model.md for why this list is constitutional\nand what to do (and not do) when extending it. In short: adding a type\nrequires an ADR; renaming or merging types is a breaking change; a\n`generic_message` catch-all is forbidden."
+        "description": "The constitutional event types (ADR-030 adds TOOL_CALL_PENDING + TOOL_CALL_CANCELLED).\n\nSee docs/architecture/event-model.md for why this list is constitutional\nand what to do (and not do) when extending it. In short: adding a type\nrequires an ADR; renaming or merging types is a breaking change; a\n`generic_message` catch-all is forbidden."
       },
       "HTTPValidationError": {
         "properties": {

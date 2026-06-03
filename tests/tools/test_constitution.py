@@ -16,11 +16,16 @@ t3 — no new LLMPurpose:
      TOOL_OUTPUT_INTERPRET (carry-forward #2, ADR-028 D6).
 
 t4 — execution keys on TOOL_CALL only (input-boundary structural + behavioral):
-     (structural) EventType.TOOL_CALL has exactly ONE appender in src/:
-       agents/tool_dispatch.py::process_tool_calls (inside AUTO_EXECUTE block).
-       No other non-read site appends a TOOL_CALL event.
-     (behavioral) No TOOL_CALL in window → zero server/impl calls
-       (tested in test_executor.py §7; verified here via AST).
+     ADR-030 D1 amendment (P3.6-B3, architect-ratified Y1): EventType.TOOL_CALL
+     now has EXACTLY TWO appenders in src/, both downstream-of-gate:
+       (a) agents/tool_dispatch.py::process_tool_calls (AUTO_EXECUTE branch).
+       (b) api/app.py::_post_confirm (confirm-approve path -- reconstructs from
+           the gate-produced TOOL_CALL_PENDING record; never from request fields).
+     No third appender is permitted. The confirm appender's downstream-of-gate
+     property is a behavioral trust surface (not grep-verifiable), pinned by the
+     named behavioral guard and the no-forge acceptance test in tests/api/.
+     (behavioral) No TOOL_CALL in window -> zero server/impl calls
+       (tested in test_executor.py section 7; verified here via AST).
 """
 
 from __future__ import annotations
@@ -153,26 +158,29 @@ def test_t3_no_new_llm_purpose() -> None:
 
 
 def test_t4_tool_call_sole_appender_in_src() -> None:
-    """EventType.TOOL_CALL has exactly one appender: agents/tool_dispatch.py.
+    """EventType.TOOL_CALL has exactly TWO appenders (ADR-030 D1 amendment / P3.6-B3 Y1).
+
+    Both are downstream-of-gate:
+      (a) agents/tool_dispatch.py -- AUTO_EXECUTE branch in process_tool_calls.
+      (b) api/app.py -- confirm-approve path in _post_confirm.
+    No third appender is permitted.
 
     All other src/ files may READ EventType.TOOL_CALL (comparisons, filter,
     isinstance checks) but must NOT call event_store.append(...) with
     type=EventType.TOOL_CALL or type='tool_call'.
-
-    This is the structural half of the t4 downstream-of-gate guarantee
-    (ADR-028 D6): TOOL_CALL records can only come from the gate-approved
-    process_tool_calls path, so the executor's input window can only contain
-    gate-approved records.
     """
     tool_dispatch_path = _SRC / "agents" / "tool_dispatch.py"
+    confirm_endpoint_path = _SRC / "api" / "app.py"
 
-    # Files allowed to contain TOOL_CALL appends: only tool_dispatch.py.
+    # Files allowed to contain TOOL_CALL appends: exactly the two legitimate appenders.
+    allowed_appenders = frozenset({tool_dispatch_path, confirm_endpoint_path})
+
     append_violations: list[str] = []
 
     for py_path in _SRC.rglob("*.py"):
         if "__pycache__" in py_path.parts:
             continue
-        if py_path == tool_dispatch_path:
+        if py_path in allowed_appenders:
             continue
         source = py_path.read_text(encoding="utf-8")
         if "TOOL_CALL" not in source and "tool_call" not in source:
@@ -194,7 +202,8 @@ def test_t4_tool_call_sole_appender_in_src() -> None:
                         if kw.value.attr == "TOOL_CALL":
                             append_violations.append(
                                 f"  {py_path}: line {node.lineno}: "
-                                f"append with type=EventType.TOOL_CALL outside tool_dispatch.py"
+                                f"append with type=EventType.TOOL_CALL outside the two "
+                                f"allowed appenders (tool_dispatch.py + app.py confirm)"
                             )
                     elif (
                         kw.arg == "type"
@@ -203,10 +212,11 @@ def test_t4_tool_call_sole_appender_in_src() -> None:
                     ):
                         append_violations.append(
                             f"  {py_path}: line {node.lineno}: "
-                            f"append with type='tool_call' outside tool_dispatch.py"
+                            f"append with type='tool_call' outside the two "
+                            f"allowed appenders (tool_dispatch.py + app.py confirm)"
                         )
 
     assert not append_violations, (
-        "t4 guard: TOOL_CALL event appended outside tool_dispatch.py (sole-appender violated):\n"
-        + "\n".join(append_violations)
+        "t4 guard: TOOL_CALL event appended outside the two legitimate appenders "
+        "(ADR-030 D1 two-appender invariant violated):\n" + "\n".join(append_violations)
     )
