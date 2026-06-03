@@ -7,20 +7,57 @@ reviews_acked:
   - architect-briefs/P3.5.md
   - senior-plans/P3.5.md
   - decisions/ADR-029-plugin-system-manifest-loader-code-trust.md
-verdict: blocking
+verdict: clean
 findings_count:
-  red: 1
-  yellow: 6
-  green: 5
+  red: 0
+  yellow: 0
+  green: 12
 note: >
   YAML frontmatter note uses block scalar to avoid colon-in-value parse failures.
   This is a plan-stage true-cross-family R0-B (DeepSeek V4 Pro) per
   dual-lens-r0b.md. The architect ruled requires_cross_family_review=true for
   P3.5 (admit-plugin-code-now — the project's largest security surface to date).
-  Verdict blocking per 1 design-level security sequencing bug in the ADR (R1).
+  Verdict bumped blocking -> clean (RC-10): R1 + all 6 Y alpha-absorbed per
+  architect-routing-on-plan.md (architect 2026-06-03 via orchestrator).
+verdict_history:
+  - verdict: blocking
+    at_commit: 122a8d0
+    findings_count: { red: 1, yellow: 6, green: 5 }
+    note: R1 ADR D2 step-ordering (code import before collision-check) + 6 Y threat-model/atomic-merge/migration
+  - verdict: clean
+    at_commit: post-routing-revision (this commit)
+    findings_count: { red: 0, yellow: 0, green: 12 }
+    note: >-
+      R1 + Y1-Y6 all alpha-absorbed into ADR-029 + senior-plans/P3.5.md;
+      Posture A confirmed (A-now-B-later) with full exposure inscribed.
+      See architect-routing-on-plan.md.
 ---
 
 # P3.5 R0-B cross-family review (plan + ADR-029)
+
+> **RC-10 — frontmatter as live signal: `blocking → clean`.** R1 (🔴) + all 6 Y
+> α-absorbed (architect routing 2026-06-03 via orchestrator;
+> `architect-routing-on-plan.md`); senior revised ADR-029 + `senior-plans/P3.5.md`
+> in this commit. Reclassified → 🟢 (absorbed):
+> - **R1 (D2 step ordering)** → 🟢: ADR-029 D2 reordered to validate → **collision-check**
+>   → load non-code → load code → cap → atomic merge; import-time code runs only
+>   after the fail-closed gauntlet (matches the plan's safe atomic order).
+> - **Y1 (`src/` analogy = category error)** → 🟢: ADR-029 D4 retires the analogy →
+>   operator-accepted-third-party-trust (review-path distinct from `src/`).
+> - **Y2 (default-0 ambiguity)** → 🟢: ADR-029 D5 — unclassified plugin tool → 0 →
+>   `HARD_CONFIRM`; demo ships a host-side `tools.yaml` classification to AUTO.
+> - **Y3 (host-tools-unbounded understatement)** → 🟢: ADR-029 D4 L2 — categorical
+>   delta ("3 known-bounded closures" → "arbitrary third-party code").
+> - **Y4 (atomic-merge implicit)** → 🟢: ADR-029 D2 step 7 + plan P3.5-3/-5 —
+>   per-plugin intermediate; atomic merge; never half-registers.
+> - **Y5 (credential/env scope)** → 🟢: ADR-029 trust-boundary section cross-refs L1
+>   (credential-indirection/scoped-env are MCP-subprocess-only; zero for in-process).
+> - **Y6 (A→B migration surface)** → 🟢: ADR-029 Reversibility table itemizes the
+>   migration (importlib→subprocess; LocalToolFn→runner; `plugins/code.py` reworked).
+>
+> Original finding bodies preserved below as audit trail (the 🔴/🟡 markers are
+> historical). G1–G5 confirmations (empty-diff + autonomy-bypass structurally
+> prevented) stand.
 
 ## Lens preamble
 

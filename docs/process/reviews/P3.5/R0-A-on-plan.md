@@ -12,11 +12,11 @@ date: 2026-06-03
 artifacts_reviewed:
   - docs/decisions/ADR-029-plugin-system-manifest-loader-code-trust.md
   - docs/process/senior-plans/P3.5.md
-verdict: needs_architect
+verdict: clean
 findings:
   blocking: 0
-  needs_architect: 3
-  clean_notes: 3
+  needs_architect: 0
+  clean_notes: 6
 note: >-
   3 Y findings routed; the plan + ADR are structurally strong and the spine
   carry-forward holds. Y1 (substantive — plant-bypass): the collision-check
@@ -36,10 +36,36 @@ note: >-
 verdict_history:
   - at: plan-stage
     verdict: needs_architect
+    at_commit: fed466e
     by: architect-partner
+    note: Y1 tool_impls shadow-bypass + Y2 Posture-A L2 honesty + Y3 demo self-collision
+  - at: post-routing-revision
+    verdict: clean
+    by: senior
+    findings: { blocking: 0, needs_architect: 0, clean_notes: 6 }
+    note: >-
+      Y1/Y2/Y3 all α-absorbed per architect-routing-on-plan.md (architect
+      2026-06-03 via orchestrator); ADR-029 + senior-plan/P3.5 revised in this
+      commit. Posture A confirmed (A-now-B-later) with full exposure inscribed.
 ---
 
 # R0-A-on-plan — P3.5 (Plugin system: ADR-029 + senior plan)
+
+> **RC-10 — frontmatter as live signal: `needs_architect → clean`.** All 3 Y
+> findings α-absorbed (architect routing 2026-06-03 via orchestrator;
+> `architect-routing-on-plan.md`); senior revised ADR-029 + `senior-plans/P3.5.md`
+> in this commit. Reclassified 🟡 → 🟢 (absorbed):
+> - **Y1 (`tool_impls → local_tools` shadow-bypass)** → 🟢: ADR-029 D6 + D2 step 3
+>   + plan P3.5-3 now collision-check the `tool_impls` namespace (vs host
+>   `local_tools` keys + `tools` + cross-plugin), fail-closed; P3.5-8 shadow test.
+> - **Y2 (Posture A L2 understatement)** → 🟢: ADR-029 D4 L2 reworded "relaxes" →
+>   **VOIDS** the ADR-028 D5 bound (server-wide blast radius); L1b import-time-
+>   ungated disclosed; the precise exposure inscribed for the Accept.
+> - **Y3 (D7-vs-D6 demo self-collision)** → 🟢: ADR-029 D7 + plan P3.5-7 — demo
+>   ships distinct ids (`demo_facilitator`/`demo-research`), not core re-exports.
+>
+> Original finding bodies preserved below as audit trail (the 🟡 markers are
+> historical). The independent D4 concurrence (§3) stands: Posture A confirmed.
 
 ## 0. Method (what I independently verified)
 
