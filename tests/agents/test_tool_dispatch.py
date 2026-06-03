@@ -23,6 +23,7 @@ from orchestrator.core.event import (
     Event,
     EventType,
     RoomId,
+    ToolCallPendingMeta,
     generate_event_id,
     generate_room_id,
     now_ms,
@@ -118,15 +119,15 @@ def test_auto_execute_appends_autonomy_decision_and_tool_call_events() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_countdown_confirm_appends_only_autonomy_decision() -> None:
-    """COUNTDOWN_CONFIRM: autonomy_decision emitted, no tool_call event."""
+def test_countdown_confirm_appends_autonomy_decision_and_tool_call_pending() -> None:
+    """COUNTDOWN_CONFIRM: autonomy_decision + tool_call_pending emitted, no tool_call."""
     store = _make_store()
     room_id = _make_room(store)
     current = _make_event(room_id, type=EventType.UTTERANCE)  # non-user: no threshold reduction
     store.append(current)
 
     result = process_tool_calls(
-        [_tool_call("propose_edit")],
+        [_tool_call("propose_edit", call_id="call_cd")],
         agent_id="operator",
         room_id=room_id,
         current_event=current,
@@ -146,21 +147,32 @@ def test_countdown_confirm_appends_only_autonomy_decision() -> None:
     decision_events = [e for e in events if e.type == EventType.AUTONOMY_DECISION]
     assert len(decision_events) == 1
 
+    # B1: TOOL_CALL_PENDING event appended with full payload (ADR-030 D1)
+    pending_events = [e for e in events if e.type == EventType.TOOL_CALL_PENDING]
+    assert len(pending_events) == 1
+    p = pending_events[0]
+    meta = ToolCallPendingMeta.model_validate(p.metadata)
+    assert meta.tool_name == "propose_edit"
+    assert meta.call_id == "call_cd"
+    assert meta.tier == "countdown_confirm"
+    assert meta.initiating_agent == "operator"
+    assert p.author == "agent:operator"
+
 
 # ---------------------------------------------------------------------------
 # §1 cross-module: HARD_CONFIRM path
 # ---------------------------------------------------------------------------
 
 
-def test_hard_confirm_appends_only_autonomy_decision() -> None:
-    """HARD_CONFIRM: autonomy_decision emitted, no tool_call event."""
+def test_hard_confirm_appends_autonomy_decision_and_tool_call_pending() -> None:
+    """HARD_CONFIRM: autonomy_decision + tool_call_pending emitted, no tool_call."""
     store = _make_store()
     room_id = _make_room(store)
     current = _make_event(room_id, type=EventType.UTTERANCE)  # non-user: no threshold reduction
     store.append(current)
 
     result = process_tool_calls(
-        [_tool_call("apply_edit")],
+        [_tool_call("apply_edit", call_id="call_hc")],
         agent_id="operator",
         room_id=room_id,
         current_event=current,
@@ -177,6 +189,15 @@ def test_hard_confirm_appends_only_autonomy_decision() -> None:
     events = store.get_room_events(room_id)
     tool_call_events = [e for e in events if e.type == EventType.TOOL_CALL]
     assert len(tool_call_events) == 0
+
+    # B1: TOOL_CALL_PENDING event appended with full payload (ADR-030 D1)
+    pending_events = [e for e in events if e.type == EventType.TOOL_CALL_PENDING]
+    assert len(pending_events) == 1
+    meta = ToolCallPendingMeta.model_validate(pending_events[0].metadata)
+    assert meta.tool_name == "apply_edit"
+    assert meta.call_id == "call_hc"
+    assert meta.tier == "hard_confirm"
+    assert meta.initiating_agent == "operator"
 
 
 # ---------------------------------------------------------------------------

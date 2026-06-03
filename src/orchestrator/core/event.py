@@ -66,7 +66,7 @@ def generate_room_id() -> RoomId:
 
 
 class EventType(StrEnum):
-    """The 19 constitutional event types.
+    """The constitutional event types (ADR-030 adds TOOL_CALL_PENDING + TOOL_CALL_CANCELLED).
 
     See docs/architecture/event-model.md for why this list is constitutional
     and what to do (and not do) when extending it. In short: adding a type
@@ -93,6 +93,9 @@ class EventType(StrEnum):
     AUTONOMY_DECISION = "autonomy_decision"
     AUTONOMY_REFUSAL = "autonomy_refusal"
     EXTERNAL_VALIDATION = "external_validation"
+    # ADR-030: confirm-then-execute gating-approval records
+    TOOL_CALL_PENDING = "tool_call_pending"
+    TOOL_CALL_CANCELLED = "tool_call_cancelled"
 
 
 class RelationType(StrEnum):
@@ -339,6 +342,34 @@ class ExternalValidationMeta(_BaseMeta):
     evidence_ref: str | None = None
 
 
+class ToolCallPendingMeta(_BaseMeta):
+    """Metadata for ``tool_call_pending`` events (ADR-030 D1).
+
+    Appended by ``process_tool_calls`` in the COUNTDOWN_CONFIRM/HARD_CONFIRM
+    branch — persists the full payload of a gated call so the confirm endpoint
+    can later reconstruct it without trusting client-supplied fields.
+
+    Field set is locked by the constitutional test covering the B1 atomic.
+    """
+
+    tool_name: str = Field(min_length=1)
+    call_id: str = Field(min_length=1)
+    params: dict[str, Any] = Field(default_factory=dict)
+    tier: Literal["countdown_confirm", "hard_confirm"]
+    initiating_agent: str = Field(min_length=1)
+
+
+class ToolCallCancelledMeta(_BaseMeta):
+    """Metadata for ``tool_call_cancelled`` events (ADR-030 D3).
+
+    Appended by the confirm endpoint when the user cancels a pending gated
+    call. ``call_id`` ties it to the originating ``TOOL_CALL_PENDING`` for
+    the position-anchored still-pending predicate in snapshot + endpoint.
+    """
+
+    call_id: str = Field(min_length=1)
+
+
 TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.HYPOTHESIS: HypothesisMeta,
     EventType.DECISION: DecisionMeta,
@@ -351,6 +382,8 @@ TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.STATE_TRANSITION: StateTransitionMeta,
     EventType.SUMMARY_SNAPSHOT: SummarySnapshotMeta,
     EventType.EXTERNAL_VALIDATION: ExternalValidationMeta,
+    EventType.TOOL_CALL_PENDING: ToolCallPendingMeta,
+    EventType.TOOL_CALL_CANCELLED: ToolCallCancelledMeta,
 }
 
 
