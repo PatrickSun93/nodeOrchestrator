@@ -8,11 +8,11 @@ impl_head: 7bec33d
 artifacts_reviewed:
   - docs/process/senior-plans/P3.5.md
   - docs/decisions/ADR-029-plugin-system-manifest-loader-code-trust.md (Accepted)
-verdict: needs_architect
+verdict: clean
 findings:
   blocking: 0
-  needs_architect: 1
-  clean_notes: 2
+  needs_architect: 0
+  clean_notes: 3
 note: >-
   Impl is high-fidelity to the plan + ADR-029 on 7 of 8 focus checks, plus the
   empty-diff invariant (gate/executor/mcp = 0 diff vs origin/main) and the full
@@ -33,9 +33,29 @@ verdict_history:
     at_commit: 7bec33d
     findings: { blocking: 0, needs_architect: 1, clean_notes: 2 }
     note: tool_impls two-way-vs-three-way collision drift + name-adoption residual
+  - verdict: clean
+    at_commit: post-routing-revision (7065d17 + ADR-029 Amendment 1)
+    findings: { blocking: 0, needs_architect: 0, clean_notes: 3 }
+    note: >-
+      Y1 resolved by ADR-029 Amendment 1 (architect 2026-06-03 via orchestrator;
+      architect-routing-on-impl.md) — two-way tool_impls check accepted
+      correct-by-design, name-adoption inscribed as the D5/D7 mechanism; no
+      behavior change, ADR stays Accepted. N1/N2 junior-fixed (8255549 / de11b76).
 ---
 
 # Plan-vs-impl — P3.5 (Plugin system; impl `claude/P3.5-impl` @ 7bec33d)
+
+> **RC-10 — frontmatter as live signal: `needs_architect → clean`.** Y1 resolved
+> by **ADR-029 Amendment 1** (architect routing 2026-06-03 via orchestrator;
+> `architect-routing-on-impl.md`): the two-way `tool_impls` collision check is
+> accepted **correct-by-design** (the as-Accepted ADR's "three-way" prose
+> contradicted D5/D7); **name-adoption** is inscribed as the intended D5/D7
+> host-pre-classification mechanism, not a hole. **Clarification only — no
+> behavior change; ADR-029 remains Accepted.** The two 🟢 notes were also
+> junior-fixed: N1 (dead demo `tools.yaml`) → live `text_stats` surface
+> (`8255549`); N2 (mislabeled import-order test) → real sentinel guard
+> (`de11b76`, senior-confirmed non-vacuous). Original finding bodies preserved
+> below as audit trail (the 🟡 marker is historical).
 
 ## 0. Method
 

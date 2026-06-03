@@ -17,11 +17,11 @@ artifacts_reviewed:
   - src/orchestrator/api/app.py (_build_context wiring)
   - tests/plugins/ (constitution, loader, merge, failure_modes)
   - plugins/demo/ + config/tools.yaml (host-side word_count classification)
-verdict: needs_architect
+verdict: clean
 findings:
   blocking: 0
-  needs_architect: 2
-  clean_notes: 3
+  needs_architect: 0
+  clean_notes: 5
 gates_verified:
   ruff: pass
   mypy: pass (96 src files)
@@ -46,11 +46,39 @@ note: >-
 verdict_history:
   - at: impl-stage
     verdict: needs_architect
+    at_commit: 7bec33d
     by: architect-partner
     note: Y1 weak regression guards on admit-code security paths + Y2 demo dead tools.yaml (both α, both test/demo quality not runtime)
+  - at: post-routing-revision
+    verdict: clean
+    at_commit: 7065d17
+    by: senior
+    findings: { blocking: 0, needs_architect: 0, clean_notes: 5 }
+    note: >-
+      Y1 (4 weak test guards) + Y2 (demo dead tools.yaml) both α-fixed by junior
+      (de11b76 sentinel + 3121b47 de-short-circuit + 8255549 text_stats); senior-
+      confirmed non-vacuous + 31 plugins tests pass. See architect-routing-on-impl.md.
 ---
 
 # R0-A (impl-stage) — P3.5 (Plugin system impl @ 7bec33d)
+
+> **RC-10 — frontmatter as live signal: `needs_architect → clean`.** Both Y
+> findings α-fixed by the junior (architect routing 2026-06-03 via orchestrator;
+> `architect-routing-on-impl.md`); senior-confirmed. Reclassified 🟡 → 🟢:
+> - **Y1 (4 weak regression guards on the admit-code paths)** → 🟢: (a) the
+>   R1-ordering test now writes an import-time **sentinel without raising** and
+>   asserts it does not exist (real ordering guard, fixture id corrected) —
+>   `de11b76`; (b/c/d) the broken-import / missing-callable / Y4-atomicity tests
+>   moved to the `tool_impls`-only pre-classify path so the genuine
+>   code-load-failure / half-register path is actually exercised — `3121b47`.
+>   Senior-confirmed: `tests/plugins/` 31 pass, the sentinel guard is non-vacuous.
+> - **Y2 (demo dead `tools.yaml`)** → 🟢: the demo now declares a `text_stats`
+>   classification-only tool in `contributions.tools` (caps to rev-0 →
+>   `HARD_CONFIRM`), making the demo exercise all five surfaces for real and the
+>   `tools.yaml` live — `8255549`.
+>
+> Original finding bodies preserved below as audit trail (the 🟡 markers are
+> historical). The §2 spine + code-trust HELD assessment stands.
 
 ## 0. Method + gates
 
