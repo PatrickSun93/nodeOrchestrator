@@ -27,3 +27,28 @@
   padding: 0.5rem;
   font-size: 0.85rem;
 }
+
+.leaveSummary {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 1rem auto;
+  max-width: 480px;
+  font-size: 0.9rem;
+  color: #166534;
+}
+
+.leaveSummary p {
+  margin: 0 0 0.5rem;
+}
+
+.returnBtn {
+  background: #16a34a;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}

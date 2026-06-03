@@ -27,3 +27,18 @@
   border-radius: 4px;
   padding: 0.1rem 0.4rem;
 }
+
+.leaveBtn {
+  margin-left: auto;
+  font-size: 0.8rem;
+  background: none;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  color: #6b7280;
+}
+
+.leaveBtn:hover {
+  background: #f3f4f6;
+}
