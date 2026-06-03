@@ -8,9 +8,13 @@ contributions:
     - demo_facilitator
   skills:
     - demo-research
-  # tools: [] — word_count is NOT declared here because the host pre-classifies it
-  #   in config/tools.yaml (ADR-029 D5/D7). The operator's pre-classification is the
-  #   authoritative ToolMeta; the plugin only provides the implementation.
+  # text_stats demonstrates the plugin-classify path (contributions.tools, D2 step 3/6):
+  #   plugin declares + classifies the tool; no host pre-classification → caps to rev 0
+  #   (HARD_CONFIRM) per D5 default-0 semantics. Classification-only: no tool_impls entry.
+  # word_count demonstrates the host-pre-classify + plugin-impl path (ADR-029 D5/D7):
+  #   config/tools.yaml is authoritative (rev 10 → AUTO_EXECUTE); plugin supplies impl only.
+  tools:
+    - text_stats
   tool_impls:
     word_count: "tools_impl:word_count"
   mcp_servers:
