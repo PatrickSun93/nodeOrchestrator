@@ -1,0 +1,38 @@
+# MCP server configurations (ADR-027 D3/D7).
+#
+# Pre-classify allowlist: only tools listed here are callable.
+# Discovery != permission (HR#3): tools the server exposes but not listed
+# here will raise UnknownToolError when called (fail-closed).
+#
+# reversibility follows the same 0-10 scale as tools.yaml (ADR-005 D2):
+#   0  = irreversible (e.g., write_file, move_file)
+#   10 = fully reversible (e.g., read_file, list_directory)
+#
+# api_key_env: credential indirection (HR#8). Set to null if no key needed.
+# env: minimal subprocess env additions — do NOT put secrets inline (HR#10).
+#
+# MVP demo connector: @modelcontextprotocol/server-filesystem (ADR-027 D7).
+# Demonstrates gate tier discrimination:
+#   read_file/list_directory rev=10 → AUTO_EXECUTE (executed in demo)
+#   write_file/move_file rev=1-2 → HARD_CONFIRM (gated, not auto-executed)
+
+servers:
+  filesystem:
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    api_key_env: null
+    env: {}
+    timeouts:
+      connect: 15.0
+      list_tools: 15.0
+      call_tool: 30.0
+    tools:
+      read_file:
+        reversibility: 10
+      list_directory:
+        reversibility: 10
+      write_file:
+        reversibility: 2
+      move_file:
+        reversibility: 1

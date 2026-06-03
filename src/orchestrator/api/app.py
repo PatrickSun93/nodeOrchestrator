@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -46,8 +46,11 @@ from orchestrator.core.room import RoomType
 from orchestrator.derived.snapshot import produce_snapshot
 from orchestrator.llm.config_loader import load_tools_config
 from orchestrator.llm.types import LLMRequest, LLMResponse
+from orchestrator.mcp.client import MCPSession
 from orchestrator.skills.loader import load_skills
 from orchestrator.skills.schema import Skill
+from orchestrator.tools.executor import LocalToolRegistry, execute_pending_tool_calls
+from orchestrator.tools.local import build_local_tool_registry
 
 PAYLOAD_LIMIT_BYTES = 65_536  # 64 KiB
 
@@ -66,6 +69,10 @@ class AppContext:
     regex_registry: dict[tuple[str, int], re.Pattern[str]]
     tools: dict[str, ToolMeta]
     llm_router: LLMRouterProtocol
+    # Cycle-2 executor fields (ADR-028 D1/D2): default-valued for backward compat with tests.
+    mcp_sessions: dict[str, MCPSession] = field(default_factory=dict)
+    local_tools: LocalToolRegistry = field(default_factory=dict)
+    sandbox_root: Path = field(default_factory=lambda: Path.cwd())
 
     def shutdown(self) -> None:
         """Tear down executors and DB connections on server stop."""
@@ -137,6 +144,19 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     skills = load_skills(config_dir / "skills")
     tools = load_tools_config(config_dir / "tools.yaml")
 
+    # Merge MCP tool registry + retain sessions (ADR-028 D2 — fixes session-discard).
+    # Graceful: unavailable servers are warned+skipped (skip_unavailable=True).
+    from orchestrator.mcp.adapter import build_mcp_tool_registry_and_sessions_from_config
+
+    mcp_tools, mcp_sessions = build_mcp_tool_registry_and_sessions_from_config(
+        config_dir / "mcp_servers.yaml"
+    )
+    tools = {**tools, **mcp_tools}
+
+    # Local tool registry — sandbox root defaults to config_dir parent (workspace).
+    sandbox_root = config_dir.parent
+    local_tools = build_local_tool_registry(sandbox_root)
+
     from orchestrator.api.llm_adapter import RealLLMRouter
 
     llm_router: LLMRouterProtocol = RealLLMRouter(
@@ -157,6 +177,9 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         regex_registry=regex_registry,
         tools=tools,
         llm_router=llm_router,
+        mcp_sessions=mcp_sessions,
+        local_tools=local_tools,
+        sandbox_root=sandbox_root,
     )
 
 
@@ -300,6 +323,18 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 )
             except Exception as exc:
                 raise _TurnFailedError(str(exc), user_event.id) from exc
+
+            # Post-dispatch execution stage (ADR-028 D1): execute TOOL_CALL events
+            # appended by run_turn before publishing new events to subscribers.
+            window = ctx.writer_store.get_room_events(rid)[pre_cursor:]
+            execute_pending_tool_calls(
+                window_events=window,
+                room_id=rid,
+                event_store=ctx.writer_store,
+                mcp_sessions=ctx.mcp_sessions,
+                local_tools=ctx.local_tools,
+                llm_router=ctx.llm_router,
+            )
 
             new_events = ctx.writer_store.get_room_events(rid)[pre_cursor:]
             loop.call_soon_threadsafe(ctx.bus.publish, rid, new_events)
