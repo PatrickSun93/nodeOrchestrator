@@ -449,20 +449,21 @@ def test_tool_impl_shadow_host_local_tool_refused(tmp_path: Path) -> None:
 
 
 def test_collision_refused_plugin_not_imported(tmp_path: Path) -> None:
-    """A plugin refused by collision-check must NOT have its module imported.
+    """A collision-refused plugin's module must NEVER be imported (ADR-029 D2 step 3; R0-B R1).
 
-    tools_impl.py raises an error at import time; if the module were imported
-    before the collision check, that error would propagate. The absence of any
-    exception confirms collision-check ran BEFORE importlib (ADR-029 D2 step 3;
-    R0-B R1 security-load-bearing ordering).
+    tools_impl.py writes a sentinel file at import time (no raise — a raise would be
+    caught by code.py's except-clause and mask a wrong-ordering regression). If exec_module
+    runs before the collision-check, the sentinel is written and the assertion fails.
+    Correct ordering: collision-check fires first → plugin refused → sentinel never written.
     """
     plugins_dir = tmp_path / "plugins"
     pdir = plugins_dir / "collision_bomb"
     pdir.mkdir(parents=True)
+    sentinel = tmp_path / "import_sentinel.txt"
     (pdir / "plugin.yaml").write_text(
         dedent("""\
             schema_version: 1
-            id: collison_bomb
+            id: collision_bomb
             name: 'x'
             version: '1.0'
             contributions:
@@ -471,13 +472,14 @@ def test_collision_refused_plugin_not_imported(tmp_path: Path) -> None:
         """),
         encoding="utf-8",
     )
-    # If imported, this module raises — proving collision-check must run first
+    # At import time: write sentinel (no raise). A regression moving import before
+    # collision-check would write the sentinel; a raise would be silently caught.
     (pdir / "tools_impl.py").write_text(
-        "raise RuntimeError('IMPORT GUARD: this module must not be imported before refusal')\n",
+        f"import pathlib\npathlib.Path({str(sentinel)!r}).write_text('imported')\n"
+        "def fn(): pass\n",
         encoding="utf-8",
     )
 
-    # This must NOT raise even though tools_impl.py would explode if imported
     result = load_plugins(
         plugins_dir,
         models=_MODELS,
@@ -489,6 +491,8 @@ def test_collision_refused_plugin_not_imported(tmp_path: Path) -> None:
         host_local_tool_names=frozenset({"read_file"}),  # collision → refused before import
         host_mcp_server_names=frozenset(),
     )
+    # Sentinel must NOT exist — exec_module never ran (ordering guard holds)
+    assert not sentinel.exists(), "tools_impl.py was imported before collision-check — ordering regression"
     assert result.local_tools == {}
 
 
