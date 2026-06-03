@@ -21,7 +21,7 @@ from concurrent.futures import TimeoutError as _FutureTimeout
 from typing import Any
 
 from orchestrator.agents.dispatch import LLMRouterProtocol
-from orchestrator.agents.mcp_interpret import interpret_mcp_tool_result
+from orchestrator.agents.mcp_interpret import get_mcp_tool_interpretation
 from orchestrator.core.event import (
     Event,
     EventType,
@@ -216,22 +216,7 @@ def _execute_mcp_call(
         agent_id=agent_id,
     )
 
-    # Bounded advisory interpret (D5 R1): run under deadline; on timeout raw TOOL_RESULT stands.
-    _interpret_bounded(call_id, agent_id, room_id, event_store, llm_router)
-
-
-def _interpret_bounded(
-    call_id: str,
-    agent_id: str,
-    room_id: RoomId,
-    event_store: EventStore,
-    llm_router: LLMRouterProtocol,
-) -> None:
-    """Run interpret_mcp_tool_result under a bounded deadline (ADR-028 D5 R1).
-
-    On timeout or any error: raw TOOL_RESULT stands, no OBSERVATION appended.
-    Blocking the writer thread for at most INTERPRET_TIMEOUT_S seconds.
-    """
+    # Find the TOOL_RESULT just appended (None if execute_mcp_tool_call failed → TOOL_FAILED).
     all_events = event_store.get_room_events(room_id)
     tr_event = next(
         (
@@ -241,32 +226,67 @@ def _interpret_bounded(
         ),
         None,
     )
-    if tr_event is None:
-        # execute_mcp_tool_call appended TOOL_FAILED; nothing to interpret.
-        return
+    if tr_event is not None:
+        # Bounded advisory interpret (D5 R1 / Y1): pool task = LLM call only;
+        # OBSERVATION append stays on the writer thread.
+        _interpret_bounded(call_id, agent_id, room_id, event_store, llm_router, tr_event)
 
+
+def _interpret_bounded(
+    call_id: str,
+    agent_id: str,
+    room_id: RoomId,
+    event_store: EventStore,
+    llm_router: LLMRouterProtocol,
+    tr_event: Event,
+) -> None:
+    """Run MCP interpret LLM call under deadline; append OBSERVATION on writer thread.
+
+    Single-writer invariant (ADR-028 D1/D5 Y1):
+    - Pool task: get_mcp_tool_interpretation — LLM call ONLY, no event_store access.
+    - Writer thread: OBSERVATION append AFTER future.result() returns (or not at all).
+    - On timeout: future.cancel() + no OBSERVATION (raw TOOL_RESULT stands, writer unblocked).
+    A timed-out or leaked pool thread cannot write to the store because the pool
+    task never calls event_store.append.
+    """
     try:
         future = _INTERPRET_EXECUTOR.submit(
-            interpret_mcp_tool_result,
+            get_mcp_tool_interpretation,
             tool_result_event=tr_event,
             agent_id=agent_id,
-            room_id=room_id,
-            event_store=event_store,
             llm_router=llm_router,
         )
-        future.result(timeout=INTERPRET_TIMEOUT_S)
+        interpretation = future.result(timeout=INTERPRET_TIMEOUT_S)
     except _FutureTimeout:
+        future.cancel()
         _log.warning(
             "executor: interpret timeout (%.1fs) for call_id=%r; keeping raw TOOL_RESULT",
             INTERPRET_TIMEOUT_S,
             call_id,
         )
+        return
     except Exception as exc:
         _log.warning(
             "executor: interpret error for call_id=%r: %s; keeping raw TOOL_RESULT",
             call_id,
             exc,
         )
+        return
+
+    if not interpretation:
+        return
+
+    # OBSERVATION append on the single writer thread (single-writer invariant — ADR-028 D1/D5).
+    event_store.append(
+        Event(
+            id=generate_event_id(),
+            room_id=room_id,
+            type=EventType.OBSERVATION,
+            author=build_author(agent_id),
+            timestamp=now_ms(),
+            content=f"[MCP tool result interpretation]\n{interpretation}",
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

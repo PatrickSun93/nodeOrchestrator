@@ -284,6 +284,67 @@ def test_bounded_interpret_timeout_no_observation(monkeypatch: pytest.MonkeyPatc
     assert not any(e.type == EventType.OBSERVATION for e in events)
 
 
+def test_interpret_timeout_leaked_thread_no_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Leaked pool thread that completes after timeout CANNOT write OBSERVATION.
+
+    Y1 structural guarantee: pool task = get_mcp_tool_interpretation (LLM call only);
+    event_store.append is called only on the writer thread AFTER future.result() returns.
+    A timed-out future whose pool thread eventually completes returns its result into
+    the already-cancelled future — the writer never sees it, never appends OBSERVATION.
+    (ADR-028 D1/D5 Y1 — single-writer invariant.)
+    """
+    import orchestrator.tools.executor as _executor_mod
+
+    monkeypatch.setattr(_executor_mod, "INTERPRET_TIMEOUT_S", 0.05)
+
+    store = _make_store()
+    room_id = _make_room(store)
+    tc = _tc_event(room_id, "mcp__test_server__do_thing")
+    store.append(tc)
+    session = _mcp_session(result="test result")
+
+    thread_completed = threading.Event()
+
+    class SlowRouter:
+        def call(self, request: LLMRequest) -> LLMResponse:
+            from orchestrator.llm.types import RequestId
+
+            time.sleep(0.3)  # completes well after the 0.05s timeout
+            thread_completed.set()
+            return LLMResponse(
+                request_id=RequestId("req_slow"),
+                content="interpretation text",
+                model_id_requested=_MOCK_MODEL,
+                model_id_used=_MOCK_MODEL,
+                provider_id_used=_MOCK_PROVIDER,
+                usage=Usage(input_tokens=5, output_tokens=10),
+                latency_ms=300,
+                finish_reason="stop",
+            )
+
+    execute_pending_tool_calls(
+        window_events=[tc],
+        room_id=room_id,
+        event_store=store,
+        mcp_sessions={"test_server": session},
+        local_tools={},
+        llm_router=SlowRouter(),
+    )
+
+    # Wait for the leaked pool thread to actually complete its LLM call.
+    assert thread_completed.wait(timeout=5), "pool thread did not complete within 5s"
+    time.sleep(0.05)  # grace period for any hypothetical stray write
+
+    events = store.get_room_events(room_id)
+    # TOOL_RESULT present (execute_mcp_tool_call succeeded)
+    assert any(e.type == EventType.TOOL_RESULT for e in events)
+    # OBSERVATION absent: pool task only returns text; append is on writer thread
+    # which did NOT execute append because future timed out before result() returned.
+    assert not any(e.type == EventType.OBSERVATION for e in events)
+
+
 # ---------------------------------------------------------------------------
 # §3 Double-execution guard (full-room scope — R0-B Y1)
 # ---------------------------------------------------------------------------

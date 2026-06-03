@@ -4,6 +4,11 @@ interpret_mcp_tool_result() calls the LLM with LLMPurpose.TOOL_OUTPUT_INTERPRET
 (content-gen, untrusted external-data framing) and appends an OBSERVATION
 event with the interpretation.
 
+get_mcp_tool_interpretation() is the LLM-call-only half: it returns the
+interpretation text (or None) without touching the event store. The executor
+uses this to run the LLM call on a pool thread while keeping event_store.append
+on the single writer thread (ADR-028 D5 Y1 — single-writer invariant).
+
 Lives in agents/ (not mcp/) to keep the mcp/ package decision-free (HR#6).
 No new LLMPurpose — reuses the existing TOOL_OUTPUT_INTERPRET (HR#5).
 """
@@ -109,3 +114,63 @@ def interpret_mcp_tool_result(
             content=f"[MCP tool result interpretation]\n{interpretation}",
         )
     )
+
+
+def get_mcp_tool_interpretation(
+    *,
+    tool_result_event: Event,
+    agent_id: str,
+    llm_router: LLMRouterProtocol,
+) -> str | None:
+    """Call LLM to interpret an MCP tool result; return text or None on failure.
+
+    Computation-only half of interpret_mcp_tool_result: performs the LLM call
+    but does NOT access the event store. The caller (on the single writer thread)
+    is responsible for appending the OBSERVATION event if this returns non-None
+    (ADR-028 D5 Y1 — single-writer invariant: pool task must not call
+    event_store.append so that a timed-out / leaked pool thread cannot
+    write to the store from a non-writer thread).
+
+    Returns:
+        The interpretation text on success, or None on LLM error / empty response.
+
+    Raises:
+        ValueError: if tool_result_event.type is not TOOL_RESULT.
+    """
+    if tool_result_event.type != EventType.TOOL_RESULT:
+        raise ValueError(
+            f"get_mcp_tool_interpretation requires a TOOL_RESULT event, "
+            f"got {tool_result_event.type!r}"
+        )
+
+    raw_content = tool_result_event.content
+    call_id = str(tool_result_event.metadata.get("call_id", "unknown"))
+
+    request = LLMRequest(
+        request_id=generate_request_id(),
+        caller_agent_id=agent_id,
+        purpose=LLMPurpose.TOOL_OUTPUT_INTERPRET,
+        messages=[
+            Message(role="system", content=_SYSTEM_PROMPT),
+            Message(
+                role="user",
+                content=(
+                    f"MCP tool result (call_id={call_id!r}):\n\n"
+                    f"{raw_content}\n\n"
+                    "Describe what this result contains."
+                ),
+            ),
+        ],
+    )
+
+    try:
+        response = llm_router.call(request)
+    except Exception as exc:
+        _log.warning("mcp interpret: LLM call failed for call_id=%r: %s", call_id, exc)
+        return None
+
+    interpretation = response.content
+    if not interpretation.strip():
+        return None
+
+    return interpretation
