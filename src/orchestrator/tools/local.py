@@ -6,6 +6,8 @@ Trust boundary (read_file / list_files):
 - Configured sandbox root (operator-trusted workspace directory).
 - Path resolve + containment: reject if escapes root (traversal / symlink / absolute).
 - read_file: bounded read ≤ MAX_RESULT_BYTES (+1) bytes — never full file (OOM guard).
+- list_files: output byte-capped at MAX_RESULT_BYTES (consistent with read_file);
+  over-cap: trim to last whole entry, set output_truncated_at (Y2 fix).
 - Threat model: untrusted input = LLM-proposed path; sandbox root = trusted.
   TOCTOU out of MVP scope (ADR-028 D3 — deliberate stated posture).
 
@@ -84,7 +86,16 @@ def _make_list_files(sandbox_root: Path) -> LocalToolFn:
         if not resolved.is_dir():
             raise LocalToolError(f"not a directory: {path_str!r}")
         entries = sorted(e.name for e in resolved.iterdir())
-        return LocalToolOutput(content="\n".join(entries))
+        output = "\n".join(entries)
+        output_bytes = output.encode("utf-8")
+        if len(output_bytes) > MAX_RESULT_BYTES:
+            # Byte-cap output (consistent with read_file); trim to last whole entry.
+            truncated = output_bytes[:MAX_RESULT_BYTES].decode("utf-8", errors="replace")
+            last_nl = truncated.rfind("\n")
+            if last_nl >= 0:
+                truncated = truncated[:last_nl]
+            return LocalToolOutput(content=truncated, output_truncated_at=MAX_RESULT_BYTES)
+        return LocalToolOutput(content=output)
 
     return _list_files
 

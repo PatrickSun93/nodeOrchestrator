@@ -3,7 +3,7 @@
 Tests the MVP local tool set through the executor's local-dispatch hook:
   - get_current_time: pure clock read, no I/O
   - read_file: sandboxed FS, bounded read, path-traversal rejection
-  - list_files: sandboxed FS, path-traversal rejection
+  - list_files: sandboxed FS, path-traversal rejection, byte-cap (Y2 fix)
   - not_implemented fail-closed seam
 """
 
@@ -13,6 +13,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
+
+import pytest
 
 from orchestrator.agents.dispatch import LLMRouterProtocol
 from orchestrator.core.event import (
@@ -304,6 +306,45 @@ def test_list_files_path_escape_rejected(tmp_path: Path) -> None:
     events = store.get_room_events(room_id)
     assert len([e for e in events if e.type == EventType.TOOL_FAILED]) == 1
     assert not any(e.type == EventType.TOOL_RESULT for e in events)
+
+
+def test_list_files_output_byte_cap_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """list_files output exceeding MAX_RESULT_BYTES → capped + output_truncated_at set (Y2 fix)."""
+    import orchestrator.tools.local as _local_mod
+
+    # Small cap so a handful of files suffices; avoids creating thousands.
+    monkeypatch.setattr(_local_mod, "MAX_RESULT_BYTES", 50)
+
+    # Create files whose combined listing exceeds 50 bytes.
+    # E.g. "alpha_file.txt\nbeta_file.txt\n..." ≈ 15 bytes/entry → 4+ entries exceed 50 bytes.
+    for name in ["alpha_file.txt", "beta_file.txt", "gamma_file.txt", "delta_file.txt"]:
+        (tmp_path / name).touch()
+
+    store = _make_store()
+    room_id = _make_room(store)
+    tc = _tc_event_params(room_id, "list_files", "tc_ls_big", {"path": "."})
+    store.append(tc)
+
+    execute_pending_tool_calls(
+        window_events=[tc],
+        room_id=room_id,
+        event_store=store,
+        mcp_sessions={},
+        local_tools=build_local_tool_registry(tmp_path),
+        llm_router=_noop_llm_router(),
+    )
+
+    events = store.get_room_events(room_id)
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    r = results[0]
+    assert r.metadata["output_truncated_at"] == 50
+    assert len(r.content.encode("utf-8")) <= 50
+    # Output must contain only whole entry names (no partial names at truncation boundary).
+    for name in r.content.split("\n"):
+        assert name.strip() == name  # no partial UTF-8 corruption
 
 
 # ---------------------------------------------------------------------------
