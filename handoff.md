@@ -942,7 +942,7 @@ Placeholder defaults 全部标 TODO,真值通过 P1.5+ 实际使用 tune 出来�
 
 加更多 agent / 模板 / skill,Plugin 系统,MCP 集成,GUI 完整。
 
-**P3.4 已落地 (2026-06-02)**: MCP client + stdio transport + generic tool-adapter +
+**P3.4 cycle-1 已落地 (2026-06-02)**: MCP client + stdio transport + generic tool-adapter +
 autonomy-gating 已完成 (ADR-027 Accepted)。
 - `src/orchestrator/mcp/`: config/transport/client/adapter/execution (5 模块)
 - `src/orchestrator/agents/mcp_interpret.py`: TOOL_OUTPUT_INTERPRET interpret wiring
@@ -951,8 +951,19 @@ autonomy-gating 已完成 (ADR-027 Accepted)。
 - 宪法脊柱全部守住: MCP tool-call 走现有 gate, discovery≠permission, feed-the-gate-unchanged,
   mcp/ 无 routing/judgment, TOOL_OUTPUT_INTERPRET content-gen interpret
 - 信任边界: server allowlist + api_key_env + scoped subprocess env + fail-closed timeout
-- MVP: AUTO_EXECUTE 执行, COUNTDOWN/HARD gated-not-executed (no confirm flow, defer to GUI)
+- Cycle-1 only: TOOL_CALL events 由 gate 写入，但 runtime 未实际执行（execution stage 在 cycle-2）
 - 51 mcp tests: §1/§2/§3/§4/§6 全部覆盖 (hanging-mock/orphan/oversized/unclassified/namespace 等)
+
+**P3.4 cycle-2 已落地 (2026-06-03)**: runtime tool-executor 完成 (ADR-028 Accepted)。
+- `src/orchestrator/tools/`: executor.py (post-dispatch stage) + local.py (MVP local tools)
+- `src/orchestrator/api/app.py`: AppContext + _write_and_turn 接入 execute_pending_tool_calls
+- `src/orchestrator/mcp/adapter.py`: session-retaining builder (修复 session-discard gap)
+- AUTO_EXECUTE 现在**真正**在 runtime 执行: MCP tool → TOOL_RESULT + bounded interpret → OBSERVATION；本地工具 (get_current_time/read_file/list_files) → TOOL_RESULT（不 interpret）
+- COUNTDOWN/HARD gated-not-executed (no confirm flow, defer to GUI) — 不变
+- 双重执行守卫 (full-room history scope)；per-turn MCP cap (MAX_MCP_CALLS_PER_TURN)；
+  interpret bounded deadline (INTERPRET_TIMEOUT_S)；bounded local read (MAX_RESULT_BYTES)
+- 沙箱信任边界: read_file/list_files resolve + 逃逸检测，sandbox_root = config_dir.parent
+- 28 tools tests: C2-1/C2-2 executor + local + C2-3 e2e + C2-4 constitution 全覆盖
 
 ---
 

@@ -1,10 +1,11 @@
 """MCP tool-adapter: builds the namespaced ToolMeta registry from config allowlist.
 
 Public API:
-  namespace(server, tool)                          → "mcp__<server>__<tool>"
-  to_mcp_call(namespaced_name)                     → (server_name, tool_name)
-  build_tool_registry(server, cfg, discovered)     → dict[str, ToolMeta]
-  build_mcp_tool_registry_from_config(config_path) → dict[str, ToolMeta]
+  namespace(server, tool)                                   → "mcp__<server>__<tool>"
+  to_mcp_call(namespaced_name)                              → (server_name, tool_name)
+  build_tool_registry(server, cfg, discovered)              → dict[str, ToolMeta]
+  build_mcp_tool_registry_from_config(config_path)          → dict[str, ToolMeta]
+  build_mcp_tool_registry_and_sessions_from_config(cfg)     → (registry, sessions)
 
 Namespacing: mcp__<server>__<tool> (double-underscore, collision-free vs local
 tools which never carry the mcp__ prefix; ADR-027 D3).
@@ -23,11 +24,15 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mcp.types import Tool
 
 from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.mcp.config import MCPServerConfig, load_mcp_servers_config
+
+if TYPE_CHECKING:
+    from orchestrator.mcp.client import MCPSession
 
 _log = logging.getLogger("orchestrator.mcp.adapter")
 
@@ -138,3 +143,52 @@ def build_mcp_tool_registry_from_config(
                 raise
 
     return registry
+
+
+def build_mcp_tool_registry_and_sessions_from_config(
+    config_path: Path,
+    *,
+    skip_unavailable: bool = True,
+) -> tuple[dict[str, ToolMeta], dict[str, MCPSession]]:
+    """Load mcp_servers.yaml and return (tool_registry, mcp_sessions).
+
+    Like build_mcp_tool_registry_from_config, but also retains the MCPSession
+    objects built during discovery so the runtime executor can reuse them
+    (fixes the session-discard gap — ADR-028 D2 / R0-B Y2 sub-finding).
+
+    Returns:
+        (registry, sessions) where registry maps namespaced tool names to ToolMeta
+        and sessions maps server_name to MCPSession.
+    """
+    from orchestrator.mcp.client import connect, list_tools  # local: avoids cycles
+
+    if not config_path.exists():
+        return {}, {}
+
+    cfg = load_mcp_servers_config(config_path)
+    registry: dict[str, ToolMeta] = {}
+    sessions: dict[str, MCPSession] = {}
+
+    for server_name, server_cfg in cfg.servers.items():
+        try:
+            session = connect(server_name, server_cfg)
+            discovered = list_tools(session)
+            server_registry = build_tool_registry(server_name, server_cfg, discovered)
+            registry.update(server_registry)
+            sessions[server_name] = session
+            _log.info(
+                "mcp adapter: server=%r registered %d tools (session retained)",
+                server_name,
+                len(server_registry),
+            )
+        except Exception as exc:
+            if skip_unavailable:
+                _log.warning(
+                    "mcp adapter: server=%r unavailable at startup (%s); skipping",
+                    server_name,
+                    exc,
+                )
+            else:
+                raise
+
+    return registry, sessions
