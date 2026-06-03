@@ -8,8 +8,9 @@ contributions:
     - demo_facilitator
   skills:
     - demo-research
-  tools:
-    - word_count
+  # tools: [] — word_count is NOT declared here because the host pre-classifies it
+  #   in config/tools.yaml (ADR-029 D5/D7). The operator's pre-classification is the
+  #   authoritative ToolMeta; the plugin only provides the implementation.
   tool_impls:
     word_count: "tools_impl:word_count"
   mcp_servers:

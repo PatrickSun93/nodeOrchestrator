@@ -226,9 +226,19 @@ def _collision_check(
             _log.warning("plugin %r: tool %r collides with cross-plugin — refusing", pid, tool_name)
             return False
 
-    # tool_impls names (→ local_tools): three-way check (R0-A Y1 / ADR-029 D6)
+    # tool_impls names (→ local_tools): two-way check (R0-A Y1 / ADR-029 D6)
+    # (i) host local_tools — closes shadow-bypass (a plugin must not shadow an
+    #     existing host implementation such as the sandboxed read_file).
+    # (ii) cross-plugin — two plugins cannot both provide the same impl name.
+    # NOTE: tool_impls names are intentionally NOT checked against host_tools
+    # (ToolMeta-only classification entries from config/tools.yaml). Operator
+    # may pre-classify a brand-new plugin tool in config/tools.yaml to set the
+    # gate tier (ADR-029 D5/D7); that pre-classification is authoritative but
+    # not an "existing implementation" to shadow. The shadow-bypass is closed by
+    # check (i) which covers all tools with local implementations.
     for impl_name in c.tool_impls:
-        # (i) host local_tools — closes shadow-bypass (e.g. read_file)
+        # (i) host local_tools — closes shadow-bypass (e.g. read_file has a
+        #     sandboxed impl; shadowing it would bypass the path-sandbox).
         if impl_name in host_local_tool_names:
             _log.warning(
                 "plugin %r: tool_impl %r shadows host local_tools (shadow-bypass) — refusing",
@@ -236,15 +246,7 @@ def _collision_check(
                 impl_name,
             )
             return False
-        # (ii) host tools registry
-        if impl_name in host_tools:
-            _log.warning(
-                "plugin %r: tool_impl %r collides with host tools registry — refusing",
-                pid,
-                impl_name,
-            )
-            return False
-        # (iii) cross-plugin tool_impls
+        # (ii) cross-plugin tool_impls
         if impl_name in seen_tool_impl_names:
             _log.warning(
                 "plugin %r: tool_impl %r collides with cross-plugin — refusing",
@@ -369,12 +371,18 @@ def _load_plugin(
         _log.warning("plugin %r: failed to load skills: %s — refusing", pid, exc)
         return None
 
+    declared_tools = set(manifest.contributions.tools)
     try:
-        plugin_own_tools: dict[str, ToolMeta] = (
+        raw_own_tools: dict[str, ToolMeta] = (
             load_tools_config(plugin_dir / "tools.yaml")
             if (plugin_dir / "tools.yaml").exists()
             else {}
         )
+        # Only load ToolMeta entries that the manifest declares (manifest is authority;
+        # undeclared entries in tools.yaml are silently ignored — not collision-checked).
+        plugin_own_tools: dict[str, ToolMeta] = {
+            k: v for k, v in raw_own_tools.items() if k in declared_tools
+        }
     except ConfigError as exc:
         _log.warning("plugin %r: failed to load tools.yaml: %s — refusing", pid, exc)
         return None
