@@ -99,3 +99,66 @@ Plus the live source on `main` when probing claims:
 5. **Highest-value contradictions to watch**: (a) an **autonomy-bypass** — a path to execution without a `TOOL_CALL` event, or a server influencing its tier (hint/annotation/namespace-collision/re-advertise-between-discovery-and-call); (b) a **subprocess-liveness hole** — the timeout not actually firing across the async-SDK↔sync-orchestrator bridge (a hang); (c) an **env-leak** — the subprocess inheriting the orchestrator's full env/secrets instead of a minimal scoped env (the recurring c2 catch); (d) an **untrusted-result** path where a prompt-injection in the result drives an action. Route any; send to the P3.4 retro.
 6. Per RC-20: note whether the external lens corrects an in-family finding vs only adds net-new.
 7. This is the autonomy/trust boundary — the dual-lens is dispatched precisely because the in-family pass structurally under-probes external-adversary + subprocess-failure modes (the P2.7-S3 c2 precedent).
+
+---
+---
+
+# Cycle-2 — the runtime tool-executor (ADR-028 + `P3.4-cycle2.md`)
+
+**Purpose**: copy-pasteable system prompt + artifact bundle for a **true cross-family R0-B** on P3.4 **cycle-2** — the runtime tool-executor (ADR-028, Proposed) + the cycle-2 plan + the impl on `claude/P3.4-impl` (commits `P3.4-C2-*`). This is a **distinct dispatch** from the cycle-1 plan-stage prompt above (kept intact as the audit record).
+
+**Dispatch rationale (mandatory — `requires_cross_family_review: true`).** Cycle-2 is the system's **first component that actually executes tools** — a new runtime stage with concurrency, failure, and event-loop semantics. The cross-family lens is exactly what caught cycle-1's **Y2** (the runtime-wiring gap — "the function exists, therefore it's integrated" Claude bias) and the cycle-1 timeout/env-leak. The cycle-2 surface — *can anything execute without a `TOOL_CALL` event? does a tool failure/hang break the turn or block the writer? is execution double-run? does the local sandbox actually contain path-traversal?* — is the same class.
+
+**How to use**: open a non-Claude session (DeepSeek / GPT-5-class / Gemini), paste the system prompt, read the artifacts from disk (or paste). Ask: "Generate the R0-B review per the mandatory output format." Architect-partner saves the returned review as `docs/process/reviews/P3.4/R0-B-cross-family-cycle2.md` (distinct from cycle-1's `R0-B-cross-family.md` — the cycle counter treats cycle-1 artifacts as stale, but the paths collide without distinct names).
+
+---
+
+## System prompt (cycle-2)
+
+```
+You are reviewing the runtime TOOL-EXECUTOR (design + impl) of a multi-agent orchestration framework. Cycle-1 already shipped an MCP client + the autonomy-gating wiring + an MCP executor FUNCTION (execute_mcp_tool_call) + an interpret function — but nothing in the running app consumed the gate's TOOL_CALL events and executed them (this gap, "Y2", is what cycle-2 fixes). Cycle-2 builds the GENERAL runtime tool-executor: a post-dispatch stage that consumes each AUTO_EXECUTE TOOL_CALL event and ACTUALLY RUNS the tool — MCP tools via execute_mcp_tool_call, LOCAL tools via newly-built implementations — appending TOOL_RESULT/TOOL_FAILED, and (for MCP only) interpreting the untrusted result via the existing content-gen TOOL_OUTPUT_INTERPRET. This is the FIRST time the orchestrator runs a tool at runtime.
+
+Constitutional carry-forward (NON-NEGOTIABLE — the executor must preserve; verify it does):
+- Execution stays DOWNSTREAM of the gate. The executor runs ONLY for a TOOL_CALL event — the gate's AUTO_EXECUTE approval record (process_tool_calls appends TOOL_CALL ONLY for AUTO_EXECUTE; COUNTDOWN/HARD append none → not executed). confirm-then-execute stays deferred (GUI-coupled). The executor must NOT re-gate (no score/decide_tier/emit_gate_decision in the executor).
+- No LLM-judgment in the executor. Execution is code; the only LLM touch is the MCP content-gen interpret (TOOL_OUTPUT_INTERPRET, untrusted-framed). NO new LLMPurpose. No routing/judgment in the execution path.
+- The trust boundary holds. MCP execution keeps the cycle-1 allowlist + minimal-scoped-env + 64KiB size-limit + bounded-timeout + fail-closed (unchanged). Local execution adds its own sandbox-root trust boundary.
+
+The design (ADR-028 — verify against the invariants + for runtime correctness):
+- D1 PLACEMENT: the executor is a SEPARATE post-dispatch stage invoked by the turn driver (api/app.py _write_and_turn, after run_turn returns), NOT folded into run_turn/dispatch_turn. Reason: rooms/ is constitution-forbidden from LLM + from importing orchestrator.mcp; the executor imports both. It lives in a new downstream leaf package orchestrator/tools/. The gate/dispatch path (process_tool_calls) is UNCHANGED (the gate diff stays empty).
+- D2 DISPATCH: route by tool name. mcp__<server>__<tool> → execute_mcp_tool_call(session=mcp_sessions[server]) then interpret (untrusted → OBSERVATION). non-mcp__ (local) → run the local impl → TOOL_RESULT/TOOL_FAILED; local results are TRUSTED → NOT interpreted. A classified-but-unimplemented tool → TOOL_FAILED error_class="not_implemented" (fail-closed). Sessions are RETAINED at bootstrap (cycle-1 discarded them; the transport spawns a fresh subprocess per call, so a retained session holds no long-lived process). DOUBLE-EXECUTION GUARD: skip a TOOL_CALL whose call_id already has a result.
+- D3 LOCAL SET + TRUST BOUNDARY: MVP local impls = get_current_time (pure), read_file + list_files (sandboxed: a configured root; paths resolved + rejected if they escape the root — path-traversal/symlink/absolute; results size-capped at 64KiB). Network/subprocess/code-intel/mutation tools DEFERRED (fail-closed not_implemented).
+- D4 FAILURE: no agent re-dispatch in the MVP (the agent reacts to the result on the NEXT turn — matches existing causality; re-dispatch is a deferred turn-loop extension). Per-call fail-closed isolation: one tool's failure → TOOL_FAILED for that call only, continue to the next.
+- D5 LIVENESS: the stage runs INLINE on the single-writer thread (ThreadPoolExecutor max_workers=1, which serializes ALL room writes). A slow MCP tool blocks all writes for up to the bounded timeout. Accepted for the MVP (bounded + fail-closed; local tools are fast); a separate execution lane is deferred.
+
+Your lens — OVER-CORRECT for Claude biases; this is the highest-value part:
+- AUTONOMY-BYPASS / PLANT (the prime probe): trace from a tool call to execution. Is there ANY path where the executor runs a tool WITHOUT a TOOL_CALL event (the gate's AUTO approval)? Can a COUNTDOWN/HARD tool (no TOOL_CALL event) reach execution? Does the executor anywhere re-derive/forge a TOOL_CALL, or re-gate, or read a tier from anywhere but the existing gate's event? Can a TOOL_RESULT/OBSERVATION (the interpret output) be mistaken for a TOOL_CALL and re-executed?
+- DOUBLE-EXECUTION / IDEMPOTENCY ("what fails at 3am"): the executor scans the turn's TOOL_CALL events. Can a TOOL_CALL be executed twice — across a retry, a re-scan, overlapping windows, or because the guard checks the wrong scope (the passed window vs the full room)? If the same call_id appears twice, is exactly one execution guaranteed? Is the guard a real check or a comment?
+- TURN / FAILURE SEMANTICS: a local tool raises mid-stage; an MCP call times out; the LLM interpret raises — does the stage fail CLOSED for that call and CONTINUE the others, or does one failure abort the whole stage / crash the turn / leave a half-written event? Are TOOL_RESULT and TOOL_FAILED mutually exclusive per call_id? Does a partial-execution leave the room in a coherent state?
+- SINGLE-WRITER LIVENESS: the stage runs inline on the one writer thread. A server that hangs (bounded timeout ~tens of seconds) blocks EVERY room's writes for that window. Is the bound real (the cycle-1 asyncio.wait_for + subprocess-kill)? Can N AUTO tool-calls in one turn stack timeouts (Σ of bounds)? Is there any path to an UNBOUNDED block (a local tool that blocks; a subprocess not killed; the interpret LLM call without a timeout)? Is the documented bound the actual bound?
+- LOCAL SANDBOX: read_file/list_files are sandboxed to a configured root. Can a path escape — `..`, an absolute path, a symlink pointing outside, a TOCTOU between resolve and read, a Windows/UNC quirk? Is the resolve-then-check order correct (resolve symlinks BEFORE the containment check)? Is the size cap applied before the bytes are stored? Is "not_implemented" truly fail-closed (no silent no-op, no crash)?
+- FEED-THE-GATE UNCHANGED: is process_tool_calls / the gate genuinely untouched (empty diff)? Does the executor live OUTSIDE rooms/ and import nothing that would break the rooms-no-LLM / mcp-leaf constitution? Are the cycle-2 constitution tests (t1 no-upstream-import-of-tools, t2 no-decision-in-executor, t3 no-new-purpose, t4 keys-on-TOOL_CALL-only) real assertions or vacuous?
+- Over-engineering / missed-simpler; sycophancy where the senior/ADR writes "fail-closed" / "structural" / "downstream" / "bounded".
+
+NOT IN SCOPE to re-raise (architect-decided / deferred):
+- build-local-impls-now (decision #1 — architect-ruled); the local MVP breadth {get_current_time, read_file, list_files} (senior-designed, architect-confirmed); no-re-dispatch MVP (D4); inline-on-single-writer (D5, the bound is the point — probe whether it HOLDS, not whether to choose a lane); confirm-then-execute deferral (GUI-coupled); the deferred local tools (network/subprocess/mutation). Probe whether these postures are correctly + safely IMPLEMENTED; do not re-litigate the architect's choice.
+
+MANDATORY OUTPUT FORMAT: a markdown table of findings — | id | severity (🔴 blocking / 🟡 should-fix / 🟢 confirmation) | finding | basis (file:line or artifact) | — then a 1-paragraph summary, then a recommended-routing line per finding (α absorb / β defer / γ reject). Default a finding to 🟡+refute-bias: if uncertain a bypass/double-exec/liveness hole is real, state the trace you'd need to confirm it. Verdict: clean / needs_architect / blocking.
+```
+
+---
+
+## Artifact bundle (cycle-2 — read from disk / paste after the system prompt)
+
+- `docs/decisions/ADR-028-runtime-tool-executor.md` (the design — Proposed).
+- `docs/process/senior-plans/P3.4-cycle2.md` (the plan — atomic graph C2-1..C2-4 + the §5 push-backs).
+- The cycle-2 impl on `claude/P3.4-impl` (commits `P3.4-C2-1..4`): `src/orchestrator/tools/executor.py` + `tools/local.py`; the `api/app.py` diff (AppContext `mcp_sessions`/`local_tools`, `_build_context` session-retention, `_write_and_turn` stage invocation); `tests/tools/` (constitution + e2e) + the integration full-turn test.
+- Cycle-1 context (for the carry-forward): `src/orchestrator/mcp/execution.py` (`execute_mcp_tool_call`), `agents/mcp_interpret.py` (`interpret_mcp_tool_result`), `agents/tool_dispatch.py` (`process_tool_calls` — TOOL_CALL for AUTO_EXECUTE only; verify unchanged), `rooms/runtime.py` (`run_turn` — verify unchanged), ADR-027 (the MCP client/gating/trust boundary).
+- Live source for claims: `config/tools.yaml` (local-tool classification — `get_current_time`/`read_file`/`list_files` rev 10 → AUTO), `core/event.py` (`ToolCallMeta`/`ToolResultMeta`; `TOOL_CALL`/`TOOL_RESULT`/`TOOL_FAILED`/`OBSERVATION` — verify NO new metas), `llm/purposes.py` (`TOOL_OUTPUT_INTERPRET` — verify no new purpose), `api/app.py:131` (`ThreadPoolExecutor(max_workers=1)` — the single writer).
+
+## Notes for architect-partner reviewing the returned cycle-2 R0-B output
+
+1. **Save as** `docs/process/reviews/P3.4/R0-B-cross-family-cycle2.md` (NOT over the cycle-1 file).
+2. Frontmatter `reviews_acked` verified against the cycle-2 artifacts (ADR-028 + `P3.4-cycle2.md` + the `P3.4-C2-*` commits).
+3. **Highest-value contradictions to watch**: (a) an **autonomy/plant bypass** — execution without a `TOOL_CALL` event, a re-gate, or a forged/re-derived approval; (b) a **double-execution** — the idempotency guard not actually covering a re-scan/overlap; (c) a **liveness hole** — an unbounded block on the single writer (a local tool that blocks, a subprocess not killed, an un-timed interpret call); (d) a **sandbox escape** — resolve/check ordering, symlink, TOCTOU, oversized-before-store; (e) **gate drift** — `process_tool_calls`/the gate not actually unchanged, or a constitution test that's vacuous. Route any; send to the P3.4 retro.
+4. Per RC-20: note whether the external lens corrects an in-family finding vs only adds net-new (the cycle-1 R0-B earned its keep by catching Y2 — a runtime-integration miss the in-family lens conceded).
+5. If `verdict: clean` + no new 🔴/🟡 (with R0-A-cycle2 also clean): architect proceeds to ADR-028 Accept + the P3.4 cycle-2 close (RC-10 verdict-bump of BOTH cycles, per the architect-ruled deferral) + the whole-P3.4 merge of PR #48. If new 🔴/🟡: architect routes; senior absorbs via `awaiting_senior_revision`; verdicts bump per RC-10.
