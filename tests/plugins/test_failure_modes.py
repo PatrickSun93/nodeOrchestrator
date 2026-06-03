@@ -475,8 +475,7 @@ def test_collision_refused_plugin_not_imported(tmp_path: Path) -> None:
     # At import time: write sentinel (no raise). A regression moving import before
     # collision-check would write the sentinel; a raise would be silently caught.
     (pdir / "tools_impl.py").write_text(
-        f"import pathlib\npathlib.Path({str(sentinel)!r}).write_text('imported')\n"
-        "def fn(): pass\n",
+        f"import pathlib\npathlib.Path({str(sentinel)!r}).write_text('imported')\ndef fn(): pass\n",
         encoding="utf-8",
     )
 
@@ -492,7 +491,9 @@ def test_collision_refused_plugin_not_imported(tmp_path: Path) -> None:
         host_mcp_server_names=frozenset(),
     )
     # Sentinel must NOT exist — exec_module never ran (ordering guard holds)
-    assert not sentinel.exists(), "tools_impl.py was imported before collision-check — ordering regression"
+    assert not sentinel.exists(), (
+        "tools_impl.py was imported before collision-check — ordering regression"
+    )
     assert result.local_tools == {}
 
 

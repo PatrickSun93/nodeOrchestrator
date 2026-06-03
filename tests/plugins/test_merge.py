@@ -109,7 +109,7 @@ def test_two_plugins_merge_without_collision(tmp_path: Path) -> None:
 
 
 def test_partial_plugin_leaves_no_trace(tmp_path: Path) -> None:
-    """A plugin whose non-code surfaces load but whose code-load fails leaves zero trace (HR#5 / Y4).
+    """Non-code surfaces load but code-load failure leaves zero trace (HR#5 / Y4 atomicity).
 
     bad_tool is in tool_impls only (NOT in contributions.tools or host_tools) — the
     collision-check passes, non-code surfaces (bad_role agent) load into the per-plugin
