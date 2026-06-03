@@ -1,7 +1,7 @@
 task_id: P3.5
-state: awaiting_architect_decision
+state: closed
 cycle: 1
-last_transition_at: '2026-06-03T18:29:17.173388Z'
+last_transition_at: '2026-06-03T19:32:45.794020Z'
 cycle_started_at: '2026-06-03T16:28:35.878103Z'
 override_history:
 - timestamp: '2026-06-03T17:28:45.759093Z'
@@ -12,4 +12,13 @@ override_history:
     by architect; plan-stage dual-lens clean after routing-absorption; plan branch
     merged to main. Advancing to junior impl. (advance no-op'd on ADR-status snapshot
     read — RC-28-adjacent; override is deterministic.)
+- timestamp: '2026-06-03T19:32:45.794020Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: closed
+  reason: 'P3.5 merged to main (PR #49, merge commit 59e56c2). Plugin system: manifest
+    + loader + admit-code Posture A executable tool code (ADR-029 Accepted + Amendment
+    1). All impl-stage reviews clean (plan-vs-impl + R0-A + mandatory dual-lens R0-B);
+    full gate green (1538 passed); gate/executor/MCP decision-logic diff empty. Wave-2
+    (MCP P3.4 + Plugin P3.5) complete.'
 requires_cross_family_review: true
