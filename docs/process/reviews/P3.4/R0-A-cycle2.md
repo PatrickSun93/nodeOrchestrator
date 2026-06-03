@@ -4,11 +4,31 @@ cycle: 2
 round: R0-A
 stage: impl
 reviewer: architect-partner (in-family, single-lens)
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 12
+  yellow: 0
+  green: 14
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 6a72c99
+    findings_count: { red: 0, yellow: 2, green: 12 }
+    note: >-
+      Impl-stage R0-A @ 6a72c99. Spine carry-forward structural; 2🟡 — Y1 (interpret-timeout
+      OBSERVATION appended off the single writer; 2-way overlap with R0-B) + Y2 (list_files
+      output had no size-cap while read_file/MCP do).
+  - verdict: clean
+    at_commit: 640a9e3
+    findings_count: { red: 0, yellow: 0, green: 14 }
+    note: >-
+      Both 🟡 absorbed per architect impl-stage routing (architect-routing-on-impl-cycle2.md,
+      2026-06-03; Y1 α, Y2 α-fold). Y1 fix at 1bd3a07: pool task LLM-only
+      (get_mcp_tool_interpretation — no event_store); OBSERVATION append on the single writer
+      after future.result(); future.cancel() + no append on timeout — single-writer invariant
+      (ADR-028 D1/D5) restored, no ADR change. Y2 fix at 640a9e3: list_files output byte-capped
+      at MAX_RESULT_BYTES (trim to last whole entry + output_truncated_at), consistent with
+      read_file. Verified: full gate green + empty gate diff (orchestrator @ 640a9e3). 2 findings
+      → 2 new 🟢 (14🟢).
 artifact_reviewed: claude/P3.4-impl @ 6a72c99 (C2-1..C2-4)
 baseline: origin/main + cycle-1 (b5a742c)
 parallel_review: docs/process/reviews/P3.4/R0-B-cross-family-cycle2.md (deepseek, needs_architect 0R/1Y/10G)
@@ -23,6 +43,14 @@ note: >-
 ---
 
 # P3.4 cycle-2 R0-A (impl-stage) — the runtime tool-executor
+
+> **Verdict bump 2026-06-03 (RC-10 — frontmatter as live signal): `needs_architect → clean`.**
+> Both 🟡 routed **α** (`architect-routing-on-impl-cycle2.md`) and fixed: **Y1** (interpret-timeout
+> OBSERVATION off the single writer) at **1bd3a07** — pool task LLM-only, `OBSERVATION` append on
+> the writer thread after `future.result()`, `future.cancel()` + no append on timeout (single-writer
+> invariant restored, no ADR change); **Y2** (list_files output uncapped) at **640a9e3** —
+> `MAX_RESULT_BYTES` byte-cap consistent with `read_file`. Verified full gate green + empty gate diff
+> at **640a9e3**. 2🟡 → 2🟢. Finding bodies preserved below.
 
 | Field | Value |
 |---|---|

@@ -9,11 +9,11 @@ reviews_acked:
   - senior-plans/P3.4-cycle2.md
   - reviews/P3.4/R0-B-cross-family-on-plan-cycle2.md
   - reviews/P3.4/architect-routing-on-plan-cycle2.md
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 10
+  yellow: 0
+  green: 11
 verdict_history:
   - verdict: needs_architect
     at_commit: 6a72c99
@@ -34,9 +34,30 @@ verdict_history:
       α one-liner: future.cancel() in the TimeoutError handler. Ten 🟢 cross-family
       confirmations. No 🔴 — the plan-stage blocking concerns are all resolved in the
       implementation.
+  - verdict: clean
+    at_commit: 640a9e3
+    findings_count: { red: 0, yellow: 0, green: 11 }
+    note: >-
+      Y1 absorbed per architect impl-stage routing (architect-routing-on-impl-cycle2.md,
+      2026-06-03; α). R0-B's lean (future.cancel() in the TimeoutError handler) was folded
+      into the fuller routed remedy at 1bd3a07: the pool task is now LLM-only
+      (get_mcp_tool_interpretation — no event_store access), the OBSERVATION append moved
+      back to the single writer thread (after future.result()), AND future.cancel() on
+      timeout — so even a leaked/late pool thread can never write to the store (it returns
+      text only), closing the SQLITE_BUSY/single-writer race at its root rather than only
+      cancelling the future. Verified: full gate green + empty gate diff (orchestrator @
+      640a9e3). 1🟡 → 1🟢 (11🟢).
 ---
 
 # P3.4 cycle-2 R0-B cross-family impl-stage review — runtime tool-executor
+
+> **Verdict bump 2026-06-03 (RC-10 — frontmatter as live signal): `needs_architect → clean`.**
+> The one 🟡 (interpret-timeout future not cancelled → late pool-thread write could race the
+> writer) was routed **α** (`architect-routing-on-impl-cycle2.md`) and fixed at **1bd3a07** with
+> a remedy stronger than this review's one-liner: the pool task is LLM-only (no `event_store`),
+> the `OBSERVATION` append is back on the single writer thread, **and** `future.cancel()` on
+> timeout — a leaked pool thread returns text only and never touches the store. Verified full gate
+> green + empty gate diff at **640a9e3**. 1🟡 → 1🟢. Finding body preserved below.
 
 | Field | Value |
 |---|---|

@@ -4,11 +4,34 @@ cycle: 2
 round: plan-vs-impl
 reviewer: senior
 stage: impl (origin/claude/P3.4-impl @ 6a72c99 — C2-1..C2-4)
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 8
+  yellow: 0
+  green: 9
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 6a72c99
+    findings_count: { red: 0, yellow: 1, green: 8 }
+    note: >-
+      Cycle-2 plan-vs-impl @ 6a72c99. 6/7 architect-named hard points faithful; Y1 — the R1
+      interpret-timeout ran the whole interpret_mcp_tool_result (incl. OBSERVATION append) on
+      a pool thread → OBSERVATION appended off the single-writer thread, drifting on ADR-028
+      D1/D5 + a latent timeout-orphan sqlite race. Surfaced, not fixed.
+  - verdict: clean
+    at_commit: 640a9e3
+    findings_count: { red: 0, yellow: 0, green: 9 }
+    note: >-
+      Y1 absorbed per architect impl-stage routing (architect-routing-on-impl-cycle2.md,
+      2026-06-03; α — my lean option (a)). Fix at 1bd3a07: the pool task is now LLM-only
+      (get_mcp_tool_interpretation — no event_store access, returns str|None); the OBSERVATION
+      event_store.append moved back to the single writer thread, after future.result() returns;
+      on timeout → future.cancel() + no append (raw TOOL_RESULT stands, writer unblocked). A
+      leaked/timed-out pool thread can only return text, never touches the store — the ADR-028
+      D1/D5 single-writer invariant is restored (no ADR change: the impl now matches the
+      already-inscribed invariant). Verified: pool submit passes no event_store; append on
+      writer; future.cancel on timeout; full gate green + empty gate diff (orchestrator-verified
+      @ 640a9e3). 1 finding → 1 new 🟢 (9🟢).
 artifacts_reviewed:
   - src/orchestrator/tools/executor.py           # C2-1 execute_pending_tool_calls
   - src/orchestrator/tools/local.py              # C2-2 local impls + sandbox
@@ -35,6 +58,15 @@ note: >-
 ---
 
 # P3.4 cycle-2 plan-vs-impl — the runtime tool-executor (@ 6a72c99)
+
+> **Verdict bump 2026-06-03 (RC-10 — frontmatter as live signal): `needs_architect → clean`.**
+> The sole 🟡 (Y1 — the R1 interpret-timeout appended the OBSERVATION off the single-writer
+> thread) was routed **α** by the architect (`architect-routing-on-impl-cycle2.md`) and fixed at
+> **1bd3a07**: the pool task is now the LLM call only (`get_mcp_tool_interpretation`, no
+> `event_store` access); the `OBSERVATION` append is back on the single writer thread after
+> `future.result()`; on timeout → `future.cancel()` + no append. The single-writer invariant
+> (ADR-028 D1/D5) is restored — verified at **640a9e3** (pool submit passes no `event_store`;
+> append on the writer; full gate green + empty gate diff). 1🟡 → 1🟢. Finding body preserved below.
 
 > **Senior plan-vs-impl lens.** I check the impl against my `P3.4-cycle2.md` + the **Accepted** ADR-028, focusing on the seven hard points the architect named (the plan-stage routing absorptions). The unique surface this lens covers: where the impl satisfies an acceptance criterion (and passes gates) but drifts on a **plan-implied invariant** the external lenses + the green gate don't structurally see. I found exactly one such drift (Y1) on the R1 interpret-timeout mechanism; the other six points are faithful.
 

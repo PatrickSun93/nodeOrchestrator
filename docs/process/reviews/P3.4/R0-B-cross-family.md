@@ -2,11 +2,11 @@
 task_id: P3.4
 round: R0-B-cross-family
 reviewer_family: deepseek
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
-  green: 6
+  yellow: 0
+  green: 7
 verdict_history:
   - verdict: needs_architect
     at_commit: 1cbb86d
@@ -51,9 +51,31 @@ verdict_history:
       demonstrates the full pipeline with mocked transports; the runtime integration gap is in
       the event-loop consumer. This is a scope/completeness finding — the modules exist and work,
       the wiring is thin (consume TOOL_CALL events → call execute_mcp_tool_call).
+  - verdict: clean
+    at_commit: 640a9e3
+    findings_count: { red: 0, yellow: 0, green: 7 }
+    note: >-
+      Deferred cycle-1 impl-stage verdict-bump, done at cycle-2 close (architect-ruled — the
+      cycle-1 bump was held until the whole P3.4 was clean; architect-routing-on-impl.md). The
+      impl-stage Y2 (gated-but-not-executed — MCP tools registered + gateable but no runtime
+      consumer of TOOL_CALL events) is RESOLVED by the P3.4 cycle-2 runtime tool-executor:
+      tools/executor.py::execute_pending_tool_calls (C2-1..C2-4 @ 6a72c99) consumes each
+      AUTO_EXECUTE TOOL_CALL event after run_turn and calls execute_mcp_tool_call (MCP) / the
+      local registry, appending TOOL_RESULT/TOOL_FAILED (+ bounded MCP interpret → OBSERVATION).
+      The cycle-2 impl-stage dual-lens (plan-vs-impl + R0-A-cycle2 + R0-B-cross-family-cycle2)
+      is itself clean after the Y1/Y2 fixes (1bd3a07/640a9e3). Y2 🟡 → 🟢 (7🟢). The
+      autonomy-bypass / env-leak / untrusted-result / feed-the-gate greens stand.
 ---
 
 # P3.4 R0-B cross-family review (plan + ADR-027) — MCP client + tool-adapter + autonomy-gating
+
+> **Verdict bump 2026-06-03 (RC-10 — deferred cycle-1 bump, done at cycle-2 close): `needs_architect → clean`.**
+> The impl-stage **Y2** (gated-but-not-executed — the runtime had no consumer for the gate's
+> `TOOL_CALL` events) is resolved by the **P3.4 cycle-2 runtime tool-executor** (`tools/executor.py`,
+> C2-1..C2-4 @ **6a72c99**; Y1/Y2 fixes @ **1bd3a07**/**640a9e3**), which actually executes each
+> `AUTO_EXECUTE` `TOOL_CALL`. Per the architect's ruling the cycle-1 bump was deferred to cycle-2
+> close (`architect-routing-on-impl.md`); the cycle-2 impl-stage reviews are themselves clean. The
+> plan-stage section's clean state stands; the impl-stage Y2 🟡 → 🟢. Finding bodies preserved below.
 
 | Field | Value |
 |---|---|
