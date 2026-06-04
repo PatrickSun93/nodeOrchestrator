@@ -5,14 +5,21 @@ it was found in — not by anything the plugin itself claims.
 
   operator_placed: found in the operator-curated plugins_dir (ADR-029 D4 premise
                    preserved — curation = the only basis for Posture-A trust).
+                   Code loading: in-process importlib via _load_posture_a_fns
+                   (code.py).
 
   fetched:         found in the segregated fetched_plugins_dir (ADR-031 D3).
                    Curation premise is VOID → Posture A constitutionally invalid.
                    Posture B is REQUIRED and TEST-ENFORCED for all fetched plugins.
+                   Code loading: subprocess harness via _load_posture_b_fns /
+                   _PostureBFn (code.py) — fetched code NEVER runs in-process.
+                   api_key_env is structurally unreachable for fetched subprocess
+                   (MCPServerConfig built without api_key_env; ADR-031 D4).
 
 Disjoint roots: fetched_plugins_dir and plugins_dir must not overlap — a fetched
 bundle can never be re-discovered as operator-placed (provenance-laundering prevented,
-ADR-031 D3 un-launderable property).
+ADR-031 D3 un-launderable property).  Enforced at bootstrap by loader.py's
+disjoint-root guard (ValueError on overlap).
 
 Activation allowlist (ADR-031 D4):
   A fetched plugin loads ONLY if the operator has an explicit activation entry that

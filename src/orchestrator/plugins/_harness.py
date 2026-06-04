@@ -4,8 +4,11 @@ Spawned per call_tool() invocation by plugins/code.py's _PostureBFn closures.
   argv[1]: absolute path to the plugin module (.py file)
   argv[2]: callable name within that module
 
-The subprocess boundary provides isolation: plugin code imports here, inside the
-child process, never in the host.  Import-time side effects and call-time crashes
+Used for FETCHED plugins only (provenance="fetched").  Operator-placed plugins run
+in-process via importlib (Posture A, ADR-029 D4) and never spawn this harness.
+
+The subprocess boundary provides isolation: fetched plugin code imports here, inside
+the child process, never in the host.  Import-time side effects and call-time crashes
 are confined to this process; the host process is unaffected.
 
 Never imported by the host orchestrator (the import boundary IS the isolation contract).

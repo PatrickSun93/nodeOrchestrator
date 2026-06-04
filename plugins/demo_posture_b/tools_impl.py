@@ -1,7 +1,12 @@
-"""Demo Posture-B plugin tool implementations.
+"""Demo plugin tool implementations (demo_posture_b, operator-placed).
 
-These run inside the subprocess harness — the host orchestrator never imports
-this module.  The isolation boundary is the subprocess.
+This plugin is in the operator-placed plugins_dir and runs under Posture A
+(in-process importlib, ADR-029 D4).  The host orchestrator DOES import this
+module directly.
+
+Fetched plugins (provenance="fetched") would instead run in the subprocess
+harness (_harness.py), never in-process.  The env_probe_tool demonstrates the
+posture difference: Posture A sees os.environ; Posture B gets a scoped env.
 """
 
 from __future__ import annotations
