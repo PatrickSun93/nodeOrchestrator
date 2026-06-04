@@ -2,9 +2,16 @@
 task_id: P3.6
 stage: R0-A
 reviewer: architect-partner
-verdict: needs_architect
+verdict: clean
 verdict_history:
   - needs_architect
+  - >-
+    [2026-06-03, clean, "Architect routed Y1+Y2 → α. Junior absorbed in 1dc0887:
+    Y1 hoisted PENDING_RESOLUTION_TYPES to core/event.py (one shared constant;
+    snapshot.py + app.py import it; two private copies deleted) + §8 consistency
+    tests; Y2 added §9 TestConfirmExecuteStage (execute-stage 500 + durable +
+    re-confirm already_resolved). No behavior change; empty-gate-diff intact.
+    See architect-routing-on-impl.md."]
 adr_under_review: ADR-030
 impl_branch: origin/claude/P3.6-impl@16eca20
 date: 2026-06-03
