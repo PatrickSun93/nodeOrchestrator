@@ -2,7 +2,7 @@
 
 **Status:** Accepted — 2026-05-27 (revised 2026-05-27 absorbing R0-A-on-plan + R0-B-cross-family architect-routing — see `docs/process/reviews/P1.4/architect-routing.md`)
 
-> **[Amendment — P4.1 → ADR-033, Proposed 2026-06-04, pending architect Accept (accepted together with ADR-033).]** ADR-033 (the agent turn-loop) makes **two** coupled changes to this ADR's contract:
+> **[Amendment — P4.1 → ADR-033, Accepted 2026-06-04 by architect Peidong (together with ADR-033).]** ADR-033 (the agent turn-loop) makes **two** coupled changes to this ADR's contract:
 >
 > **(1) Snapshot-per-turn → snapshot-per-pass within a turn (extends D2).** The driver re-dispatches `dispatch_turn` ≤ `N=4` times within one turn (bounded also by a `120s` wall-clock deadline) so an agent reacts to tool results in-turn; each pass re-takes the per-turn snapshot at `dispatch_turn` entry, so pass `k` sees pass `k−1`'s appended results. Cross-turn causality is **unchanged** — `next_room_state` is evaluated **once per turn** (the initial pass); state transitions still take effect next turn. The within-turn pass count + wall-clock are bounded by `N` + the deadline + the zero-new-`TOOL_CALL` early-exit + the ADR-010 cooldown backstop (which keeps a non-tool-calling agent from a speak-loop). `dispatch_turn`'s **gate/dispatch path is reused unchanged**; the loop lives in the turn driver.
 >
