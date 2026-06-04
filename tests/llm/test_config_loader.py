@@ -457,6 +457,7 @@ class TestExampleConfigs:
             "logger",
             "operator",
             "facilitator",
+            "synthesizer",
         }
 
     def test_validate_full_example_config(self) -> None:
