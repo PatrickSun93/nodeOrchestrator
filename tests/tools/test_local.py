@@ -540,3 +540,84 @@ def test_log_event_empty_content_fails(tmp_path: Path) -> None:
     _store, events = _run_local_tool(tmp_path, "log_event", {"content": "", "type": "note"})
     assert any(e.type == EventType.TOOL_FAILED for e in events)
     assert not any(e.type == EventType.TOOL_RESULT for e in events)
+
+
+# ---------------------------------------------------------------------------
+# P4.1-3: log_event boundary — dict→LocalToolOutput signature + EventType invariant
+# ---------------------------------------------------------------------------
+
+
+def test_log_event_direct_signature() -> None:
+    """log_event impl has dict→LocalToolOutput signature (no event_store handle).
+
+    Calls _log_event_tool directly to verify the contract without the executor.
+    ADR-033 D5: local tool fn is dict → LocalToolOutput; no I/O handles injected.
+    """
+    from orchestrator.tools.executor import LocalToolOutput
+    from orchestrator.tools.local import _log_event_tool
+
+    result = _log_event_tool({"content": "investigating foo", "type": "finding"})
+    assert isinstance(result, LocalToolOutput)
+    assert "investigating foo" in result.content
+    assert "[finding]" in result.content
+    assert result.output_truncated_at is None  # short content, no truncation
+
+
+def test_log_event_default_type() -> None:
+    """log_event type parameter defaults to 'note' when omitted."""
+    from orchestrator.tools.local import _log_event_tool
+
+    result = _log_event_tool({"content": "a note"})
+    assert "[note]" in result.content
+
+
+def test_log_event_eventtype_enum_unchanged() -> None:
+    """log_event adds no new EventType value to core.event (ADR-033 D5/D6).
+
+    EventType is the shared vocabulary; log_event results land as TOOL_RESULT,
+    not a new event type.
+    """
+    from orchestrator.core.event import EventType
+
+    known_types = {
+        "USER_INPUT",
+        "UTTERANCE",
+        "TOOL_CALL",
+        "TOOL_CALL_PENDING",
+        "TOOL_CALL_CANCELLED",
+        "TOOL_RESULT",
+        "TOOL_FAILED",
+        "OBSERVATION",
+        "STATE_TRANSITION",
+        "HYPOTHESIS",
+        "TERM_DEFINITION",
+        "AUTONOMY_DECISION",
+        "AUTONOMY_REFUSAL",
+        "DECISION",
+        "DECISION_PIVOT",
+        "ESCALATION",
+        "EXTERNAL_VALIDATION",
+        "MILESTONE",
+        "REJECTION",
+        "RETRACTION",
+        "SUMMARY_SNAPSHOT",
+    }
+    actual = {e.name for e in EventType}
+    new_types = actual - known_types
+    assert not new_types, (
+        f"log_event must not introduce new EventType values: {sorted(new_types)}"
+    )
+
+
+def test_log_event_output_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """log_event with content exceeding MAX_RESULT_BYTES → truncated output."""
+    import orchestrator.tools.local as _local_mod
+
+    monkeypatch.setattr(_local_mod, "MAX_RESULT_BYTES", 20)
+    big_content = "x" * 1000
+    _store, events = _run_local_tool(
+        tmp_path, "log_event", {"content": big_content, "type": "note"}
+    )
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    assert results[0].metadata.get("output_truncated_at") == 20
