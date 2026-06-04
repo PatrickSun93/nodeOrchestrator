@@ -157,6 +157,50 @@ def test_t3_no_new_llm_purpose() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_t3b_executor_empty_decision_diff() -> None:
+    """Empty-decision-diff invariant (ADR-031 D1 / P3.7-remote-5): _execute_local_call
+    must NOT reference decide_tier/emit_gate_decision/score/gate/select_model_and_provider.
+
+    The Posture-B subprocess cap is an executor MECHANISM addition (in execute_pending_tool_calls),
+    NOT a decision-logic change.  _execute_local_call's decision path is unchanged.
+
+    This is the canonical location for the empty-diff guard; test_posture_b.py pb6 tests the
+    same invariant at component level.
+    """
+    executor_path = _SRC / "tools" / "executor.py"
+    tree = ast.parse(executor_path.read_text(encoding="utf-8"))
+
+    decision_symbols = frozenset(
+        {
+            "decide_tier",
+            "emit_gate_decision",
+            "score",
+            "select_model_and_provider",
+        }
+    )
+
+    fn_node = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_execute_local_call":
+            fn_node = node
+            break
+
+    assert fn_node is not None, "t3b: _execute_local_call not found in executor.py"
+
+    violations: list[str] = []
+    for node in ast.walk(fn_node):
+        if isinstance(node, (ast.Name, ast.Attribute)):
+            name = node.id if isinstance(node, ast.Name) else node.attr
+            if name in decision_symbols:
+                violations.append(f"  executor.py:{node.lineno}: {name!r}")
+
+    assert not violations, (
+        "t3b empty-decision-diff: _execute_local_call references decision symbols "
+        "(Posture-B cap must be in execute_pending_tool_calls, NOT in _execute_local_call):\n"
+        + "\n".join(violations)
+    )
+
+
 def test_t4_tool_call_sole_appender_in_src() -> None:
     """EventType.TOOL_CALL has exactly TWO appenders (ADR-030 D1 amendment / P3.6-B3 Y1).
 

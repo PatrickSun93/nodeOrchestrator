@@ -58,6 +58,23 @@ servers:
       create_entities:
         reversibility: 1
 
+  # Remote streamable-http demo connector (ADR-032 D4 / P3.7-remote-3).
+  # One-demo discipline: read-tier query_items rev=10 → AUTO_EXECUTE.
+  # Transport: streamable_http — TLS-verified https:// endpoint, api_key_env indirection.
+  # CI e2e uses a hermetic mock (tests/mcp/test_p3_7_remote_connectors.py);
+  # point url at a real MCP-compatible endpoint for manual demo.
+  remote_demo:
+    transport: streamable_http
+    url: "https://api.example.com/mcp"
+    api_key_env: REMOTE_DEMO_API_KEY
+    timeouts:
+      connect: 10.0
+      list_tools: 10.0
+      call_tool: 30.0
+    tools:
+      query_items:
+        reversibility: 10
+
   # Local SQLite file connector.
   # read_query/list_tables rev=10 → AUTO_EXECUTE; write_query/create_table → HARD_CONFIRM.
   # drop_table (exposed by server) intentionally NOT listed → UnknownToolError (HR#3).

@@ -1,6 +1,6 @@
 """MCPServersConfig: per-server config + pre-classify tool allowlist.
 
-Frozen Pydantic models with extra="forbid" (ADR-027 D3/D5).
+Frozen Pydantic models with extra="forbid" (ADR-027 D3/D5, ADR-032 D1).
 Loader mirrors load_tools_config pattern (ConfigError on bad yaml/schema).
 """
 
@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from orchestrator.llm.exceptions import ConfigError
 
@@ -41,23 +41,42 @@ class MCPTimeouts(BaseModel):
 
 
 class MCPServerConfig(BaseModel):
-    """One server entry from mcp_servers.yaml (ADR-027 D3/D4).
+    """One server entry from mcp_servers.yaml (ADR-027 D3/D4, ADR-032 D1).
 
-    transport: only "stdio" is supported in the MVP.
-    api_key_env: credential indirection — secret read from env var, never inline (HR#8).
-    env: minimal scoped subprocess env additions (HR#10).
+    transport: "stdio" (subprocess) or "streamable_http" (remote, ADR-032 D1).
+    For stdio: command is required (subprocess launch).
+    For streamable_http: url is required and must use https:// (TLS mandatory, HR#6).
+    api_key_env: credential indirection for both transports — never inline (HR#5).
+    env: minimal scoped subprocess env additions for stdio (HR#10); unused for remote.
     tools: pre-classify allowlist — only these tools are callable (HR#2/#3).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     transport: str = "stdio"
-    command: str
+    command: str | None = None
     args: list[str] = Field(default_factory=list)
+    url: str | None = None
     api_key_env: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
     timeouts: MCPTimeouts = Field(default_factory=MCPTimeouts)
     tools: dict[str, MCPToolConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_transport_fields(self) -> MCPServerConfig:
+        if self.transport == "stdio":
+            if self.command is None:
+                raise ValueError("stdio transport requires 'command'")
+        elif self.transport == "streamable_http":
+            if self.url is None:
+                raise ValueError("streamable_http transport requires 'url'")
+            if not self.url.startswith("https://"):
+                raise ValueError(f"streamable_http url must use https:// scheme, got: {self.url!r}")
+        else:
+            raise ValueError(
+                f"transport must be 'stdio' or 'streamable_http', got: {self.transport!r}"
+            )
+        return self
 
 
 class MCPServersConfig(BaseModel):

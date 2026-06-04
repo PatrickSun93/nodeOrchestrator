@@ -451,10 +451,14 @@ def test_tool_impl_shadow_host_local_tool_refused(tmp_path: Path) -> None:
 def test_collision_refused_plugin_not_imported(tmp_path: Path) -> None:
     """A collision-refused plugin's module must NEVER be imported (ADR-029 D2 step 3; R0-B R1).
 
-    tools_impl.py writes a sentinel file at import time (no raise — a raise would be
-    caught by code.py's except-clause and mask a wrong-ordering regression). If exec_module
-    runs before the collision-check, the sentinel is written and the assertion fails.
-    Correct ordering: collision-check fires first → plugin refused → sentinel never written.
+    Posture B: load_plugin_code never imports plugin code at load time — the import
+    happens in the child subprocess at call time.  For a collision-refused plugin,
+    load_plugin_code is never called at all → sentinel never written.
+
+    The test verifies: collision-check fires first → plugin refused → load_plugin_code
+    never called → no subprocess ever spawned → sentinel file never written.
+    This holds both for the Posture-A (exec_module) and Posture-B (subprocess) cases,
+    but for different reasons: Posture A needed ordering, Posture B never imports at all.
     """
     plugins_dir = tmp_path / "plugins"
     pdir = plugins_dir / "collision_bomb"
@@ -503,12 +507,14 @@ def test_collision_refused_plugin_not_imported(tmp_path: Path) -> None:
 
 
 def test_broken_module_import_refused(tmp_path: Path) -> None:
-    """A plugin with a broken tools_impl.py (ModuleNotFoundError) is fail-closed refused (D4).
+    """Posture-A: a broken tools_impl.py causes plugin to be REFUSED at load time (D4).
 
-    my_tool is in tool_impls only (NOT in contributions.tools) — no collision against host_tools
-    so the collision-check passes and the broken import is actually reached (code-load path).
-    Previous version had my_tool in both contributions.tools and host_tools, triggering
-    collision-refusal before the code-load path was ever exercised (short-circuit).
+    Posture A loads the module in-process via importlib.  An import error (e.g.
+    ModuleNotFoundError) propagates as PluginCodeLoadError → the plugin is refused
+    (fail-closed; no tool registered).
+
+    my_tool is in tool_impls only (NOT in contributions.tools) — no collision so the
+    code-load path is exercised.
     """
     plugins_dir = tmp_path / "plugins"
     pdir = plugins_dir / "brokenimport"
@@ -525,7 +531,7 @@ def test_broken_module_import_refused(tmp_path: Path) -> None:
         """),
         encoding="utf-8",
     )
-    # tools_impl.py fails at import time (ModuleNotFoundError) — code-load path
+    # tools_impl.py fails at import time (ModuleNotFoundError)
     (pdir / "tools_impl.py").write_text(
         "import nonexistent_module_xyz_99\ndef my_fn(params): pass\n", encoding="utf-8"
     )
@@ -541,17 +547,17 @@ def test_broken_module_import_refused(tmp_path: Path) -> None:
         host_local_tool_names=frozenset(),
         host_mcp_server_names=frozenset(),
     )
-    # Fail-closed: code-load error refuses the plugin, does not crash the loader
-    assert result.local_tools == {}
+    # Posture A: import fails at load time → PluginCodeLoadError → plugin refused
+    assert "my_tool" not in result.local_tools
 
 
 def test_missing_callable_in_module_refused(tmp_path: Path) -> None:
-    """A plugin tool_impl referencing a non-existent callable → refused (D4 getattr-None path).
+    """Posture-A: a missing callable causes plugin to be REFUSED at load time (D4).
 
-    my_tool is in tool_impls only (NOT in contributions.tools) — no collision against host_tools
-    so the collision-check passes; the module imports successfully but getattr returns None →
-    PluginCodeLoadError → plugin refused.  Previous version had my_tool in contributions.tools
-    + host_tools causing collision-refusal before the missing-callable path was reached.
+    Posture A resolves the callable at load time via getattr().  If the callable is
+    absent, PluginCodeLoadError is raised → plugin refused (fail-closed; no tool registered).
+
+    my_tool is in tool_impls only (NOT in contributions.tools) — no collision.
     """
     plugins_dir = tmp_path / "plugins"
     pdir = plugins_dir / "missingfn"
@@ -568,7 +574,7 @@ def test_missing_callable_in_module_refused(tmp_path: Path) -> None:
         """),
         encoding="utf-8",
     )
-    # Module imports fine; nonexistent_fn is not defined → getattr returns None → refused
+    # Module imports fine; nonexistent_fn is not defined
     (pdir / "tools_impl.py").write_text("def other_fn(params): pass\n", encoding="utf-8")
 
     result = load_plugins(
@@ -582,7 +588,8 @@ def test_missing_callable_in_module_refused(tmp_path: Path) -> None:
         host_local_tool_names=frozenset(),
         host_mcp_server_names=frozenset(),
     )
-    assert result.local_tools == {}
+    # Posture A: callable not found at load time → PluginCodeLoadError → plugin refused
+    assert "my_tool" not in result.local_tools
 
 
 # ---------------------------------------------------------------------------
