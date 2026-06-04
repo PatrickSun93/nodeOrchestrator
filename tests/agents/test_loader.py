@@ -349,6 +349,7 @@ def test_all_canonical_agents_load() -> None:
         "facilitator",
         "logger",
         "operator",
+        "planner",
         "prober",
         "skeptic",
         "synthesizer",

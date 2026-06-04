@@ -174,3 +174,72 @@ class TestSynthesizerAgent:
         """synthesizer NOT in free_chat declared_agents (non-declared room)."""
         assert "synthesizer" not in ROOM_TEMPLATES[RoomType.FREE_CHAT].declared_agents
         assert "synthesizer" not in _room_agents(RoomType.FREE_CHAT)
+
+
+# ---------------------------------------------------------------------------
+# P3.7-content-2: planner (bug_fix, code_review, idea_validation)
+# ---------------------------------------------------------------------------
+
+
+class TestPlannerAgent:
+    """Discriminating tests for the planner agent (P3.7-content-2)."""
+
+    def setup_method(self) -> None:
+        self.agent = _ALL_AGENTS["planner"]
+
+    # Schema validation
+    def test_planner_loaded_as_valid_agent(self) -> None:
+        """planner.yaml loads and is a valid Agent instance."""
+        assert isinstance(self.agent, Agent)
+        assert self.agent.id == "planner"
+        assert self.agent.role == "planner"
+
+    def test_planner_applies_to_room_states_non_empty(self) -> None:
+        """planner.applies_to.room_states is non-empty."""
+        assert len(self.agent.applies_to.room_states) >= 1
+
+    # Present in declared room types
+    def test_planner_present_in_bug_fix_roster(self) -> None:
+        """planner in bug_fix declared_agents."""
+        assert "planner" in ROOM_TEMPLATES[RoomType.BUG_FIX].declared_agents
+
+    def test_planner_present_in_code_review_roster(self) -> None:
+        """planner in code_review declared_agents."""
+        assert "planner" in ROOM_TEMPLATES[RoomType.CODE_REVIEW].declared_agents
+
+    def test_planner_present_in_idea_validation_roster(self) -> None:
+        """planner in idea_validation declared_agents."""
+        assert "planner" in ROOM_TEMPLATES[RoomType.IDEA_VALIDATION].declared_agents
+
+    # Activation: speak=True in each declared room type (via state_change triggers)
+    def test_planner_speaks_on_diagnosed_in_bug_fix(self) -> None:
+        """planner speaks on STATE_TRANSITION(diagnosed) in bug_fix."""
+        agents = _room_agents(RoomType.BUG_FIX)
+        assert "planner" in agents
+        ev = _st_ev(new_state="diagnosed", prior_state="reproduced")
+        assert _speaks(agents["planner"], ev) is True
+
+    def test_planner_speaks_on_reviewing_in_code_review(self) -> None:
+        """planner speaks on STATE_TRANSITION(reviewing) in code_review."""
+        agents = _room_agents(RoomType.CODE_REVIEW)
+        assert "planner" in agents
+        ev = _st_ev(new_state="reviewing", prior_state="setup")
+        assert _speaks(agents["planner"], ev) is True
+
+    def test_planner_speaks_on_pitching_in_idea_validation(self) -> None:
+        """planner speaks on STATE_TRANSITION(pitching) in idea_validation."""
+        agents = _room_agents(RoomType.IDEA_VALIDATION)
+        assert "planner" in agents
+        ev = _st_ev(new_state="pitching", prior_state="setup")
+        assert _speaks(agents["planner"], ev) is True
+
+    # Absent from non-declared room types (present/missing partition)
+    def test_planner_absent_from_research_roster(self) -> None:
+        """planner NOT in research declared_agents (non-declared room)."""
+        assert "planner" not in ROOM_TEMPLATES[RoomType.RESEARCH].declared_agents
+        assert "planner" not in _room_agents(RoomType.RESEARCH)
+
+    def test_planner_absent_from_free_chat_roster(self) -> None:
+        """planner NOT in free_chat declared_agents (non-declared room)."""
+        assert "planner" not in ROOM_TEMPLATES[RoomType.FREE_CHAT].declared_agents
+        assert "planner" not in _room_agents(RoomType.FREE_CHAT)
