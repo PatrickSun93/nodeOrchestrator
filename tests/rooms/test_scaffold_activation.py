@@ -84,12 +84,23 @@ _ALL_AGENTS, _REGEX_REGISTRY = load_agents(_CONFIG_DIR, models=_MODELS)
 
 # Convenience: expected roster per scaffold room_type (room_type-filtered set)
 _ROOM_ROSTER: dict[RoomType, frozenset[str]] = {
-    RoomType.BUG_FIX: frozenset({"logger", "operator", "prober", "skeptic"}),
-    RoomType.CODE_REVIEW: frozenset({"logger", "operator", "skeptic"}),
-    RoomType.IDEA_VALIDATION: frozenset(
-        {"divergence_mapper", "logger", "operator", "prober", "skeptic"}
+    RoomType.BUG_FIX: frozenset({"logger", "operator", "planner", "prober", "skeptic", "verifier"}),
+    RoomType.CODE_REVIEW: frozenset(
+        {"logger", "operator", "planner", "skeptic", "synthesizer", "verifier"}
     ),
-    RoomType.FREE_CHAT: frozenset({"facilitator", "logger"}),
+    RoomType.IDEA_VALIDATION: frozenset(
+        {
+            "divergence_mapper",
+            "logger",
+            "mentor",
+            "operator",
+            "planner",
+            "prober",
+            "skeptic",
+            "synthesizer",
+        }
+    ),
+    RoomType.FREE_CHAT: frozenset({"facilitator", "logger", "mentor"}),
 }
 
 # ---------------------------------------------------------------------------
@@ -230,10 +241,10 @@ class TestBugFixActivation:
         ev = _ev(EventType.HYPOTHESIS, content="root cause is lock contention")
         assert _speaking_ids(self.agents, ev) == frozenset({"skeptic", "operator"})
 
-    def test_state_transition_diagnosed_fires_skeptic_only(self) -> None:
-        """STATE_TRANSITION(diagnosed) fires skeptic via state_change→diagnosed."""
+    def test_state_transition_diagnosed_fires_skeptic_and_planner(self) -> None:
+        """STATE_TRANSITION(diagnosed) fires skeptic + planner via state_change→diagnosed."""
         ev = _st_ev(new_state="diagnosed", prior_state="reproduced")
-        assert _speaking_ids(self.agents, ev) == frozenset({"skeptic"})
+        assert _speaking_ids(self.agents, ev) == frozenset({"skeptic", "planner"})
 
     # diagnosed → fix_proposed
     def test_decision_event_fires_no_existing_trigger(self) -> None:
@@ -241,10 +252,10 @@ class TestBugFixActivation:
         ev = _ev(EventType.DECISION, content="fix approach determined")
         assert _speaking_ids(self.agents, ev) == frozenset()
 
-    def test_state_transition_fix_proposed_fires_skeptic_and_operator(self) -> None:
-        """STATE_TRANSITION(fix_proposed) fires skeptic + operator via state_change."""
+    def test_state_transition_fix_proposed_fires_skeptic_operator_verifier(self) -> None:
+        """STATE_TRANSITION(fix_proposed) fires skeptic + operator + verifier via state_change."""
         ev = _st_ev(new_state="fix_proposed", prior_state="diagnosed")
-        assert _speaking_ids(self.agents, ev) == frozenset({"skeptic", "operator"})
+        assert _speaking_ids(self.agents, ev) == frozenset({"skeptic", "operator", "verifier"})
 
     # fix_proposed → closed
     def test_summary_snapshot_fires_no_existing_trigger(self) -> None:
@@ -282,10 +293,10 @@ class TestCodeReviewActivation:
         ev = _ev(EventType.OBSERVATION, content="code change observed")
         assert _speaking_ids(self.agents, ev) == frozenset()
 
-    def test_state_transition_reviewing_fires_skeptic_and_operator(self) -> None:
-        """STATE_TRANSITION(reviewing) fires skeptic + operator via state_change."""
+    def test_state_transition_reviewing_fires_skeptic_operator_planner(self) -> None:
+        """STATE_TRANSITION(reviewing) fires skeptic + operator + planner via state_change."""
         ev = _st_ev(new_state="reviewing", prior_state="setup")
-        assert _speaking_ids(self.agents, ev) == frozenset({"skeptic", "operator"})
+        assert _speaking_ids(self.agents, ev) == frozenset({"skeptic", "operator", "planner"})
 
     # reviewing → changes_requested
     def test_rejection_fires_no_existing_trigger(self) -> None:
@@ -299,15 +310,15 @@ class TestCodeReviewActivation:
         assert _speaking_ids(self.agents, ev) == frozenset({"skeptic"})
 
     # changes_requested → approved
-    def test_decision_fires_no_existing_trigger(self) -> None:
-        """DECISION fires no event_type/regex trigger in code_review."""
+    def test_decision_fires_synthesizer(self) -> None:
+        """DECISION fires synthesizer (event_type trigger) in code_review."""
         ev = _ev(EventType.DECISION, content="approved for merge")
-        assert _speaking_ids(self.agents, ev) == frozenset()
+        assert _speaking_ids(self.agents, ev) == frozenset({"synthesizer"})
 
-    def test_state_transition_approved_fires_no_agent(self) -> None:
-        """STATE_TRANSITION(approved) fires no agent in code_review."""
+    def test_state_transition_approved_fires_verifier(self) -> None:
+        """STATE_TRANSITION(approved) fires verifier in code_review."""
         ev = _st_ev(new_state="approved", prior_state="changes_requested")
-        assert _speaking_ids(self.agents, ev) == frozenset()
+        assert _speaking_ids(self.agents, ev) == frozenset({"verifier"})
 
     # approved → closed
     def test_summary_snapshot_fires_no_existing_trigger(self) -> None:
@@ -349,10 +360,10 @@ class TestIdeaValidationActivation:
         ev = _ev(EventType.UTTERANCE, content="here is my idea")
         assert _speaking_ids(self.agents, ev) == frozenset()
 
-    def test_state_transition_pitching_fires_prober(self) -> None:
-        """STATE_TRANSITION(pitching) fires prober via state_change→pitching."""
+    def test_state_transition_pitching_fires_prober_and_planner(self) -> None:
+        """STATE_TRANSITION(pitching) fires prober + planner via state_change→pitching."""
         ev = _st_ev(new_state="pitching", prior_state="setup")
-        assert _speaking_ids(self.agents, ev) == frozenset({"prober"})
+        assert _speaking_ids(self.agents, ev) == frozenset({"prober", "planner"})
 
     # pitching → validating (Y1 net: operator co-fires via existing hypothesis trigger)
     def test_hypothesis_fires_skeptic_and_operator(self) -> None:
@@ -370,10 +381,10 @@ class TestIdeaValidationActivation:
         )
 
     # validating → decided
-    def test_decision_fires_no_existing_trigger(self) -> None:
-        """DECISION fires no event_type/regex trigger in idea_validation."""
+    def test_decision_fires_synthesizer(self) -> None:
+        """DECISION fires synthesizer (event_type trigger) in idea_validation."""
         ev = _ev(EventType.DECISION, content="decision reached")
-        assert _speaking_ids(self.agents, ev) == frozenset()
+        assert _speaking_ids(self.agents, ev) == frozenset({"synthesizer"})
 
     def test_state_transition_decided_fires_no_agent(self) -> None:
         """STATE_TRANSITION(decided) fires no agent in idea_validation."""
@@ -566,11 +577,11 @@ def test_facilitator_llm_config_cheap_warm() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_research_roster_unchanged_after_p3_1() -> None:
-    """Research loads the same 5 agents as before P3.1 (backward-compat)."""
+def test_research_roster_after_p3_7_content() -> None:
+    """Research loads 6 agents after P3.7-content (synthesizer added)."""
     research_agents = _room_agents(RoomType.RESEARCH)
     assert frozenset(research_agents.keys()) == frozenset(
-        {"divergence_mapper", "logger", "operator", "prober", "skeptic"}
+        {"divergence_mapper", "logger", "operator", "prober", "skeptic", "synthesizer"}
     )
     assert "facilitator" not in research_agents
 

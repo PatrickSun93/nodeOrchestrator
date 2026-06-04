@@ -1,0 +1,6 @@
+# Plugin-classified tool: annotate_context (contributions.tools path, ADR-029 D2 step 3/6).
+# No host pre-classification → default-0 cap → HARD_CONFIRM (ADR-029 D5 default-0 semantics).
+# Plugin declares reversibility=4 but it is capped to 0 (no host entry in config/tools.yaml).
+tools:
+  annotate_context:
+    reversibility: 4

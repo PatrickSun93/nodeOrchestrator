@@ -202,8 +202,11 @@ You don't need an ADR for a typical feature PR.
 The `api/` package (from P3.2) depends on the **`[api]` optional extra**
 (`fastapi`, `uvicorn`). Install it before running the gates, or `mypy`/`pytest`
 break on `api/` with import-not-found: set up with `uv sync --all-extras` (or run
-the gate per-command as `uv run --extra api mypy --strict .` / `uv run --extra api
+the gate per-command as `uv run --extra api mypy --strict` / `uv run --extra api
 pytest`). There is no CI workflow — the gates are these local commands.
+`plugins/` is not in the canonical mypy scope (bundles are loaded by path at runtime
+and may contain same-named `tools_impl.py` files; they are excluded from the global
+`[tool.mypy] files` setting in `pyproject.toml`).
 
 ## Frontend gate (`ui/`)
 

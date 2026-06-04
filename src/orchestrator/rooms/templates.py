@@ -57,7 +57,7 @@ class RoomTemplate(BaseModel):
 
 ROOM_TEMPLATES: dict[RoomType, RoomTemplate] = {
     # Research: fully implemented template (ADR-012 D1 + handoff §5.2).
-    # 5 declared agents — alphabetical order.
+    # 6 declared agents — alphabetical order.
     RoomType.RESEARCH: RoomTemplate(
         room_type=RoomType.RESEARCH,
         declared_agents=[
@@ -66,6 +66,7 @@ ROOM_TEMPLATES: dict[RoomType, RoomTemplate] = {
             "operator",
             "prober",
             "skeptic",
+            "synthesizer",
         ],
         default_initial_state="setup",
     ),
@@ -77,22 +78,31 @@ ROOM_TEMPLATES: dict[RoomType, RoomTemplate] = {
     # free_chat: facilitator (ADR-024 new role) + logger.
     RoomType.BUG_FIX: RoomTemplate(
         room_type=RoomType.BUG_FIX,
-        declared_agents=["logger", "operator", "prober", "skeptic"],
+        declared_agents=["logger", "operator", "planner", "prober", "skeptic", "verifier"],
         default_initial_state="setup",
     ),
     RoomType.CODE_REVIEW: RoomTemplate(
         room_type=RoomType.CODE_REVIEW,
-        declared_agents=["logger", "operator", "skeptic"],
+        declared_agents=["logger", "operator", "planner", "skeptic", "synthesizer", "verifier"],
         default_initial_state="setup",
     ),
     RoomType.IDEA_VALIDATION: RoomTemplate(
         room_type=RoomType.IDEA_VALIDATION,
-        declared_agents=["divergence_mapper", "logger", "operator", "prober", "skeptic"],
+        declared_agents=[
+            "divergence_mapper",
+            "logger",
+            "mentor",
+            "operator",
+            "planner",
+            "prober",
+            "skeptic",
+            "synthesizer",
+        ],
         default_initial_state="setup",
     ),
     RoomType.FREE_CHAT: RoomTemplate(
         room_type=RoomType.FREE_CHAT,
-        declared_agents=["facilitator", "logger"],
+        declared_agents=["facilitator", "logger", "mentor"],
         default_initial_state="setup",
     ),
 }

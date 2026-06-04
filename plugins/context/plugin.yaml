@@ -1,0 +1,25 @@
+schema_version: 1
+id: context
+name: "Context Analyst plugin bundle"
+version: "0.1.0"
+
+contributions:
+  roles:
+    - context_analyst
+  skills:
+    - context-tracking
+  # annotate_context: plugin-classify path (contributions.tools, ADR-029 D2 step 3/6).
+  # No host pre-classification → default-0 cap → HARD_CONFIRM (ADR-029 D5).
+  tools:
+    - annotate_context
+  # context_summary: host-pre-classify path (config/tools.yaml rev=10 → AUTO_EXECUTE).
+  # Plugin provides impl only; host file is authoritative (ADR-029 D5/D7).
+  tool_impls:
+    context_summary: "tools_impl:context_summary"
+
+dependencies:
+  model_ids:
+    - claude_code_haiku_45
+  room_types:
+    - research
+  min_host_contract: 1

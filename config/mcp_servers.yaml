@@ -36,3 +36,47 @@ servers:
         reversibility: 2
       move_file:
         reversibility: 1
+
+  # Local knowledge-graph connector (@modelcontextprotocol/server-memory).
+  # read_graph/search_nodes rev=10 → AUTO_EXECUTE; create_entities rev=1 → HARD_CONFIRM.
+  # delete_entities (exposed by server) intentionally NOT listed → UnknownToolError (HR#3).
+  memory:
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-memory"]
+    api_key_env: null
+    env: {}
+    timeouts:
+      connect: 15.0
+      list_tools: 15.0
+      call_tool: 30.0
+    tools:
+      read_graph:
+        reversibility: 10
+      search_nodes:
+        reversibility: 10
+      create_entities:
+        reversibility: 1
+
+  # Local SQLite file connector.
+  # read_query/list_tables rev=10 → AUTO_EXECUTE; write_query/create_table → HARD_CONFIRM.
+  # drop_table (exposed by server) intentionally NOT listed → UnknownToolError (HR#3).
+  sqlite:
+    transport: stdio
+    command: uvx
+    args: ["mcp-server-sqlite", "--db-path", "/tmp/orchestrator.db"]
+    api_key_env: null
+    env: {}
+    timeouts:
+      connect: 15.0
+      list_tools: 15.0
+      call_tool: 30.0
+    tools:
+      read_query:
+        reversibility: 10
+      list_tables:
+        reversibility: 10
+      write_query:
+        reversibility: 1
+      create_table:
+        reversibility: 2

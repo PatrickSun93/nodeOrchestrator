@@ -1,0 +1,17 @@
+# Insights plugin MCP server (ADR-027 D5 shape — same as config/mcp_servers.yaml).
+# Named insights_db (not conflicting with host servers) per ADR-029 D3 (no-collision).
+# query_insights rev=10 → AUTO_EXECUTE (read-only query).
+servers:
+  insights_db:
+    transport: stdio
+    command: npx
+    args: ["-y", "mcp-server-insights", "--db", "/tmp/insights.db"]
+    api_key_env: null
+    env: {}
+    timeouts:
+      connect: 15.0
+      list_tools: 15.0
+      call_tool: 30.0
+    tools:
+      query_insights:
+        reversibility: 10
