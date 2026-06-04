@@ -39,6 +39,7 @@ from orchestrator.api.wire import (
 from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.bootstrap import load_and_validate_llm_layer
 from orchestrator.core.event import (
+    PENDING_RESOLUTION_TYPES,
     EventId,
     EventNotFoundError,
     EventType,
@@ -68,17 +69,6 @@ from orchestrator.tools.executor import LocalToolRegistry, execute_pending_tool_
 from orchestrator.tools.local import build_local_tool_registry
 
 PAYLOAD_LIMIT_BYTES = 65_536  # 64 KiB
-
-# Resolution event types for position-anchored still-pending check (ADR-030 D3 step 2).
-# Must be identical to snapshot.py _PENDING_RESOLUTION_TYPES (B2/B3 consistency invariant).
-_CONFIRM_RESOLUTION_TYPES: frozenset[EventType] = frozenset(
-    {
-        EventType.TOOL_CALL,
-        EventType.TOOL_RESULT,
-        EventType.TOOL_FAILED,
-        EventType.TOOL_CALL_CANCELLED,
-    }
-)
 
 
 @dataclass
@@ -468,7 +458,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             # Step 3: Still-pending check (idempotency layer 1) — position-anchored.
             # Scan events AFTER the pending event's position for the same call_id resolved.
             already_resolved = any(
-                later.type in _CONFIRM_RESOLUTION_TYPES
+                later.type in PENDING_RESOLUTION_TYPES
                 and str(later.metadata.get("call_id", "")) == pending_meta.call_id
                 for later in sorted_events[pending_idx + 1 :]
             )

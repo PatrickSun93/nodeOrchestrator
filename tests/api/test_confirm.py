@@ -8,6 +8,8 @@ Coverage:
   §5 No-forge / backend-authoritative: extra fields → 422; wrong pending_event_id → fail closed
   §6 Cross-turn call_id collision (Y2): prior-turn result does not false-reject fresh pending
   §7 Writer-executor atomicity (N3): confirm closure runs on writer_executor
+  §8 Pending-resolution consistency (R0-A Y1): snapshot pending ⟺ endpoint still-pending
+  §9 Execute-stage failure (R0-A Y2, ADR-030 D5): TOOL_CALL durable; re-confirm already_resolved
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from orchestrator.core.event import (
 )
 from orchestrator.core.event_store import EventStore
 from orchestrator.core.room import Room, RoomType
+from orchestrator.derived.snapshot import produce_snapshot
 from orchestrator.llm.types import (
     LLMResponse,
     ModelId,
@@ -504,3 +507,122 @@ class TestConfirmWriterExecutorAtomicity:
         # The confirm closure ran on the writer executor thread
         assert writer_thread_id, "confirm did not run on writer_executor"
         assert len(set(writer_thread_id)) == 1  # single thread (max_workers=1)
+
+
+# ---------------------------------------------------------------------------
+# §8 Pending-resolution consistency (R0-A Y1)
+# ---------------------------------------------------------------------------
+
+
+class TestPendingResolutionConsistency:
+    """snapshot.tool_calls_pending_confirm ⟺ endpoint still-pending use the same predicate."""
+
+    def test_unresolved_listed_by_snapshot_and_confirmable(self, tmp_path: Any) -> None:
+        """Unresolved pending: snapshot lists it AND endpoint allows confirm (same predicate)."""
+        ctx = _make_ctx(tmp_path / "db.db")
+        room_id = _make_room(ctx.writer_store)
+        pending = _append_pending(ctx.writer_store, room_id, call_id="call_cons_pend")
+
+        # Snapshot sees it as pending
+        room = ctx.writer_store.get_room(room_id)
+        assert room is not None
+        events = ctx.writer_store.get_room_events(room_id)
+        snap = produce_snapshot(events, room, snapshot_at=now_ms())
+        assert any(r.event_id == pending.id for r in snap.tool_calls_pending_confirm)
+
+        # Endpoint also sees it as still-pending (confirm succeeds)
+        with TestClient(_make_test_app(ctx)) as client:
+            r = client.post(
+                f"/rooms/{room_id}/confirm",
+                json={"pending_event_id": pending.id, "decision": "approve"},
+            )
+        ctx.shutdown()
+        assert r.status_code == 200
+
+    def test_resolved_not_listed_by_snapshot_and_already_resolved(self, tmp_path: Any) -> None:
+        """Resolved pending: snapshot drops it AND endpoint returns already_resolved."""
+        ctx = _make_ctx(tmp_path / "db.db")
+        room_id = _make_room(ctx.writer_store)
+        pending = _append_pending(ctx.writer_store, room_id, call_id="call_cons_res")
+
+        # First confirm resolves it
+        with TestClient(_make_test_app(ctx)) as client:
+            r1 = client.post(
+                f"/rooms/{room_id}/confirm",
+                json={"pending_event_id": pending.id, "decision": "approve"},
+            )
+        assert r1.status_code == 200
+
+        # Snapshot now drops it from the pending list
+        room = ctx.writer_store.get_room(room_id)
+        assert room is not None
+        events = ctx.writer_store.get_room_events(room_id)
+        snap = produce_snapshot(events, room, snapshot_at=now_ms())
+        assert not any(r.event_id == pending.id for r in snap.tool_calls_pending_confirm)
+
+        # Endpoint also returns already_resolved
+        with TestClient(_make_test_app(ctx)) as client:
+            r2 = client.post(
+                f"/rooms/{room_id}/confirm",
+                json={"pending_event_id": pending.id, "decision": "approve"},
+            )
+        ctx.shutdown()
+        assert r2.status_code == 422
+        assert r2.json()["reason"] == "already_resolved"
+
+
+# ---------------------------------------------------------------------------
+# §9 Execute-stage failure (R0-A Y2, ADR-030 D5 do-not-reverse)
+# ---------------------------------------------------------------------------
+
+
+class TestConfirmExecuteStage:
+    """Executor failure after TOOL_CALL appended: do-not-reverse + idempotent re-confirm."""
+
+    def test_executor_failure_execute_stage_error_durable_idempotent(self, tmp_path: Any) -> None:
+        """executor raises → 500 stage:execute; TOOL_CALL durable; re-confirm already_resolved.
+
+        ADR-030 D5: approval already landed — do NOT re-confirm, reconcile via replay.
+        Layer-1 still-pending check catches the orphaned TOOL_CALL on re-confirm.
+        """
+        from unittest.mock import patch
+
+        ctx = _make_ctx(tmp_path / "db.db")
+        room_id = _make_room(ctx.writer_store)
+        pending = _append_pending(ctx.writer_store, room_id, call_id="call_exec_fail")
+
+        # First confirm: executor raises AFTER TOOL_CALL has been appended
+        with (
+            patch(
+                "orchestrator.api.app.execute_pending_tool_calls",
+                side_effect=RuntimeError("executor boom"),
+            ),
+            TestClient(_make_test_app(ctx)) as client,
+        ):
+            r1 = client.post(
+                f"/rooms/{room_id}/confirm",
+                json={"pending_event_id": pending.id, "decision": "approve"},
+            )
+
+        assert r1.status_code == 500
+        body = r1.json()
+        assert body["stage"] == "execute"
+        assert body["appended_event_id"] is not None
+        assert "executor boom" in body["reason"]
+
+        # TOOL_CALL is durable (do-not-reverse invariant, ADR-030 D5)
+        all_events = ctx.writer_store.get_room_events(room_id)
+        tool_calls = [e for e in all_events if e.type == EventType.TOOL_CALL]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].id == body["appended_event_id"]
+
+        # Re-confirm → already_resolved (layer-1 catches the orphaned TOOL_CALL)
+        with TestClient(_make_test_app(ctx)) as client:
+            r2 = client.post(
+                f"/rooms/{room_id}/confirm",
+                json={"pending_event_id": pending.id, "decision": "approve"},
+            )
+        ctx.shutdown()
+        assert r2.status_code == 422
+        assert r2.json()["stage"] == "append"
+        assert r2.json()["reason"] == "already_resolved"

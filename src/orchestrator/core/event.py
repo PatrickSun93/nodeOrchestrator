@@ -386,6 +386,17 @@ TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.TOOL_CALL_CANCELLED: ToolCallCancelledMeta,
 }
 
+# ADR-030 D2/D3: event types that resolve a TOOL_CALL_PENDING (position-anchored
+# still-pending predicate). Shared by snapshot (D2) and confirm endpoint (D3).
+PENDING_RESOLUTION_TYPES: frozenset[EventType] = frozenset(
+    {
+        EventType.TOOL_CALL,
+        EventType.TOOL_RESULT,
+        EventType.TOOL_FAILED,
+        EventType.TOOL_CALL_CANCELLED,
+    }
+)
+
 
 # ---------------------------------------------------------------------------
 # Author format

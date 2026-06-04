@@ -12,6 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.core.event import (
+    PENDING_RESOLUTION_TYPES,
     DecisionMeta,
     Event,
     EventType,
@@ -88,18 +89,6 @@ _DECISION_CLASS_TYPES: frozenset[EventType] = frozenset(
         EventType.DECISION_PIVOT,
         EventType.REJECTION,
         EventType.RETRACTION,
-    }
-)
-
-# Resolution event types for the D2.3 position-anchored still-pending predicate (ADR-030 D2).
-# A TOOL_CALL_PENDING event P is resolved iff any event AFTER P carries P's call_id
-# with one of these types. Consistent with D3 confirm endpoint (byte-for-byte).
-_PENDING_RESOLUTION_TYPES: frozenset[EventType] = frozenset(
-    {
-        EventType.TOOL_CALL,
-        EventType.TOOL_RESULT,
-        EventType.TOOL_FAILED,
-        EventType.TOOL_CALL_CANCELLED,
     }
 )
 
@@ -180,7 +169,7 @@ def produce_snapshot(
         p_meta = ToolCallPendingMeta.model_validate(e.metadata)
         # Scan only events AFTER this pending event's position.
         resolved = any(
-            later.type in _PENDING_RESOLUTION_TYPES
+            later.type in PENDING_RESOLUTION_TYPES
             and str(later.metadata.get("call_id", "")) == p_meta.call_id
             for later in sorted_events[idx + 1 :]
         )
