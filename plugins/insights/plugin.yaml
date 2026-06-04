@@ -1,0 +1,16 @@
+schema_version: 1
+id: insights
+name: "Insights plugin bundle"
+version: "0.1.0"
+
+contributions:
+  skills:
+    - insights-synthesis
+  # Contributes a local MCP server reference (no tool_impls — different shape from context bundle).
+  mcp_servers:
+    - insights_db
+
+dependencies:
+  room_types:
+    - research
+  min_host_contract: 1
