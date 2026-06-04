@@ -70,6 +70,10 @@ from orchestrator.tools.local import build_local_tool_registry
 
 PAYLOAD_LIMIT_BYTES = 65_536  # 64 KiB
 
+# ADR-033 D1: bounded turn-loop constants.
+# MAX_TURN_LOOP_PASSES = N re-dispatch passes after pass 0 (total dispatch_turn calls ≤ 1+N=5).
+MAX_TURN_LOOP_PASSES: int = 4
+
 
 @dataclass
 class AppContext:
@@ -359,6 +363,9 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         loop = asyncio.get_running_loop()
 
         def _write_and_turn() -> IntentResponse:
+            from orchestrator.agents.dispatch import dispatch_turn
+            from orchestrator.rooms.runtime import select_dispatch_agents
+
             room = ctx.writer_store.get_room(rid)
             if room is None:
                 raise _AppendFailedError(f"room {room_id!r} not found")
@@ -370,6 +377,11 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             except (RoomNotFoundError, InvalidParentError, MetadataValidationError) as exc:
                 raise _AppendFailedError(str(exc)) from exc
 
+            # Mark cursor just after user_event append (before pass 0 dispatch+execute).
+            # The re-dispatch loop checks what the PREVIOUS pass produced starting here.
+            prev_pass_cursor = len(ctx.writer_store.get_room_events(rid))
+
+            # Pass 0: state machine once + dispatch + execute (ADR-033 D2).
             try:
                 turn_result = run_turn(
                     room,
@@ -384,11 +396,10 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             except Exception as exc:
                 raise _TurnFailedError(str(exc), user_event.id) from exc
 
-            # Post-dispatch execution stage (ADR-028 D1): execute TOOL_CALL events
-            # appended by run_turn before publishing new events to subscribers.
-            window = ctx.writer_store.get_room_events(rid)[pre_cursor:]
+            # Post-dispatch execution stage for pass 0 (ADR-028 D1).
+            pass0_window = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
             execute_pending_tool_calls(
-                window_events=window,
+                window_events=pass0_window,
                 room_id=rid,
                 event_store=ctx.writer_store,
                 mcp_sessions=ctx.mcp_sessions,
@@ -396,6 +407,59 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 llm_router=ctx.llm_router,
             )
 
+            # Re-dispatch loop passes 1…N (ADR-033 D1/D2/D3).
+            # Filter agents once — single source of truth (D2).
+            filtered_agents = select_dispatch_agents(room, ctx.available_agents)
+            _result_types = frozenset(
+                {EventType.TOOL_RESULT, EventType.TOOL_FAILED, EventType.OBSERVATION}
+            )
+
+            for _pass in range(MAX_TURN_LOOP_PASSES):
+                # Check what the previous pass produced (from prev_pass_cursor to now).
+                prev_pass_events = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
+
+                # Termination condition 1: zero new TOOL_CALL events in last pass (D3).
+                new_tool_calls = [
+                    e for e in prev_pass_events if e.type == EventType.TOOL_CALL
+                ]
+                if not new_tool_calls:
+                    break
+
+                # Termination condition 2: no new result-class event to pass as current_event.
+                result_events = [e for e in prev_pass_events if e.type in _result_types]
+                if not result_events:
+                    break
+
+                # current_event for this re-dispatch pass = last result-class event (D2).
+                current_event_for_pass = result_events[-1]
+
+                # Advance cursor to start of THIS pass (before dispatch+execute).
+                prev_pass_cursor = len(ctx.writer_store.get_room_events(rid))
+
+                # Re-dispatch: call dispatch_turn directly (state machine NOT re-run — D2).
+                dispatch_turn(
+                    filtered_agents,
+                    room,
+                    current_event_for_pass,
+                    event_store=ctx.writer_store,
+                    llm_router=ctx.llm_router,
+                    available_skills=ctx.available_skills,
+                    regex_registry=ctx.regex_registry,
+                    tools=ctx.tools,
+                )
+
+                # Execute TOOL_CALL events from this re-dispatch pass.
+                repass_window = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
+                execute_pending_tool_calls(
+                    window_events=repass_window,
+                    room_id=rid,
+                    event_store=ctx.writer_store,
+                    mcp_sessions=ctx.mcp_sessions,
+                    local_tools=ctx.local_tools,
+                    llm_router=ctx.llm_router,
+                )
+
+            # Publish all events accumulated since the user_event append (one batch).
             new_events = ctx.writer_store.get_room_events(rid)[pre_cursor:]
             loop.call_soon_threadsafe(ctx.bus.publish, rid, new_events)
 
