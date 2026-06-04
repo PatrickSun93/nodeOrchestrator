@@ -1,0 +1,8 @@
+schema_version: 1
+id: demo_posture_b
+name: 'Posture-B subprocess demo plugin'
+version: '0.1.0'
+contributions:
+  tool_impls:
+    posture_b_echo: 'tools_impl:echo_tool'
+    posture_b_env_probe: 'tools_impl:env_probe_tool'
