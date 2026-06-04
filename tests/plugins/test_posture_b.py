@@ -166,6 +166,7 @@ def test_pb1_basic_subprocess_execution(tmp_path: Path) -> None:
         tmp_path,
         "test_plugin",
         {"echo": "tools_impl:echo_tool"},
+        provenance="fetched",
     )
     fn = tools["echo"]
     assert hasattr(fn, "_is_posture_b_subprocess")
@@ -189,7 +190,9 @@ def test_pb1_subprocess_with_params(tmp_path: Path) -> None:
         """),
         encoding="utf-8",
     )
-    tools = load_plugin_code(tmp_path, "greet_plugin", {"greet": "tools_impl:greet"})
+    tools = load_plugin_code(
+        tmp_path, "greet_plugin", {"greet": "tools_impl:greet"}, provenance="fetched"
+    )
     result = tools["greet"]({"name": "Alice"})
     assert "Hello, Alice!" in result.content
 
@@ -202,7 +205,9 @@ def test_pb1_subprocess_with_params(tmp_path: Path) -> None:
 def test_pb1_executor_appends_tool_result(tmp_path: Path) -> None:
     """Posture-B tool called via execute_pending_tool_calls → TOOL_RESULT in event store."""
     _make_echo_module(tmp_path)
-    tools = load_plugin_code(tmp_path, "ep_plugin", {"my_tool": "tools_impl:echo_tool"})
+    tools = load_plugin_code(
+        tmp_path, "ep_plugin", {"my_tool": "tools_impl:echo_tool"}, provenance="fetched"
+    )
 
     store = _make_store()
     room_id = _make_room(store)
@@ -232,7 +237,9 @@ def test_pb1_executor_appends_tool_result(tmp_path: Path) -> None:
 def test_pb2_hung_plugin_timeout_tool_failed(tmp_path: Path) -> None:
     """A hung plugin tool times out (MCPTimeoutError) → executor records TOOL_FAILED."""
     _make_hang_module(tmp_path)
-    tools = load_plugin_code(tmp_path, "hang_plugin", {"hang": "tools_impl:hang_tool"})
+    tools = load_plugin_code(
+        tmp_path, "hang_plugin", {"hang": "tools_impl:hang_tool"}, provenance="fetched"
+    )
 
     # Call the fn directly — MCPTimeoutError should propagate
     with pytest.raises(MCPTimeoutError):
@@ -284,7 +291,9 @@ def test_pb3_sigterm_ignoring_plugin_killed_by_watchdog(tmp_path: Path) -> None:
 def test_pb4_posture_b_per_turn_cap(tmp_path: Path) -> None:
     """More than MAX_POSTURE_B_CALLS_PER_TURN Posture-B calls → excess TOOL_FAILED."""
     _make_echo_module(tmp_path)
-    tools = load_plugin_code(tmp_path, "cap_plugin", {"t": "tools_impl:echo_tool"})
+    tools = load_plugin_code(
+        tmp_path, "cap_plugin", {"t": "tools_impl:echo_tool"}, provenance="fetched"
+    )
 
     store = _make_store()
     room_id = _make_room(store)
@@ -369,7 +378,9 @@ def test_pb5_env_leak_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv(secret_key, "super-secret-value")
 
     _make_env_probe_module(tmp_path, secret_key)
-    tools = load_plugin_code(tmp_path, "env_probe", {"probe": "tools_impl:env_probe"})
+    tools = load_plugin_code(
+        tmp_path, "env_probe", {"probe": "tools_impl:env_probe"}, provenance="fetched"
+    )
 
     result = tools["probe"]({})
     assert result.content == "__absent__", (

@@ -187,13 +187,13 @@ def _write_activation(
 
 
 def test_demo1_demo_posture_b_plugin_loads() -> None:
-    """demo_posture_b operator-placed plugin loads → Posture-B closures in local_tools."""
+    """demo_posture_b operator-placed plugin loads using in-process Posture A (ADR-029 D4)."""
     result = _load_plugins_dir()
     assert "posture_b_echo" in result.local_tools
     assert "posture_b_env_probe" in result.local_tools
-    # Verify Posture-B marker
+    # Operator-placed → Posture A (in-process): no _is_posture_b_subprocess marker
     for fn in [result.local_tools["posture_b_echo"], result.local_tools["posture_b_env_probe"]]:
-        assert bool(getattr(fn, "_is_posture_b_subprocess", False))
+        assert not bool(getattr(fn, "_is_posture_b_subprocess", False))
 
 
 # ---------------------------------------------------------------------------
@@ -303,16 +303,21 @@ def test_demo3_fetch_activate_execute_e2e(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_demo4_env_leak_probe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """posture_b_env_probe verifies orchestrator secrets are absent in child subprocess."""
+def test_demo4_posture_a_tool_sees_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Posture-A (operator-placed) tools run in-process and CAN access os.environ.
+
+    Env isolation (scoped env) is a Posture-B property for fetched plugins only
+    (test_pb5 in test_posture_b.py covers subprocess env isolation).
+    """
     secret_key = "P3_7_REMOTE_TEST_SECRET_ZZZZZ"
-    monkeypatch.setenv(secret_key, "super-secret-value")
+    monkeypatch.setenv(secret_key, "posture-a-sees-this")
 
     result = _load_plugins_dir()
     fn = result.local_tools["posture_b_env_probe"]
     output = fn({"key": secret_key})
-    assert output.content == "__absent__", (
-        f"env-leak: child saw {secret_key!r}={output.content!r} — scoped env failed"
+    # Posture A: in-process tool reads os.environ directly
+    assert output.content == "posture-a-sees-this", (
+        f"Posture-A in-process tool should see env var, got: {output.content!r}"
     )
 
 
@@ -321,8 +326,13 @@ def test_demo4_env_leak_probe(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_demo5_per_turn_cap_end_to_end() -> None:
-    """More than MAX_POSTURE_B_CALLS_PER_TURN Posture-B calls → excess TOOL_FAILED."""
+def test_demo5_posture_a_tools_exempt_from_posture_b_cap() -> None:
+    """Posture-A (operator-placed) tools are exempt from MAX_POSTURE_B_CALLS_PER_TURN.
+
+    Only Posture-B (_is_posture_b_subprocess marker) tools count toward the cap.
+    Operator-placed tools have no subprocess overhead and are uncapped.
+    End-to-end Posture-B cap behavior is tested via test_pb4 in test_posture_b.py.
+    """
     result = _load_plugins_dir()
 
     store = _make_store()
@@ -352,8 +362,9 @@ def test_demo5_per_turn_cap_end_to_end() -> None:
         if e.type == EventType.TOOL_FAILED
         and e.metadata.get("error_class") == "turn_posture_b_cap_exceeded"
     ]
-    assert len(tool_results) == MAX_POSTURE_B_CALLS_PER_TURN
-    assert len(cap_failed) == 2
+    # Posture A: all calls succeed, cap is not applied
+    assert len(tool_results) == n
+    assert len(cap_failed) == 0
 
 
 # ---------------------------------------------------------------------------

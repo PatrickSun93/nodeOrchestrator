@@ -506,17 +506,15 @@ def test_collision_refused_plugin_not_imported(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_broken_module_import_loads_but_call_fails(tmp_path: Path) -> None:
-    """Posture-B: a broken tools_impl.py LOADS (closure created), call fails at runtime (D4).
+def test_broken_module_import_refused(tmp_path: Path) -> None:
+    """Posture-A: a broken tools_impl.py causes plugin to be REFUSED at load time (D4).
 
-    Posture B defers the module import to the child subprocess.  Load-time check is:
-    does the module FILE exist? (yes → closure created → plugin loads).  The import
-    error surfaces when the subprocess is spawned at call time → MCPConnectionError →
-    executor records TOOL_FAILED.  The plugin is NOT refused at load time — fail-closed
-    is still achieved (every call → TOOL_FAILED, never a silent success).
+    Posture A loads the module in-process via importlib.  An import error (e.g.
+    ModuleNotFoundError) propagates as PluginCodeLoadError → the plugin is refused
+    (fail-closed; no tool registered).
 
-    my_tool is in tool_impls only (NOT in contributions.tools) — no collision against
-    host_tools so the collision-check passes and the code-load path is exercised.
+    my_tool is in tool_impls only (NOT in contributions.tools) — no collision so the
+    code-load path is exercised.
     """
     plugins_dir = tmp_path / "plugins"
     pdir = plugins_dir / "brokenimport"
@@ -533,7 +531,7 @@ def test_broken_module_import_loads_but_call_fails(tmp_path: Path) -> None:
         """),
         encoding="utf-8",
     )
-    # tools_impl.py fails at import time (ModuleNotFoundError) — Posture B defers this
+    # tools_impl.py fails at import time (ModuleNotFoundError)
     (pdir / "tools_impl.py").write_text(
         "import nonexistent_module_xyz_99\ndef my_fn(params): pass\n", encoding="utf-8"
     )
@@ -549,22 +547,15 @@ def test_broken_module_import_loads_but_call_fails(tmp_path: Path) -> None:
         host_local_tool_names=frozenset(),
         host_mcp_server_names=frozenset(),
     )
-    # Posture B: closure created at load time — plugin loads
-    assert "my_tool" in result.local_tools
-    # Calling the tool fails at runtime (subprocess import error → MCPConnectionError)
-    from orchestrator.mcp._async_bridge import MCPConnectionError
-
-    with pytest.raises((MCPConnectionError, Exception)):
-        result.local_tools["my_tool"]({})
+    # Posture A: import fails at load time → PluginCodeLoadError → plugin refused
+    assert "my_tool" not in result.local_tools
 
 
-def test_missing_callable_in_module_loads_but_call_fails(tmp_path: Path) -> None:
-    """Posture-B: a missing callable LOADS (closure created), call fails at runtime (D4).
+def test_missing_callable_in_module_refused(tmp_path: Path) -> None:
+    """Posture-A: a missing callable causes plugin to be REFUSED at load time (D4).
 
-    Posture B defers callable resolution to the child subprocess.  Load-time check is:
-    does the module FILE exist? (yes → closure created → plugin loads).  The missing
-    callable surfaces when the harness runs getattr() → RuntimeError inside subprocess →
-    MCPConnectionError in the parent → executor records TOOL_FAILED.
+    Posture A resolves the callable at load time via getattr().  If the callable is
+    absent, PluginCodeLoadError is raised → plugin refused (fail-closed; no tool registered).
 
     my_tool is in tool_impls only (NOT in contributions.tools) — no collision.
     """
@@ -583,7 +574,7 @@ def test_missing_callable_in_module_loads_but_call_fails(tmp_path: Path) -> None
         """),
         encoding="utf-8",
     )
-    # Module imports fine; nonexistent_fn is not defined — Posture B defers this check
+    # Module imports fine; nonexistent_fn is not defined
     (pdir / "tools_impl.py").write_text("def other_fn(params): pass\n", encoding="utf-8")
 
     result = load_plugins(
@@ -597,13 +588,8 @@ def test_missing_callable_in_module_loads_but_call_fails(tmp_path: Path) -> None
         host_local_tool_names=frozenset(),
         host_mcp_server_names=frozenset(),
     )
-    # Posture B: closure created at load time — plugin loads
-    assert "my_tool" in result.local_tools
-    # Calling the tool fails at runtime (missing callable in harness → MCPConnectionError)
-    from orchestrator.mcp._async_bridge import MCPConnectionError
-
-    with pytest.raises((MCPConnectionError, Exception)):
-        result.local_tools["my_tool"]({})
+    # Posture A: callable not found at load time → PluginCodeLoadError → plugin refused
+    assert "my_tool" not in result.local_tools
 
 
 # ---------------------------------------------------------------------------

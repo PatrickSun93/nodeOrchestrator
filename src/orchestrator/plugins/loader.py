@@ -434,9 +434,10 @@ def _load_plugin(
     plugin_all_tools: dict[str, ToolMeta] = {**plugin_own_tools, **plugin_mcp_tools}
 
     # Step 5: Load code — ONLY after validation + collision-check cleared (P3.5-4 wires this).
-    # Posture B: load_plugin_code creates subprocess-launching closures; no in-process import.
-    # plugin_subprocess_env: operator-authored (from activation entry for fetched; {} for
-    # operator-placed); the fetched plugin manifest cannot override this (ADR-031 D4).
+    # Dual posture: operator-placed → in-process importlib (Posture A, ADR-029 D4);
+    # fetched → subprocess-launching _PostureBFn (Posture B, ADR-031 D1/D2).
+    # subprocess_env: operator-authored (from activation entry for fetched; unused for
+    # operator-placed Posture A); the fetched plugin manifest cannot override (ADR-031 D4).
     plugin_local_tools: dict[str, LocalToolFn] = {}
     if manifest.contributions.tool_impls:
         from orchestrator.plugins.code import PluginCodeLoadError, load_plugin_code
@@ -450,6 +451,7 @@ def _load_plugin(
                 pid,
                 manifest.contributions.tool_impls,
                 plugin_subprocess_env=subprocess_env,
+                provenance=provenance,
             )
         except PluginCodeLoadError as exc:
             _log.warning("plugin %r: code load failed: %s — refusing", pid, exc)

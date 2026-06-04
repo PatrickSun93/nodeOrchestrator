@@ -287,14 +287,22 @@ def test_pv5_fetched_tool_impls_are_posture_b(tmp_path: Path) -> None:
     )
 
 
-def test_pv5_operator_placed_tool_impls_are_also_posture_b(tmp_path: Path) -> None:
-    """Operator-placed plugin tool_impls are also Posture-B (all plugins use subprocess now)."""
+def test_pv5_operator_placed_tool_impls_are_posture_a(tmp_path: Path) -> None:
+    """Operator-placed plugin tool_impls use in-process Posture A (ADR-029 D4 curation=trust).
+
+    Test-enforced-dual-posture: operator-placed plugins are NOT subprocess-launched;
+    they have no _is_posture_b_subprocess marker.
+    """
     plugins_dir = tmp_path / "plugins"
-    _minimal_plugin(plugins_dir, "op_b", with_tool_impl=True)
+    _minimal_plugin(plugins_dir, "op_a", with_tool_impl=True)
 
     result = _load(plugins_dir)
     fn = result.local_tools["echo_tool"]
-    assert bool(getattr(fn, "_is_posture_b_subprocess", False))
+    # Posture A: NOT a subprocess-launching closure (_is_posture_b_subprocess absent)
+    assert not bool(getattr(fn, "_is_posture_b_subprocess", False)), (
+        "pv5: operator-placed plugin tool impl IS Posture-B — "
+        "Posture A (in-process importlib) must be used for operator-placed (ADR-029 D4)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -353,11 +361,13 @@ def test_pv8_activation_subprocess_env_passed_to_closure(tmp_path: Path) -> None
     assert getattr(fn, "_plugin_subprocess_env", None) == {"CUSTOM_KEY": "custom_value"}
 
 
-def test_pv8_operator_placed_gets_empty_env(tmp_path: Path) -> None:
-    """Operator-placed plugin has empty plugin_subprocess_env (no extra env)."""
+def test_pv8_operator_placed_uses_posture_a(tmp_path: Path) -> None:
+    """Operator-placed plugin uses Posture A (in-process); no subprocess env."""
     plugins_dir = tmp_path / "plugins"
     _minimal_plugin(plugins_dir, "clean_plugin", with_tool_impl=True)
 
     result = _load(plugins_dir)
     fn = result.local_tools["echo_tool"]
-    assert getattr(fn, "_plugin_subprocess_env", None) == {}
+    # Posture A: not a subprocess fn, so no subprocess env attribute
+    assert not bool(getattr(fn, "_is_posture_b_subprocess", False))
+    assert getattr(fn, "_plugin_subprocess_env", None) is None
