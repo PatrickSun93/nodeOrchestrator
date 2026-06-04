@@ -79,14 +79,20 @@ def test_load_room_research_skeptic_and_prober_present() -> None:
 
 
 def test_load_room_research_three_absent_agents_in_missing_list() -> None:
-    """operator, divergence_mapper, logger absent → each appears in missing list."""
+    """operator, divergence_mapper, investigator, logger absent → each in missing list."""
     available: dict[str, Agent] = {
         "skeptic": _make_agent("skeptic"),
         "prober": _make_agent("prober"),
     }
     _, missing = load_room(RoomType.RESEARCH, available)
 
-    assert set(missing) == {"divergence_mapper", "logger", "operator", "synthesizer"}
+    assert set(missing) == {
+        "divergence_mapper",
+        "investigator",
+        "logger",
+        "operator",
+        "synthesizer",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +108,8 @@ def test_load_room_research_missing_list_nonempty_when_partial() -> None:
     _, missing = load_room(RoomType.RESEARCH, available)
 
     assert len(missing) > 0
-    # Exactly 5 declared agents are absent (all except skeptic)
-    assert len(missing) == 5
+    # Exactly 6 declared agents are absent (all except skeptic; 7 total including investigator)
+    assert len(missing) == 6
 
 
 # ---------------------------------------------------------------------------
@@ -111,8 +117,24 @@ def test_load_room_research_missing_list_nonempty_when_partial() -> None:
 # ---------------------------------------------------------------------------
 
 _SCAFFOLD_ROSTERS: dict[RoomType, list[str]] = {
-    RoomType.BUG_FIX: ["logger", "operator", "planner", "prober", "skeptic", "verifier"],
-    RoomType.CODE_REVIEW: ["logger", "operator", "planner", "skeptic", "synthesizer", "verifier"],
+    RoomType.BUG_FIX: [
+        "investigator",
+        "logger",
+        "operator",
+        "planner",
+        "prober",
+        "skeptic",
+        "verifier",
+    ],
+    RoomType.CODE_REVIEW: [
+        "investigator",
+        "logger",
+        "operator",
+        "planner",
+        "skeptic",
+        "synthesizer",
+        "verifier",
+    ],
     RoomType.IDEA_VALIDATION: [
         "divergence_mapper",
         "logger",
@@ -219,7 +241,15 @@ def test_load_room_empty_available_agents_scaffold_returns_full_roster_as_missin
     """Scaffold load_room with empty available_agents: missing == full declared roster."""
     room, missing = load_room(RoomType.BUG_FIX, {})
 
-    assert missing == ["logger", "operator", "planner", "prober", "skeptic", "verifier"]
+    assert missing == [
+        "investigator",
+        "logger",
+        "operator",
+        "planner",
+        "prober",
+        "skeptic",
+        "verifier",
+    ]
     assert room.type == RoomType.BUG_FIX
     assert room.state == "setup"
 
@@ -242,9 +272,9 @@ def test_research_declared_agents_are_alphabetical() -> None:
 
 
 def test_research_declared_agents_count() -> None:
-    """Research template declares exactly 6 agents."""
+    """Research template declares exactly 7 agents (P4.1 adds investigator)."""
     template = ROOM_TEMPLATES[RoomType.RESEARCH]
-    assert len(template.declared_agents) == 6
+    assert len(template.declared_agents) == 7
 
 
 def test_load_room_each_room_type_gets_unique_id() -> None:

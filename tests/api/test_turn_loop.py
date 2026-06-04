@@ -7,18 +7,22 @@ Covers:
   §3 TOOL_FAILED mid-loop continues bounded.
   §4 TOOL_CALL_PENDING (COUNTDOWN) → loop terminates, not executed in-loop.
   §5 state_transition evaluated exactly once/turn.
+  §6 wall-clock deadline exits loop at pass boundary (P4.1-5).
+  §7 live investigator chain + mutation-tool guard (P4.1-7, ADR-033 D5).
 """
 
 from __future__ import annotations
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from orchestrator.agents.dispatch import LLMRouterProtocol
+from orchestrator.agents.loader import load_agents
 from orchestrator.agents.schema import (
     Agent,
     AgentAppliesTo,
@@ -29,16 +33,21 @@ from orchestrator.api.pubsub import RoomEventBus
 from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.core.event import EventType, generate_event_id
 from orchestrator.core.event_store import EventStore
+from orchestrator.llm.router import ModelRegistry
 from orchestrator.llm.types import (
     AgentAutonomyThresholds,
     AgentLLMConfig,
+    Capability,
     LLMResponse,
     ModelId,
+    ModelProfile,
     ProviderId,
     RequestId,
     ToolCall,
     Usage,
 )
+
+_CONFIG_AGENTS_DIR = Path(__file__).resolve().parent.parent.parent / "config" / "agents"
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -482,3 +491,138 @@ def test_turn_loop_wall_clock_deadline_exits(tmp_path: Any) -> None:
     events = ctx.writer_store.get_room_events(room_id)  # type: ignore[arg-type]
     results = [e for e in events if e.type == EventType.TOOL_RESULT]
     assert len(results) >= 1
+
+
+# ---------------------------------------------------------------------------
+# §7 (P4.1-7): Live investigator chain + mutation-tool guard (ADR-033 D5)
+# ---------------------------------------------------------------------------
+
+
+def _live_registry() -> ModelRegistry:
+    """Build a ModelRegistry covering all canonical config/agents/ model IDs."""
+    _provider = ProviderId("test_provider")
+    caps_map: dict[str, list[Capability]] = {
+        "deepseek_v4_flash": [Capability.TOOLS],
+        "qwen_mlx_30b": [Capability.TOOLS],
+        "claude_code_opus_47": [Capability.EFFORT],
+        "claude_code_sonnet_46": [Capability.EFFORT],
+        "claude_code_haiku_45": [],
+        "deepseek_v4_pro": [],
+    }
+    profiles = {
+        ModelId(mid): ModelProfile(
+            id=ModelId(mid),
+            provider=_provider,
+            provider_model_id=mid,
+            capabilities=caps,
+            context_window=8192,
+        )
+        for mid, caps in caps_map.items()
+    }
+    return ModelRegistry(profiles)
+
+
+def test_investigator_live_chain_flagship(tmp_path: Any) -> None:
+    """§7 live: real investigator.yaml drives read_file → search_text chain in one /intent turn.
+
+    Uses config/agents/investigator.yaml (not a synthetic test agent).
+    ADR-033 D5 — investigator chains live on landing (cooldown=0, tool_result trigger).
+    """
+    from orchestrator.tools.local import build_local_tool_registry
+
+    all_agents, _ = load_agents(_CONFIG_AGENTS_DIR, models=_live_registry())
+    investigator = all_agents["investigator"]
+
+    (tmp_path / "target.py").write_text("def investigate():\n    pass\n", encoding="utf-8")
+
+    call_count: list[int] = [0]
+
+    def llm_side_effect(req: Any) -> LLMResponse:
+        call_count[0] += 1
+        n = call_count[0]
+        if n == 1:
+            return _llm_resp(
+                "reading file",
+                [ToolCall(id="tc_read", name="read_file", arguments={"path": "target.py"})],
+            )
+        if n == 2:
+            return _llm_resp(
+                "searching",
+                [ToolCall(id="tc_srch", name="search_text", arguments={"query": "investigate"})],
+            )
+        return _llm_resp("investigation complete")
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = llm_side_effect
+
+    tools = {
+        "read_file": ToolMeta(reversibility=10),
+        "search_text": ToolMeta(reversibility=10),
+    }
+    ctx = _make_ctx(agent=investigator, llm_router=router, tools=tools)
+    ctx.local_tools = build_local_tool_registry(tmp_path)
+    ctx.sandbox_root = tmp_path
+
+    app = _make_test_app(ctx)
+    with TestClient(app) as client:
+        room_id = _post_room(client, "bug_fix")
+        _post_intent(client, room_id)
+
+    events = ctx.writer_store.get_room_events(room_id)  # type: ignore[arg-type]
+    result_events = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(result_events) >= 2, (
+        f"Investigator live chain: expected ≥2 TOOL_RESULTs in-turn, got {len(result_events)}"
+    )
+    assert call_count[0] <= 1 + MAX_TURN_LOOP_PASSES
+
+
+def test_investigator_mutation_tool_does_not_auto_execute(tmp_path: Any) -> None:
+    """§7 guard: investigator threshold_auto=8 → propose_edit (rev=5) lands COUNTDOWN, not AUTO.
+
+    threshold_auto=8 > reversibility=5 → COUNTDOWN_CONFIRM (not AUTO_EXECUTE).
+    Loop terminates after pass 0 (TOOL_CALL_PENDING = zero new TOOL_CALL).
+    ADR-033 D5: read-only tools rev=10 AUTO-execute; every mutation tool forces confirm.
+    """
+    all_agents, _ = load_agents(_CONFIG_AGENTS_DIR, models=_live_registry())
+    investigator = all_agents["investigator"]
+
+    call_count: list[int] = [0]
+
+    def llm_side_effect(req: Any) -> LLMResponse:
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return _llm_resp(
+                "proposing edit",
+                [ToolCall(id="tc_prop", name="propose_edit", arguments={"content": "fix"})],
+            )
+        return _llm_resp("unexpected re-dispatch")
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = llm_side_effect
+
+    ctx = _make_ctx(
+        agent=investigator,
+        llm_router=router,
+        tools={"propose_edit": ToolMeta(reversibility=5)},
+    )
+
+    app = _make_test_app(ctx)
+    with TestClient(app) as client:
+        room_id = _post_room(client, "bug_fix")
+        _post_intent(client, room_id)
+
+    events = ctx.writer_store.get_room_events(room_id)  # type: ignore[arg-type]
+
+    pending = [e for e in events if e.type == EventType.TOOL_CALL_PENDING]
+    assert len(pending) >= 1, "propose_edit must land as TOOL_CALL_PENDING (COUNTDOWN)"
+
+    tool_calls = [
+        e for e in events
+        if e.type == EventType.TOOL_CALL
+        and e.metadata.get("tool_name") == "propose_edit"
+    ]
+    assert tool_calls == [], "propose_edit must not AUTO-execute (threshold_auto=8 > rev=5)"
+
+    assert call_count[0] == 1, (
+        f"Loop must not re-dispatch after COUNTDOWN; got {call_count[0]} dispatch_turn calls"
+    )

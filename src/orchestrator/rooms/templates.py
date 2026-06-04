@@ -57,11 +57,12 @@ class RoomTemplate(BaseModel):
 
 ROOM_TEMPLATES: dict[RoomType, RoomTemplate] = {
     # Research: fully implemented template (ADR-012 D1 + handoff §5.2).
-    # 6 declared agents — alphabetical order.
+    # 7 declared agents — alphabetical order (P4.1 adds investigator).
     RoomType.RESEARCH: RoomTemplate(
         room_type=RoomType.RESEARCH,
         declared_agents=[
             "divergence_mapper",
+            "investigator",
             "logger",
             "operator",
             "prober",
@@ -76,14 +77,31 @@ ROOM_TEMPLATES: dict[RoomType, RoomTemplate] = {
     # idea_validation: full analytical roster — prober + skeptic + divergence_mapper + operator +
     #   logger.
     # free_chat: facilitator (ADR-024 new role) + logger.
+    # P4.1 adds investigator to bug_fix and code_review (ADR-033 D5 live chain).
     RoomType.BUG_FIX: RoomTemplate(
         room_type=RoomType.BUG_FIX,
-        declared_agents=["logger", "operator", "planner", "prober", "skeptic", "verifier"],
+        declared_agents=[
+            "investigator",
+            "logger",
+            "operator",
+            "planner",
+            "prober",
+            "skeptic",
+            "verifier",
+        ],
         default_initial_state="setup",
     ),
     RoomType.CODE_REVIEW: RoomTemplate(
         room_type=RoomType.CODE_REVIEW,
-        declared_agents=["logger", "operator", "planner", "skeptic", "synthesizer", "verifier"],
+        declared_agents=[
+            "investigator",
+            "logger",
+            "operator",
+            "planner",
+            "skeptic",
+            "synthesizer",
+            "verifier",
+        ],
         default_initial_state="setup",
     ),
     RoomType.IDEA_VALIDATION: RoomTemplate(
