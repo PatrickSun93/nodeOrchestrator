@@ -4,7 +4,10 @@ task_id: P3.7-remote
 stage: plan
 reviewer: architect-partner
 date: 2026-06-04
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect
+  - [2026-06-04, clean, "Architect routed Y1-Y4 → all α (Y1 deprecated-SDK-symbol → pin non-deprecated streamable_http_client + host-built httpx; Y2 = R0-B R1 host-over-privilege residual; Y3 provenance-laundering → segregated fetched_plugins_dir; Y4 fetched-env authority; G1 seam-split). Senior absorbed into ADR-031/032 + plan. See architect-routing-on-plan.md."]
 reviewed_artifacts:
   - docs/process/senior-plans/P3.7-remote.md
   - docs/decisions/ADR-031-posture-b-executor-remote-plugin-provenance.md

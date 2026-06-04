@@ -7,7 +7,10 @@ reviews_acked:
   - senior-plans/P3.7-remote.md
   - decisions/ADR-031-posture-b-executor-remote-plugin-provenance.md
   - decisions/ADR-032-remote-mcp-transport.md
-verdict: blocking
+verdict: clean
+verdict_history:
+  - blocking
+  - [2026-06-04, clean, "Architect routed R1+R2 🔴 + 7🟡 → all α (R1/R2 = honesty/claim-narrowings the mechanisms already supported, not redesigns; 7🟡 = contract tightenings incl. Y1-watchdog + Y6-cap which the architect overrode from partner-β to α). Senior absorbed into ADR-031 (D1/D1a/D2/D3/D4/D5/D6) + ADR-032 (D2/D5) + plan -2/-4/-5/-6/-7/-8/-9. See architect-routing-on-plan.md."]
 findings_count:
   red: 2
   yellow: 7
