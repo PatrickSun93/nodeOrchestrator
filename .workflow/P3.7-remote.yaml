@@ -1,7 +1,7 @@
 task_id: P3.7-remote
-state: awaiting_junior_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-06-04T15:10:36.877422Z'
+last_transition_at: '2026-06-04T19:10:10.100035Z'
 cycle_started_at: '2026-06-04T06:41:49.052348Z'
 override_history:
 - timestamp: '2026-06-04T15:10:36.877422Z'
@@ -12,4 +12,13 @@ override_history:
     real sandbox→P4) + ADR-032 (remote MCP transport, streamable-http) accepted by
     architect; plan-stage dual-lens clean after routing-absorption; plan merged. Advancing
     B-coupled impl to junior.
+- timestamp: '2026-06-04T19:10:10.100035Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: closed
+  reason: 'P3.7-remote merged to main (PR #52, 03ad1fe). Posture-B subprocess executor
+    (dual posture operator-placed A / fetched B) + remote MCP streamable-http (ADR-031
+    + ADR-032 Accepted); all impl-stage reviews clean incl mandatory dual-lens R0-B;
+    RB-FS/NET residual accepted (real sandbox→P4); gate/executor decision logic unchanged.
+    P3 COMPLETE.'
 requires_cross_family_review: true
