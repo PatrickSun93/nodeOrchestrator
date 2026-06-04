@@ -485,3 +485,62 @@ def test_run_turn_tools_param_threads_through() -> None:
     tool_call_events = [e for e in events if e.type == EventType.TOOL_CALL]
     assert len(tool_call_events) == 1
     assert tool_call_events[0].metadata["tool_name"] == "read_file"
+
+
+# ---------------------------------------------------------------------------
+# P4.1-1: select_dispatch_agents — unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_select_dispatch_agents_load_time_room_type_filter() -> None:
+    """Load-time filter: agent with non-matching room_types excluded."""
+    from orchestrator.rooms.runtime import select_dispatch_agents
+
+    store = _make_store()
+    room = _make_room(store, room_type=RoomType.RESEARCH, state="exploration")
+    agent_match = _agent("a1", room_types=["research"], room_states=["*"])
+    agent_no_match = _agent("a2", room_types=["bug_fix"], room_states=["*"])
+
+    result = select_dispatch_agents(room, {"a1": agent_match, "a2": agent_no_match})
+    assert "a1" in result
+    assert "a2" not in result
+
+
+def test_select_dispatch_agents_dispatch_time_room_state_filter() -> None:
+    """Dispatch-time filter: agent with non-matching room_states excluded."""
+    from orchestrator.rooms.runtime import select_dispatch_agents
+
+    store = _make_store()
+    room = _make_room(store, state="setup")
+    agent_match = _agent("b1", room_states=["setup"])
+    agent_no_match = _agent("b2", room_states=["exploration"])
+
+    result = select_dispatch_agents(room, {"b1": agent_match, "b2": agent_no_match})
+    assert "b1" in result
+    assert "b2" not in result
+
+
+def test_select_dispatch_agents_wildcard_room_states() -> None:
+    """Wildcard room_states matches any room state."""
+    from orchestrator.rooms.runtime import select_dispatch_agents
+
+    store = _make_store()
+    room = _make_room(store, state="convergence")
+    agent_wild = _agent("c1", room_states=["*"])
+
+    result = select_dispatch_agents(room, {"c1": agent_wild})
+    assert "c1" in result
+
+
+def test_select_dispatch_agents_pure_no_side_effects() -> None:
+    """select_dispatch_agents is pure: no events appended to store."""
+    from orchestrator.rooms.runtime import select_dispatch_agents
+
+    store = _make_store()
+    room = _make_room(store, state="setup")
+    agent = _agent("d1", room_types=["*"], room_states=["*"])
+    before = len(store.get_room_events(room.id))
+
+    select_dispatch_agents(room, {"d1": agent})
+
+    assert len(store.get_room_events(room.id)) == before
