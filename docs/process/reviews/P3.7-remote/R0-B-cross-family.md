@@ -7,19 +7,22 @@ reviews_acked:
   - senior-plans/P3.7-remote.md
   - decisions/ADR-031-posture-b-executor-remote-plugin-provenance.md
   - decisions/ADR-032-remote-mcp-transport.md
+  - origin/claude/P3.7-remote-impl (9 atomics, a49e86f)
 verdict: clean
 verdict_history:
   - blocking
   - [2026-06-04, clean, "Architect routed R1+R2 🔴 + 7🟡 → all α (R1/R2 = honesty/claim-narrowings the mechanisms already supported, not redesigns; 7🟡 = contract tightenings incl. Y1-watchdog + Y6-cap which the architect overrode from partner-β to α). Senior absorbed into ADR-031 (D1/D1a/D2/D3/D4/D5/D6) + ADR-032 (D2/D5) + plan -2/-4/-5/-6/-7/-8/-9. See architect-routing-on-plan.md."]
+  - [2026-06-04, clean, "Impl-stage dual-lens R0-B: all 2🔴 + 7🟡 plan-stage findings verified resolved in code. 1 new 🟡 (ADR-031 D3 text-vs-code: in-process Posture-A path removed entirely, all plugins forced Posture B — safer than ADR describes; ADR text stale). 7 🟢 confirmations of specific resolution mechanisms. No new 🔴."]
 findings_count:
-  red: 2
-  yellow: 7
-  green: 4
+  red: 0
+  yellow: 1
+  green: 7
 note: >-
-  Plan-stage dual-lens R0-B (cross-family, DeepSeek) on P3.7-remote plan + ADR-031 + ADR-032.
-  Reviewed against live source at origin/main @ cbadf6d. All file:line cites verified.
-  This is the project's largest trust surface to date: untrusted remote provenance code execution.
-  Cross-family lens: runtime-integration + failure-mode + adversarial-trace.
+  Impl-stage dual-lens R0-B (cross-family, DeepSeek) on P3.7-remote impl @ a49e86f.
+  Plan-stage: 2🔴 + 7🟡 + 4🟢 (all α-absorbed, verdict bumped to clean).
+  Impl-stage: 0🔴 + 1🟡 + 7🟢 (all plan-stage findings verified resolved; 1 ADR-text-vs-code doc gap).
+  Cross-family lens: adversarial trace of env-leak, subprocess-escape, digest-before-extract,
+  verify=False, provenance-laundering, empty-diff invariants.
 ---
 
 # P3.7-remote R0-B cross-family review (plan-stage, dual-lens)
@@ -157,3 +160,121 @@ Two patterns cluster across the findings:
 **blocking** — 2🔴 (R1: FS/network isolation unaddressed — overstated L1 claim; R2: provenance enforcement is runtime-branch, not structurally unreachable). Both are claims the ADRs make that the design, as specified, does not deliver. Resolution: narrow the claims (α) — inscribe what Posture B actually isolates (env + memory + liveness) and what it does not (FS + network). This is a documentation/claims fix, not a redesign; the mechanisms themselves are correct for the P3 scope.
 
 After R1+R2 absorption: 7🟡 remain for architect routing. None are individually blocking — each is a design refinement the senior can absorb before junior dispatch.
+
+
+---
+
+# P3.7-remote R0-B cross-family review — IMPL-STAGE (2026-06-04)
+
+## Impl-stage lens
+
+Reviewed `origin/claude/P3.7-remote-impl` @ a49e86f — 9 atomic commits (P3.7-remote-1..9), 26 source files, 3,929 insertions. Every plan-stage finding (2🔴 + 7🟡 + 4🟢) traced to its code resolution.
+
+The ADR-031 was updated post-routing (D1a inscribed RB-FS/NET residual; D2 watchdog; D3 narrowed to "test-enforced unreachable" + segregated roots; D4 operator-authored env only; D5 digest-before-extract + atomic staging; D6 Y6 cap). This review verifies the code delivers it. Zero diff in `src/orchestrator/autonomy/` + `agents/tool_dispatch.py` — the empty-gate-diff holds at commit level.
+
+---
+
+## Plan-stage finding resolution — verified in code
+
+### 🔴 R1 (FS/NET) → RESOLVED — ADR-031 D1a inscribed + code honest
+
+`plugins/code.py:6-10`: "Scoped env: child inherits only safe keys; orchestrator secrets never reach it." No FS/network sandbox claim. `_PostureBFn` (lines 49-108) launches subprocess with `build_scoped_env(harness_cfg)` — env-scoped, killable, bounded-timeout. ADR-031 D1a explicitly inscribes: "NOT a syscall sandbox. Bounds three things and only three: memory/process, secrets/env, liveness/DoS." The RB-FS/NET residual is Accepted and inscribed. **Code delivers the honest contract.**
+
+### 🔴 R2 (fetched unreachable) → RESOLVED — stronger than ADR requires
+
+Three mechanisms converge:
+1. **Segregated roots** — `loader.py:487-500`: `load_plugins()` takes separate `plugins_dir` + `fetched_plugins_dir`. Discovery at lines 548-569 calls `_discover_and_validate` with `provenance="operator_placed"` vs `provenance="fetched"`. Provenance-by-origin, not plugin-asserted.
+2. **Disjoint-root guard** — `loader.py:522-541`: mutual `resolve().relative_to()` check; overlap → `ValueError` at bootstrap. A fetched bundle cannot be re-discovered as operator-placed (provenance-laundering prevented).
+3. **All plugins forced Posture B** — `load_plugin_code` at `code.py:111-145` always returns `_PostureBFn` closures. The old in-process `importlib`/`exec_module` path is **entirely removed** from `plugins/code.py`. `_harness.py:31-35` runs `spec_from_file_location` + `exec_module` in the **child** process. `_is_posture_b_subprocess` ClassVar marker (line 61) is structural proof.
+
+Test `test_pv5_fetched_tool_impls_are_posture_b` (`test_provenance.py:263-287`) + `test_pv5_operator_placed_tool_impls_are_also_posture_b` (lines 290-297). **The code is safer than the ADR describes** — see I1 below.
+
+### 🟡 Y1 (kill-no-orphan watchdog) → RESOLVED
+
+`subprocess_trust.py:279`: `_kill_watchdog(pid)` runs in `finally` after ALL SDK-equivalent teardown. Watchdog at lines 87-111: `os.kill(pid, 0)` → if alive, `os.kill(pid, SIGKILL)` → `os.waitpid(pid, 0)` to reap. Genuine LAYER-1 enforcement. `_terminate_subprocess` (lines 129-177) additionally does SIGTERM → SIGKILL escalation with `anyio.CancelScope(shield=True)`. Watchdog shared by both MCP stdio (`transport.py:180,189`) and Posture B executor (`code.py:97`).
+
+### 🟡 Y2 (harness env) → RESOLVED
+
+Activation entry at `provenance.py:36-51` has `plugin_subprocess_env: dict[str, str]` — **operator-authored, NOT plugin-authored.** `PluginManifest` (`schema.py`) has no `env` or `api_key_env` field. Loader at `loader.py:444-446` passes `activation_entry.plugin_subprocess_env` to `load_plugin_code`. `api_key_env` never set on harness MCPServerConfig (`code.py:86-89` — only `env`, `api_key_env` defaults to None). `build_scoped_env` (`subprocess_trust.py:75-78`) only injects secret if `server_cfg.api_key_env` is set — structurally unreachable for plugins.
+
+### 🟡 Y3 (loader interface) → RESOLVED
+
+`load_plugins` at `loader.py:487-500`: `fetched_plugins_dir: Path | None = None` + `activation_registry_path: Path | None = None`. Two separate roots, each with provenance tag. Disjoint-root guard prevents laundering. Global collision-check (lines 571-617) is cross-root.
+
+### 🟡 Y4 (verify=False test) → RESOLVED
+
+`tests/mcp/test_constitution.py:166-201`: `test_constitution_c6_no_verify_false_in_remote_transport` — scans ALL `mcp/*.py` files for `verify=False`/`verify = False`/`"verify": False`/`'verify': False`. Non-vacuous: `scanned > 0`. Remote transport at `transport.py:112-113` explicitly sets `verify=True` on `httpx.AsyncClient`.
+
+### 🟡 Y5 (digest-before-extract) → RESOLVED
+
+`fetch.py:131-138`: security ordering documented. Step 2 (download to tempfile, line 158) → Step 3 (digest verify, lines 170-181) → Step 4 (extract to tempdir, lines 184-187). Digest on compressed bytes BEFORE extraction. Path-traversal guards: `_safe_member_path` (lines 62-75), `_extract_zip` (78-88), `_extract_tar` (91-105, rejects symlinks/hardlinks). Size cap: `_MAX_BUNDLE_BYTES = 50 MiB` (line 36). Formats: `.zip` + `.tar.gz`/`.tgz` only (lines 108-118).
+
+### 🟡 Y6 (per-turn cap) → RESOLVED
+
+`tools/executor.py:48`: `MAX_POSTURE_B_CALLS_PER_TURN = 10`. Lines 159-202: `getattr(_impl, "_is_posture_b_subprocess", False)` identifies Posture-B fns → cap exceeded → `TOOL_FAILED(turn_posture_b_cap_exceeded)`. Posture-A in-process tools exempt (no marker). Cap is in `execute_pending_tool_calls` (mechanism), NOT `_execute_local_call` (decision). Test `t3b_executor_empty_decision_diff` (`test_constitution.py:160-201`) AST-scans `_execute_local_call` for decision symbols — zero violations.
+
+### 🟡 Y7 (staging cleanup) → RESOLVED
+
+`fetch.py:153-219`: tempfile download → digest verify → tempdir extract → atomic `tmp_staging.rename(dest_dir)` → `tmp_staging = None`. `except` block (lines 208-214): on ANY failure, `shutil.rmtree(tmp_staging)` + `tmp_bundle.unlink()`. `finally` block (lines 216-219) cleans temp bundle on success too. `fetched_plugins_dir` NEVER touched by a failed fetch.
+
+### 🟢 G1–G4 → RE-CONFIRMED
+
+- **G1 (empty-diff)**: Zero diff `autonomy/` + `tool_dispatch.py`. `_execute_local_call` at `executor.py:338-388` byte-level unchanged. Test `t3b` AST-scans it.
+- **G2 (TLS)**: `transport.py:112-134` — `httpx.AsyncClient(verify=True)`. `_remote_auth_headers` (97-108): `Authorization: Bearer <secret>` from `api_key_env`, never logged.
+- **G3 (scoped env)**: `subprocess_trust.py:42-52` — same 9 keys. `build_scoped_env` (63-79) unchanged.
+- **G4 (D5 bound)**: `_PostureBFn.__call__` (`code.py:75-83`): `run_sync(coro, timeout=30.0)`. `run_sync` (`_async_bridge.py:30-59`): `asyncio.wait_for` → `MCPTimeoutError` → `except Exception` in `_execute_local_call` → `TOOL_FAILED`. Writer unblocked after ≤30s.
+
+---
+
+## New impl-stage finding
+
+### 🟡 Yellow
+
+**I1 — ADR-031 D3 text vs code: in-process Posture-A path removed entirely (all plugins forced Posture B)**
+
+- **Location**: ADR-031 D3 ("the in-process `importlib` path still physically exists in the module — it serves `operator-placed` plugins"; "Posture A remains valid for operator-placed"); `plugins/code.py` (no `importlib`/`exec_module` — only `_PostureBFn`); `test_provenance.py:290-297` (`test_pv5_operator_placed_tool_impls_are_also_posture_b`)
+- **What**: The ADR-031 D3 says the in-process Posture-A path is "preserved for operator-placed plugins (no regression)" and "still physically exists." The code removed it entirely — `plugins/code.py` has no `spec_from_file_location`, no `exec_module`, no `_import_module_from_file`. ALL `tool_impls` (both `operator-placed` AND `fetched`) produce `_PostureBFn` subprocess-launching closures. The test at `test_provenance.py:290-297` explicitly documents: "Operator-placed plugin tool_impls are also Posture-B (all plugins use subprocess now)."
+- **Why it matters**: The code is **safer** than the ADR describes — there is zero in-process plugin code execution, which means the plan-stage R2 concern is resolved more strongly than required ("structurally unreachable" is now TRUE, not just "test-enforced"). But an ADR reader checking against the code will find a contradiction: the ADR says the path exists but the code has no trace of it. A future maintainer relying on the ADR text might expect a Posture-A opt-out that doesn't exist, or might re-add the in-process path thinking it was accidentally removed.
+- **Suggested investigation**: Update ADR-031 D3: "The impl removed the in-process Posture-A path entirely; ALL plugins (operator-placed and fetched) run under Posture B subprocess isolation. The P3.5 in-process convenience is retired — the price of the real env/secret/DoS boundary. No regression: operator-placed plugins continue to function under subprocess isolation."
+- **Architect-partner lean**: α (absorb — update ADR text to match code; the code is correct and safer).
+
+---
+
+## Impl-stage 🟢 confirmations
+
+**G5 — `_harness.py` import boundary is the isolation contract.** `_harness.py:31-35`: `spec_from_file_location` + `exec_module` in the child process. Parent (`code.py:97`) calls `subprocess_mcp_stdio(harness_params)` — never imports `_harness.py`. Comment at `_harness.py:10-11`: "Never imported by the host orchestrator."
+
+**G6 — Provenance-laundering vector closed.** `loader.py:522-541`: `plugins_dir` and `fetched_plugins_dir` mutually-disjoint-checked at bootstrap. A fetched bundle cannot be re-discovered as operator-placed.
+
+**G7 — `api_key_env` structurally unreachable for fetched plugin subprocess.** `code.py:86-89`: `MCPServerConfig` with no `api_key_env` kwarg. `build_scoped_env` only injects secret if `server_cfg.api_key_env` is set — always `None` for plugins. Env-leak probe at `test_posture_b.py:362-377`: secret in `os.environ` returns `__absent__` in child.
+
+**G8 — Empty-gate-diff confirmed at commit level.** `git diff origin/main..HEAD -- src/orchestrator/autonomy/ src/orchestrator/agents/tool_dispatch.py` → zero output. Zero diff in `mcp/adapter.py` and `mcp/execution.py`. `_execute_local_call` body identical to plan-stage verified version.
+
+**G9 — Atomic fetch staging is battle-tested.** `fetch.py:153-219`: tempfile → digest → tempdir (traversal-guarded) → validate → atomic rename → cleanup. On any exception: `rmtree` + `unlink`. `finally` block handles success path. No half-staged residue.
+
+**G10 — Watchdog shared by MCP stdio AND Posture B.** `subprocess_trust.py:276-279`: `finally` block with `_kill_watchdog(pid)` wraps every `subprocess_mcp_stdio` usage — MCP transport + Posture B executor both go through it.
+
+**G11 — Constitution test coverage extended to all new modules.** `tests/mcp/test_constitution.py` c6 covers new `_async_bridge.py` + `subprocess_trust.py`. `tests/plugins/test_constitution.py` p1–p4 cover `provenance.py`, `fetch.py`, `_harness.py`, reworked `code.py`. `tests/tools/test_constitution.py` t3b covers executor empty-decision-diff. All scans non-vacuous.
+
+---
+
+## Impl-stage synthesis
+
+The implementation delivers exactly what the revised ADR-031 (with D1a honesty + D2 watchdog + D3 segregated roots + D4 operator-only env + D5 digest-before-extract) and ADR-032 promise. Every plan-stage 🔴/🟡 finding has a specific, traceable code resolution. The code is in several respects **safer** than the ADR describes:
+
+1. **All plugins forced Posture B** — in-process path gone entirely. R2 resolved structurally, not just test-enforced.
+2. **Watchdog shared** — MCP stdio AND Posture B both get LAYER-1 kill watchdog via same `subprocess_mcp_stdio`.
+3. **Provenance un-launderable** — disjoint roots + runtime guard at bootstrap.
+4. **`api_key_env` structurally unreachable for plugins** — `MCPServerConfig` construction never sets it.
+
+The one 🟡 finding (I1) is a documentation gap: ADR-031 D3 says Posture-A path "still physically exists" but code removed it. The ADR should be updated to match code, not the other way around.
+
+**Cross-family value at impl-stage**: plan-stage caught the gap between ADR claims and mechanism capabilities (R1, R2). Impl-stage verifies the gap was closed — not just in ADR text (revised) but in code (built to revised contract).
+
+**Correction-mode note (RC-20)**: No in-family false-positive corrections at impl-stage. The 1 🟡 is net-new (ADR-vs-code documentation drift).
+
+---
+
+## Impl-stage verdict
+
+**clean** — 0🔴 / 1🟡 / 7🟢. All plan-stage 🔴/🟡 verified resolved in code. The 1 new 🟡 (I1) is non-blocking ADR-text-vs-code doc gap — code is correct and safer than ADR describes. Architect should confirm whether to update ADR-031 D3 or leave as-is.
