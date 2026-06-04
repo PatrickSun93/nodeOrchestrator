@@ -1,0 +1,7 @@
+task_id: P3.7-remote
+state: awaiting_brief
+cycle: 1
+last_transition_at: '2026-06-04T06:41:49.052348Z'
+cycle_started_at: '2026-06-04T06:41:49.052348Z'
+override_history: []
+requires_cross_family_review: true

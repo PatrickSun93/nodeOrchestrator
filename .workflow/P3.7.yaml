@@ -1,7 +1,15 @@
 task_id: P3.7
-state: awaiting_senior_plan
+state: closed
 cycle: 1
-last_transition_at: '2026-06-04T05:25:08.000453Z'
+last_transition_at: '2026-06-04T06:41:45.609786Z'
 cycle_started_at: '2026-06-04T05:16:22.244373Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-04T06:41:45.609786Z'
+  actor: architect
+  from_state: awaiting_senior_plan
+  to_state: closed
+  reason: Split into P3.7-content + P3.7-remote per architect ruling (2026-06-04);
+    umbrella retired before any senior work. P3.7-content = breadth (more agents/templates/skills/connectors);
+    P3.7-remote = Posture B subprocess isolation + remote MCP transport (heavy security,
+    dual-lens).
 requires_cross_family_review: false
