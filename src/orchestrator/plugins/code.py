@@ -1,75 +1,129 @@
-"""Executable plugin tool-code loader — Posture A in-process import (ADR-029 D4).
+"""Posture-B subprocess plugin executor (ADR-031 D1/D2).
 
-Posture A (ARCHITECT-ACCEPTED): importlib loads the plugin module in-process,
-like the host's own build_local_tool_registry() builtins.  Called ONLY after
-loader.py's collision-check cleared (ADR-029 D2 step 5; R0-B R1).
+A plugin tool callable runs in a CHILD process (the _harness.py MCP stdio server);
+the host NEVER imports plugin code.  The subprocess provides the isolation boundary:
 
-Fully-inscribed exposures accepted by architect (2026-06-03):
-  L1  — No technical isolation + zero credential/env protection.
-         In-process plugin code runs with full host privilege (FS, network,
-         os.environ — every API key/secret).  ADR-027 D4 credential-indirection
-         + scoped-env are MCP-subprocess-only; they provide ZERO protection here.
-  L1b — Import-time code is ungated by construction.  importlib exec_module()
-         runs the module top-level at boot before any gate/room/turn exists.
-         Curation is the only control; step-ordering ensures this runs only
-         after the validate+collision gauntlet, never before a refusal.
-  L2  — Posture A VOIDS ADR-028 D5's absolute per-turn liveness bound for the
-         plugin-local path — server-wide DoS blast radius.  One buggy curated
-         tool blocks the max_workers=1 writer for every room, indefinitely,
-         with no cap and no kill (in-process is unkillable).
+  Posture B guarantees (ADR-031 D1):
+  - No in-process import: plugin code never runs in the host address space.
+  - Scoped env: child inherits only safe keys; orchestrator secrets never reach it
+    (build_scoped_env, HR#10 / c2 env-leak lesson).
+  - kill-no-orphan + watchdog: bounded SIGTERM→SIGKILL→watchdog-SIGKILL (ADR-028 D5
+    liveness-bound restoration; ADR-031 D2 LAYER-1 kill).
+  - Fail-closed: timeout → MCPTimeoutError → TOOL_FAILED; crash / isError →
+    RuntimeError → MCPConnectionError → TOOL_FAILED.
 
-Fail-closed-against-breakage IS fully delivered (HR#5): a bad import / bad
-manifest / collision / unmet dependency → plugin refused at load; a raise at
-call → TOOL_FAILED for that call (per-call isolation, ADR-028 D4 via executor).
+load_plugin_code() now returns _PostureBFn closures that drop into the SAME
+local_tools registry; _execute_local_call runs them UNCHANGED (empty-decision-diff).
 
-Posture B (subprocess isolation) is reserved for P3.7 (untrusted remote
-provenance) — see ADR-029 D4 Reversibility and the A→B migration surface.
+The per-turn subprocess cap (MAX_POSTURE_B_CALLS_PER_TURN) is enforced by
+executor.py, which identifies Posture-B fns via the _is_posture_b_subprocess
+ClassVar marker (analogous to the MCP per-turn cap, ADR-028 D5).
 """
 
 from __future__ import annotations
 
-import importlib.util
-import types
+import sys
 from pathlib import Path
+from typing import Any, ClassVar
 
-from orchestrator.tools.executor import LocalToolFn
+from mcp.client.stdio import StdioServerParameters
+from mcp.types import TextContent
+
+from mcp import ClientSession
+from orchestrator.mcp._async_bridge import run_sync
+from orchestrator.mcp.config import MCPServerConfig
+from orchestrator.mcp.subprocess_trust import build_scoped_env, subprocess_mcp_stdio
+from orchestrator.tools.executor import LocalToolFn, LocalToolOutput
+
+# Absolute path to the harness script — launched once per call_tool.
+_HARNESS_PATH: Path = Path(__file__).parent / "_harness.py"
+
+# Bounded per-call timeout: matches MCPTimeouts.call_tool default (ADR-027 D1).
+_CALL_TIMEOUT: float = 30.0
 
 
 class PluginCodeLoadError(Exception):
     """Raised when a plugin's executable tool code cannot be loaded."""
 
 
-def _import_module_from_file(file_path: Path, unique_module_name: str) -> types.ModuleType:
-    """Load a Python module from an absolute file path without touching sys.path.
+class _PostureBFn:
+    """Subprocess-launching Posture-B LocalToolFn (ADR-031 D1/D2).
 
-    Uses spec_from_file_location to import without registering in sys.modules,
-    keeping the host namespace clean and avoiding cross-plugin module-name
-    collisions.  Top-level code in the module runs here (L1b — inscribed).
+    Each instance is created at load time (not at call time) and reused across calls.
+    Per-call invocation spawns a fresh child subprocess (per-op connection pattern,
+    same as stdio MCPTransport), communicates via the MCP stdio protocol, then tears
+    down.  The child executes the plugin callable; the host never imports plugin code.
+
+    The _is_posture_b_subprocess ClassVar marker lets executor.py identify this as
+    a Posture-B subprocess fn for the per-turn cap (MAX_POSTURE_B_CALLS_PER_TURN).
     """
-    spec = importlib.util.spec_from_file_location(unique_module_name, file_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot create module spec from {file_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+
+    _is_posture_b_subprocess: ClassVar[bool] = True
+
+    def __init__(
+        self,
+        module_file: Path,
+        callable_name: str,
+        plugin_id: str,
+        plugin_subprocess_env: dict[str, str],
+    ) -> None:
+        self._module_file = module_file
+        self._callable_name = callable_name
+        self._plugin_id = plugin_id
+        self._plugin_subprocess_env = plugin_subprocess_env
+
+    def __call__(self, tool_args: dict[str, Any]) -> LocalToolOutput:
+        return run_sync(
+            self._async_call(tool_args),
+            timeout=_CALL_TIMEOUT,
+            timeout_msg=(
+                f"plugin {self._plugin_id!r}: call_tool timed out after {_CALL_TIMEOUT:.0f}s"
+            ),
+            error_msg_prefix=f"plugin {self._plugin_id!r}: call_tool failed",
+        )
+
+    async def _async_call(self, tool_args: dict[str, Any]) -> LocalToolOutput:
+        harness_cfg = MCPServerConfig(
+            transport="stdio",
+            command=sys.executable,
+            env=self._plugin_subprocess_env,
+        )
+        harness_params = StdioServerParameters(
+            command=sys.executable,
+            args=[str(_HARNESS_PATH), str(self._module_file), self._callable_name],
+            env=build_scoped_env(harness_cfg),
+        )
+        async with (
+            subprocess_mcp_stdio(harness_params) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            result = await session.call_tool("invoke", dict(tool_args))
+            if result.isError:
+                error_parts = [
+                    c.text if isinstance(c, TextContent) else repr(c) for c in result.content
+                ]
+                raise RuntimeError(f"plugin callable raised: {'; '.join(error_parts)}")
+            parts = [c.text if isinstance(c, TextContent) else repr(c) for c in result.content]
+            return LocalToolOutput(content="\n".join(parts))
 
 
 def load_plugin_code(
     plugin_dir: Path,
     plugin_id: str,
     tool_impls: dict[str, str],
+    plugin_subprocess_env: dict[str, str] | None = None,
 ) -> dict[str, LocalToolFn]:
-    """Load executable tool implementations from a plugin directory (Posture A, D4).
+    """Create subprocess-launching Posture-B closures for each tool_impl (ADR-031 D1/D2).
 
     Each entry in tool_impls maps a tool name to "<module>:<callable>" where
     <module> is a .py file relative to plugin_dir (no extension).
 
-    Import runs ONLY after loader.py cleared validation + collision-check
-    (ADR-029 D2 step 5; R0-B R1).  Per-plugin isolation: any import error
-    or missing callable → raises PluginCodeLoadError (caller refuses plugin).
-    Per-call fail-closed is inherited from the executor (_execute_local_call
-    try/except → TOOL_FAILED, ADR-028 D4) — no extra wrapping needed here.
+    The parent never imports plugin code — each call spawns a fresh child that runs
+    the plugin callable via the MCP stdio protocol (the harness).  Fail-closed on
+    missing module file (raises PluginCodeLoadError → caller refuses plugin).
     """
+    extra_env = plugin_subprocess_env or {}
     result: dict[str, LocalToolFn] = {}
 
     for tool_name, ref in tool_impls.items():
@@ -81,24 +135,11 @@ def load_plugin_code(
                 f"plugin {plugin_id!r}: module file {module_file} does not exist"
             )
 
-        unique_name = f"orchestrator_plugin_{plugin_id}_{module_name}"
-        try:
-            module = _import_module_from_file(module_file, unique_name)
-        except Exception as exc:
-            raise PluginCodeLoadError(
-                f"plugin {plugin_id!r}: cannot import module {module_name!r}: {exc}"
-            ) from exc
-
-        impl = getattr(module, callable_name, None)
-        if impl is None:
-            raise PluginCodeLoadError(
-                f"plugin {plugin_id!r}: module {module_name!r} has no attribute {callable_name!r}"
-            )
-        if not callable(impl):
-            raise PluginCodeLoadError(
-                f"plugin {plugin_id!r}: {module_name}.{callable_name} is not callable"
-            )
-
-        result[tool_name] = impl
+        result[tool_name] = _PostureBFn(
+            module_file=module_file,
+            callable_name=callable_name,
+            plugin_id=plugin_id,
+            plugin_subprocess_env=extra_env,
+        )
 
     return result
