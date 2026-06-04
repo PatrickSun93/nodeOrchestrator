@@ -163,6 +163,45 @@ def test_constitution_c4_no_new_llm_purpose() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_constitution_c6_no_verify_false_in_remote_transport() -> None:
+    """TLS guard (R0-B Y4, ADR-032 D5): verify=False must not appear in mcp/ files.
+
+    The remote transport uses host-built httpx.AsyncClient(verify=True) explicitly.
+    A verify=False anywhere in mcp/ would disable TLS certificate verification,
+    allowing MITM attacks on remote MCP endpoints.
+
+    Scans: mcp/transport.py + all other mcp/ .py files for the literal patterns
+      verify=False  or  verify = False  or  "verify": False
+    Zero occurrences required (discriminating test — the scan MUST find mcp/ files).
+    """
+    import re
+
+    # Two patterns: bare keyword argument and string-dict key
+    patterns = [
+        re.compile(r"verify\s*=\s*False"),
+        re.compile(r'"verify"\s*:\s*False'),
+        re.compile(r"'verify'\s*:\s*False"),
+    ]
+
+    violations: list[str] = []
+    scanned = 0
+    for py_path in _MCP_PKG.rglob("*.py"):
+        if "__pycache__" in py_path.parts:
+            continue
+        source = py_path.read_text(encoding="utf-8")
+        scanned += 1
+        for line_no, line in enumerate(source.splitlines(), 1):
+            for pat in patterns:
+                if pat.search(line):
+                    violations.append(f"  {py_path}:{line_no}: {line.strip()!r}")
+
+    assert scanned > 0, "c6 non-vacuous: no mcp/ .py files found to scan"
+    assert not violations, (
+        "c6 TLS guard: verify=False found in mcp/ — TLS must ALWAYS be enabled:\n"
+        + "\n".join(violations)
+    )
+
+
 def test_constitution_c5_no_namespace_collision() -> None:
     """Local tool names in tools.yaml must not start with 'mcp__'."""
     from orchestrator.llm.config_loader import load_tools_config

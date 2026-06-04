@@ -129,6 +129,26 @@ def test_p3_no_new_llm_purpose() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_p5_new_remote_modules_in_scan() -> None:
+    """Non-vacuous guard: new remote/fetch/provenance/subprocess-runner modules are present
+    in the plugins/ package and therefore included in the p1-p4 AST scans (ADR-031 D7).
+
+    Without this check, missing new files would cause the p1-p4 scans to pass vacuously
+    (they'd scan no new code).  This test ensures the new modules actually exist.
+    """
+    expected_modules = [
+        "_harness.py",  # subprocess MCP server harness
+        "code.py",  # Posture-B subprocess executor
+        "provenance.py",  # provenance-by-origin + activation allowlist
+        "fetch.py",  # remote-fetch mechanism
+    ]
+    missing = [m for m in expected_modules if not (_PLUGINS_PKG / m).exists()]
+    assert not missing, (
+        "p5 non-vacuous: expected plugin modules are missing from the package scan:\n"
+        + "\n".join(f"  {_PLUGINS_PKG / m}" for m in missing)
+    )
+
+
 def test_p4_select_model_and_provider_absent() -> None:
     """plugins/ must not invoke select_model_and_provider (routing is code, ADR-002/023)."""
     symbol = "select_model_and_provider"
