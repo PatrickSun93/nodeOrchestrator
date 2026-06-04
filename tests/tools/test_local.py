@@ -373,3 +373,170 @@ def test_classified_but_unimplemented_tool_fails_closed(tmp_path: Path) -> None:
     assert len(failed) == 1
     assert failed[0].metadata["error_class"] == "not_implemented"
     assert not any(e.type == EventType.TOOL_RESULT for e in events)
+
+
+# ---------------------------------------------------------------------------
+# §6 B2 code-intel tools (P4.1-2): search_text, search_code, find_references,
+# find_definition, log_event
+# ---------------------------------------------------------------------------
+
+
+def _run_local_tool(
+    tmp_path: Path, tool_name: str, params: dict[str, Any]
+) -> tuple[EventStore, list[Any]]:
+    """Helper: run a single local tool call, return store + all events."""
+    store = _make_store()
+    room_id = _make_room(store)
+    tc = _tc_event_params(room_id, tool_name, "tc_b2", params)
+    store.append(tc)
+    execute_pending_tool_calls(
+        window_events=[tc],
+        room_id=room_id,
+        event_store=store,
+        mcp_sessions={},
+        local_tools=build_local_tool_registry(tmp_path),
+        llm_router=_noop_llm_router(),
+    )
+    return store, store.get_room_events(room_id)
+
+
+def test_search_text_finds_match(tmp_path: Path) -> None:
+    """search_text returns file:line hits for a substring query."""
+    (tmp_path / "code.py").write_text("def hello():\n    return 42\n", encoding="utf-8")
+    _store, events = _run_local_tool(tmp_path, "search_text", {"query": "hello"})
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    assert "hello" in results[0].content
+    assert results[0].metadata["success"] is True
+    assert not any(e.type == EventType.OBSERVATION for e in events)
+
+
+def test_search_text_no_match(tmp_path: Path) -> None:
+    """search_text with no match returns '(no matches)'."""
+    (tmp_path / "code.py").write_text("def hello():\n    pass\n", encoding="utf-8")
+    _store, events = _run_local_tool(tmp_path, "search_text", {"query": "xyz_not_present_abc"})
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    assert "(no matches)" in results[0].content
+
+
+def test_search_text_scope_escape_rejected(tmp_path: Path) -> None:
+    """search_text with scope escaping sandbox → TOOL_FAILED."""
+    _store, events = _run_local_tool(tmp_path, "search_text", {"query": "x", "scope": "../../etc"})
+    assert any(e.type == EventType.TOOL_FAILED for e in events)
+    assert not any(e.type == EventType.TOOL_RESULT for e in events)
+
+
+def test_search_text_output_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """search_text caps output at MAX_RESULT_BYTES → output_truncated_at set."""
+    import orchestrator.tools.local as _local_mod
+
+    monkeypatch.setattr(_local_mod, "MAX_RESULT_BYTES", 50)
+    monkeypatch.setattr(_local_mod, "_SEARCH_FILE_READ_BYTES", 50)
+    # Create a file with many matching lines to force output cap.
+    lines = "\n".join(f"match_target line_{i}" for i in range(200))
+    (tmp_path / "big.py").write_text(lines, encoding="utf-8")
+    _store, events = _run_local_tool(tmp_path, "search_text", {"query": "match_target"})
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    assert results[0].metadata.get("output_truncated_at") is not None
+
+
+def test_search_text_max_search_files_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """search_text stops after MAX_SEARCH_FILES files (traversal bound)."""
+    import orchestrator.tools.local as _local_mod
+
+    monkeypatch.setattr(_local_mod, "MAX_SEARCH_FILES", 3)
+    for i in range(10):
+        (tmp_path / f"f{i}.py").write_text("no_match\n", encoding="utf-8")
+    _store, events = _run_local_tool(tmp_path, "search_text", {"query": "no_match"})
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    # With MAX_SEARCH_FILES=3 and all files matching, output_truncated_at is set.
+    assert len(results) == 1
+    assert results[0].metadata.get("output_truncated_at") is not None
+
+
+def test_search_code_regex_match(tmp_path: Path) -> None:
+    """search_code returns regex-matched file:line hits."""
+    (tmp_path / "src.py").write_text("class MyClass:\n    x = 1\n", encoding="utf-8")
+    _store, events = _run_local_tool(tmp_path, "search_code", {"pattern": r"class \w+"})
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    assert "MyClass" in results[0].content
+
+
+def test_search_code_invalid_regex(tmp_path: Path) -> None:
+    """search_code with invalid regex pattern → TOOL_FAILED."""
+    _store, events = _run_local_tool(tmp_path, "search_code", {"pattern": "[invalid"})
+    assert any(e.type == EventType.TOOL_FAILED for e in events)
+
+
+def test_find_references_finds_usages(tmp_path: Path) -> None:
+    """find_references returns word-boundary matches for a symbol."""
+    (tmp_path / "use.py").write_text("from mod import my_func\nmy_func()\n", encoding="utf-8")
+    _store, events = _run_local_tool(tmp_path, "find_references", {"symbol": "my_func"})
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    assert "my_func" in results[0].content
+
+
+def test_find_definition_finds_def(tmp_path: Path) -> None:
+    """find_definition finds def/class/<symbol>= patterns."""
+    (tmp_path / "defs.py").write_text("def my_func():\n    pass\n", encoding="utf-8")
+    _store, events = _run_local_tool(tmp_path, "find_definition", {"symbol": "my_func"})
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    assert "my_func" in results[0].content
+
+
+def test_find_definition_finds_class(tmp_path: Path) -> None:
+    """find_definition finds class definitions."""
+    (tmp_path / "cls.py").write_text("class Foo:\n    pass\n", encoding="utf-8")
+    _store, events = _run_local_tool(tmp_path, "find_definition", {"symbol": "Foo"})
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    assert "Foo" in results[0].content
+
+
+def test_find_definition_finds_assignment(tmp_path: Path) -> None:
+    """find_definition finds <symbol> = patterns."""
+    (tmp_path / "const.py").write_text("MAX_VALUE = 100\n", encoding="utf-8")
+    _store, events = _run_local_tool(tmp_path, "find_definition", {"symbol": "MAX_VALUE"})
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    assert "MAX_VALUE" in results[0].content
+
+
+def test_b2_no_observation_event(tmp_path: Path) -> None:
+    """B2 local tools produce TOOL_RESULT, never OBSERVATION (trusted-not-interpreted)."""
+    (tmp_path / "f.py").write_text("hello\n", encoding="utf-8")
+    for tool, params in [
+        ("search_text", {"query": "hello"}),
+        ("search_code", {"pattern": "hello"}),
+        ("find_references", {"symbol": "hello"}),
+        ("find_definition", {"symbol": "hello"}),
+    ]:
+        _store, events = _run_local_tool(tmp_path, tool, params)
+        assert not any(e.type == EventType.OBSERVATION for e in events), (
+            f"{tool} must not produce OBSERVATION"
+        )
+
+
+def test_log_event_returns_tool_result(tmp_path: Path) -> None:
+    """log_event returns TOOL_RESULT with [type] content prefix."""
+    _store, events = _run_local_tool(
+        tmp_path, "log_event", {"content": "found a bug", "type": "finding"}
+    )
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    assert "found a bug" in results[0].content
+    assert "[finding]" in results[0].content
+    assert results[0].metadata["success"] is True
+    assert not any(e.type == EventType.OBSERVATION for e in events)
+
+
+def test_log_event_empty_content_fails(tmp_path: Path) -> None:
+    """log_event with empty content → TOOL_FAILED."""
+    _store, events = _run_local_tool(tmp_path, "log_event", {"content": "", "type": "note"})
+    assert any(e.type == EventType.TOOL_FAILED for e in events)
+    assert not any(e.type == EventType.TOOL_RESULT for e in events)
