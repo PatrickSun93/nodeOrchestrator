@@ -423,3 +423,62 @@ def test_state_machine_runs_once_per_turn() -> None:
     assert transition_call_count[0] == 1, (
         f"next_room_state must run exactly once per turn; ran {transition_call_count[0]} times"
     )
+
+
+# ---------------------------------------------------------------------------
+# §6 (P4.1-5): wall-clock deadline exits loop at pass boundary (D3 condition 4)
+# ---------------------------------------------------------------------------
+
+
+def test_turn_loop_wall_clock_deadline_exits(tmp_path: Any) -> None:
+    """§6: when wall-clock deadline fires at pass boundary, loop does not re-dispatch.
+
+    Patches MAX_TURN_LOOP_WALL_CLOCK_S to -1.0 (always expired) so the deadline
+    check fires on the first boundary (before pass 1). The in-flight pass 0 is
+    not interrupted. ADR-033 D3 condition 4 / D4: absolute wall-clock cap.
+    """
+    import orchestrator.api.app as _app_mod
+    from orchestrator.tools.local import build_local_tool_registry
+
+    test_file = tmp_path / "f.txt"
+    test_file.write_text("content\n", encoding="utf-8")
+
+    agent = _make_agent("inv", cooldown=0)
+    call_count: list[int] = [0]
+
+    def llm_side_effect(req: Any) -> LLMResponse:
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # Pass 0: call read_file → TOOL_RESULT → would trigger re-dispatch if no deadline.
+            return _llm_resp(
+                "reading",
+                [ToolCall(id="tc_rf2", name="read_file", arguments={"path": "f.txt"})],
+            )
+        return _llm_resp("unexpected — should not reach re-dispatch")
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = llm_side_effect
+
+    ctx = _make_ctx(
+        agent=agent,
+        llm_router=router,
+        tools={"read_file": ToolMeta(reversibility=10)},
+    )
+    ctx.local_tools = build_local_tool_registry(tmp_path)
+    ctx.sandbox_root = tmp_path
+
+    app = _make_test_app(ctx)
+    # Set wall-clock deadline to -1.0 (always expired): the first boundary check
+    # will see monotonic() - loop_start >= -1.0 (always True since difference >= 0).
+    with TestClient(app) as client, patch.object(_app_mod, "MAX_TURN_LOOP_WALL_CLOCK_S", -1.0):
+        room_id = _post_room(client)
+        _post_intent(client, room_id)
+
+    # dispatch_turn was called exactly once (pass 0 only); wall-clock fired at boundary.
+    assert call_count[0] == 1, (
+        f"Wall-clock deadline must prevent re-dispatch; got {call_count[0]} dispatch_turn calls"
+    )
+    # The in-turn TOOL_RESULT from pass 0's read_file is still present.
+    events = ctx.writer_store.get_room_events(room_id)  # type: ignore[arg-type]
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) >= 1

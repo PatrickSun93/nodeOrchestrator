@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sqlite3
+import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -73,6 +74,15 @@ PAYLOAD_LIMIT_BYTES = 65_536  # 64 KiB
 # ADR-033 D1: bounded turn-loop constants.
 # MAX_TURN_LOOP_PASSES = N re-dispatch passes after pass 0 (total dispatch_turn calls ≤ 1+N=5).
 MAX_TURN_LOOP_PASSES: int = 4
+
+# ADR-033 D3 condition 4 / D4: wall-clock deadline for the full turn-loop (all passes).
+# Bounds the single-writer occupancy independent of (agents x provider timeout_s).
+# Cross-room head-of-line block: the single ThreadPoolExecutor(max_workers=1) stalls
+# every room's writes while one room's loop runs. 120s caps the felt occupancy while
+# still allowing the flagship 4-hop investigation chain.
+# The deadline is a BOUNDARY check (between passes), not mid-pass interruption — an
+# in-flight LLM call is not cancelled; absolute wall-clock ≤ deadline + one final pass.
+MAX_TURN_LOOP_WALL_CLOCK_S: float = 120.0
 
 
 @dataclass
@@ -377,6 +387,9 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             except (RoomNotFoundError, InvalidParentError, MetadataValidationError) as exc:
                 raise _AppendFailedError(str(exc)) from exc
 
+            # Wall-clock deadline: stamp before pass 0 (ADR-033 D3 condition 4 / D4).
+            loop_start = time.monotonic()
+
             # Mark cursor just after user_event append (before pass 0 dispatch+execute).
             # The re-dispatch loop checks what the PREVIOUS pass produced starting here.
             prev_pass_cursor = len(ctx.writer_store.get_room_events(rid))
@@ -415,6 +428,10 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             )
 
             for _pass in range(MAX_TURN_LOOP_PASSES):
+                # Termination condition 4: wall-clock deadline (D3 / D4 — boundary check).
+                if time.monotonic() - loop_start >= MAX_TURN_LOOP_WALL_CLOCK_S:
+                    break
+
                 # Check what the previous pass produced (from prev_pass_cursor to now).
                 prev_pass_events = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
 
