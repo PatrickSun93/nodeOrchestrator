@@ -29,6 +29,13 @@ from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.llm.config_loader import load_tools_config
 from orchestrator.llm.exceptions import ConfigError
 from orchestrator.llm.router import ModelRegistry
+from orchestrator.plugins.provenance import (
+    ActivationEntry,
+    ActivationRegistry,
+    PluginProvenance,
+    check_fetched_activation,
+    load_activation_registry,
+)
 from orchestrator.plugins.schema import PluginManifest
 from orchestrator.skills.loader import load_skills
 from orchestrator.skills.schema import Skill
@@ -75,6 +82,7 @@ class _ValidatedCandidate:
     plugin_id: str
     plugin_dir: Path
     manifest: PluginManifest
+    provenance: PluginProvenance = "operator_placed"
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +95,7 @@ def _discover_and_validate(
     models: ModelRegistry,
     host_room_types: frozenset[str],
     host_contract_version: int,
+    provenance: PluginProvenance = "operator_placed",
 ) -> list[_ValidatedCandidate]:
     """Iterate plugin subdirs; parse, validate, and dependency-check each manifest.
 
@@ -166,8 +175,12 @@ def _discover_and_validate(
             )
             continue
 
-        candidates.append(_ValidatedCandidate(plugin_id, subdir, manifest))
-        _log.debug("plugin %r: manifest valid, candidate for loading", plugin_id)
+        candidates.append(_ValidatedCandidate(plugin_id, subdir, manifest, provenance))
+        _log.debug(
+            "plugin %r: manifest valid, candidate for loading (provenance=%s)",
+            plugin_id,
+            provenance,
+        )
 
     return candidates
 
@@ -323,17 +336,32 @@ def _load_plugin(
     seen_tool_names: set[str],
     seen_tool_impl_names: set[str],
     seen_server_names: set[str],
+    activation_entry: ActivationEntry | None = None,
 ) -> PluginLoadResult | None:
-    """Load one plugin: collision-check → non-code load → code load → rev-cap.
+    """Load one plugin: provenance-check → collision-check → non-code load → code load → rev-cap.
 
     Returns a per-plugin PluginLoadResult on success, None on any failure.
     None discards the whole intermediate — host registries are never mutated
     by a partially-loaded plugin (atomic merge, HR#5 / R0-B Y4).
-    importlib runs ONLY after collision-check passes (ADR-029 D2 step 5; R0-B R1).
+
+    For fetched plugins: activation_entry must be present (fail-closed if absent).
+    The plugin_subprocess_env from the activation entry is operator-authored and
+    passed to load_plugin_code — the fetched manifest cannot override it (ADR-031 D4).
     """
     pid = candidate.plugin_id
     plugin_dir = candidate.plugin_dir
     manifest = candidate.manifest
+    provenance = candidate.provenance
+
+    # Fetched provenance guard: activation required, fail-closed if absent (ADR-031 D4).
+    if provenance == "fetched":
+        if activation_entry is None:
+            _log.warning(
+                "plugin %r (fetched): no activation entry — refusing (ADR-031 D4)",
+                pid,
+            )
+            return None
+        _log.debug("plugin %r (fetched): activation entry present, continuing load", pid)
 
     # Step 3: Collision-check ALL declared names BEFORE any import
     if not _collision_check(
@@ -406,16 +434,22 @@ def _load_plugin(
     plugin_all_tools: dict[str, ToolMeta] = {**plugin_own_tools, **plugin_mcp_tools}
 
     # Step 5: Load code — ONLY after validation + collision-check cleared (P3.5-4 wires this).
-    # tool_impls local_tools are empty until P3.5-4 adds code loading.
+    # Posture B: load_plugin_code creates subprocess-launching closures; no in-process import.
+    # plugin_subprocess_env: operator-authored (from activation entry for fetched; {} for
+    # operator-placed); the fetched plugin manifest cannot override this (ADR-031 D4).
     plugin_local_tools: dict[str, LocalToolFn] = {}
     if manifest.contributions.tool_impls:
         from orchestrator.plugins.code import PluginCodeLoadError, load_plugin_code
 
+        subprocess_env: dict[str, str] = (
+            activation_entry.plugin_subprocess_env if activation_entry is not None else {}
+        )
         try:
             plugin_local_tools = load_plugin_code(
                 plugin_dir,
                 pid,
                 manifest.contributions.tool_impls,
+                plugin_subprocess_env=subprocess_env,
             )
         except PluginCodeLoadError as exc:
             _log.warning("plugin %r: code load failed: %s — refusing", pid, exc)
@@ -425,8 +459,9 @@ def _load_plugin(
     capped_tools = _apply_reversibility_cap(plugin_all_tools, host_tools)
 
     _log.info(
-        "plugin %r: loaded — roles=%d skills=%d tools=%d impls=%d servers=%d",
+        "plugin %r (%s): loaded — roles=%d skills=%d tools=%d impls=%d servers=%d",
         pid,
+        provenance,
         len(plugin_agents),
         len(plugin_skills),
         len(capped_tools),
@@ -460,24 +495,80 @@ def load_plugins(
     host_tools: dict[str, ToolMeta],
     host_local_tool_names: frozenset[str],
     host_mcp_server_names: frozenset[str],
+    fetched_plugins_dir: Path | None = None,
+    activation_registry_path: Path | None = None,
 ) -> PluginLoadResult:
-    """Discover, validate, and merge plugin contributions (ADR-029 D2).
+    """Discover, validate, and merge plugin contributions (ADR-029 D2, ADR-031 D3/D4).
 
     Absent plugins/ dir → no-op (clean boot). Per-plugin load isolation:
     a failure at ANY stage refuses that plugin without crashing bootstrap
     or refusing valid siblings. Host registries are never mutated by a
     partially-loaded plugin (atomic-merge guarantee, HR#5 / R0-B Y4).
 
-    Step ordering is security-load-bearing: importlib runs only after
-    collision-check clears (ADR-029 D2 step 5; R0-B R1).
+    fetched_plugins_dir: if provided, a SEPARATE directory for fetched plugin bundles.
+      Must be disjoint from plugins_dir (provenance-laundering prevention, ADR-031 D3).
+      Fetched plugins require activation entries (fail-closed if absent, ADR-031 D4).
+      Both roots are processed; collision-check is global (cross-root).
+
+    activation_registry_path: path to the operator's activation allowlist YAML.
+      Absent / None → no fetched plugins activated (fail-closed default).
     """
-    if not plugins_dir.exists():
+    fetched_empty = fetched_plugins_dir is None or not fetched_plugins_dir.exists()
+    if not plugins_dir.exists() and fetched_empty:
         return PluginLoadResult()
 
-    # Steps 1-2: Discover + validate + dependency-check
-    candidates = _discover_and_validate(plugins_dir, models, host_room_types, host_contract_version)
+    # Disjoint-root guard: fetched_plugins_dir must not overlap with plugins_dir
+    # (provenance-laundering prevention, ADR-031 D3 un-launderable property).
+    if fetched_plugins_dir is not None and fetched_plugins_dir.exists():
+        try:
+            plugins_dir.resolve().relative_to(fetched_plugins_dir.resolve())
+            # If we got here, plugins_dir is INSIDE fetched_plugins_dir → overlap
+            raise ValueError(
+                f"plugins_dir {plugins_dir!r} is inside fetched_plugins_dir "
+                f"{fetched_plugins_dir!r} — roots must be disjoint (ADR-031 D3)"
+            )
+        except ValueError as exc:
+            if "roots must be disjoint" in str(exc):
+                raise
+        try:
+            fetched_plugins_dir.resolve().relative_to(plugins_dir.resolve())
+            raise ValueError(
+                f"fetched_plugins_dir {fetched_plugins_dir!r} is inside plugins_dir "
+                f"{plugins_dir!r} — roots must be disjoint (ADR-031 D3)"
+            )
+        except ValueError as exc:
+            if "roots must be disjoint" in str(exc):
+                raise
 
-    # Steps 3-7: Per-plugin collision-check + load + atomic merge
+    # Load activation registry (operator-authored; absent = no fetched plugins, ADR-031 D4).
+    activation_registry: ActivationRegistry = load_activation_registry(activation_registry_path)
+
+    # Steps 1-2: Discover + validate — operator-placed root
+    candidates: list[_ValidatedCandidate] = []
+    if plugins_dir.exists():
+        candidates.extend(
+            _discover_and_validate(
+                plugins_dir,
+                models,
+                host_room_types,
+                host_contract_version,
+                provenance="operator_placed",
+            )
+        )
+
+    # Steps 1-2: Discover + validate — fetched root (separate provenance, ADR-031 D3)
+    if fetched_plugins_dir is not None and fetched_plugins_dir.exists():
+        candidates.extend(
+            _discover_and_validate(
+                fetched_plugins_dir,
+                models,
+                host_room_types,
+                host_contract_version,
+                provenance="fetched",
+            )
+        )
+
+    # Steps 3-7: Per-plugin collision-check + load + atomic merge (global, cross-root)
     merged = PluginLoadResult()
     seen_role_ids: set[str] = set()
     seen_skill_ids: set[str] = set()
@@ -486,6 +577,11 @@ def load_plugins(
     seen_server_names: set[str] = set()
 
     for candidate in candidates:
+        activation = (
+            check_fetched_activation(candidate.plugin_id, activation_registry)
+            if candidate.provenance == "fetched"
+            else None
+        )
         result = _load_plugin(
             candidate,
             models=models,
@@ -499,6 +595,7 @@ def load_plugins(
             seen_tool_names=seen_tool_names,
             seen_tool_impl_names=seen_tool_impl_names,
             seen_server_names=seen_server_names,
+            activation_entry=activation,
         )
         if result is None:
             continue
