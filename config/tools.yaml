@@ -52,3 +52,7 @@ tools:
   # raises word_count above default-0 so the demo reaches AUTO_EXECUTE.
   word_count:
     reversibility: 10   # pure function, no I/O, fully reversible
+  # Context plugin tool classification (ADR-029 D5/D7): host-authoritative,
+  # raises context_summary above default-0 so it reaches AUTO_EXECUTE.
+  context_summary:
+    reversibility: 10   # read-only summarisation, no mutation
