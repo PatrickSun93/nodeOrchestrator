@@ -1,7 +1,7 @@
 task_id: P3.7-content
-state: awaiting_junior_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-06-04T07:09:54.512016Z'
+last_transition_at: '2026-06-04T13:11:24.637388Z'
 cycle_started_at: '2026-06-04T06:41:47.310378Z'
 override_history:
 - timestamp: '2026-06-04T07:09:54.512016Z'
@@ -12,4 +12,12 @@ override_history:
     additive content reusing existing loaders, brief §d). Plan merged to main. No
     architect-ADR-accept gate (no new ADR). Advancing to junior impl (11 atomics:
     4 agents/3 skills/2 connectors/2 plugins).'
+- timestamp: '2026-06-04T13:11:24.637388Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: closed
+  reason: 'P3.7-content merged to main (PR #51, da2eb36). Content depth: 4 agents
+    + 3 skills + 2 connectors + 2 plugins (additive, pattern-reuse). Reviews clean
+    (plan-vs-impl + single-lens R0-A); PvI-1 (mypy scope) ruled canonical-is-gate
+    + contributing.md §205 doc-fixed; no ADR/new trust surface.'
 requires_cross_family_review: false
