@@ -14,7 +14,10 @@ gate_run:
   ruff_format: pass
   mypy_canonical_strict: FAIL
   pytest: pass
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect
+  - [2026-06-04, clean, "Architect routed via orchestrator (architect-routing-on-impl.md). PvI-2 mypy gate-red → alpha (junior fix2 fc13ba0; senior re-verified mypy Success/235 files). PvI-1 Posture-A-divergence → restore-per-contract (junior fix1 0563034 restored dual posture operator-placed→A / fetched→B; architect chose restore over the senior alpha-amend recommendation — the architect routing call; code now matches Accepted ADR-031 D3, no ADR edit). I1 structural guarantees absorbed (junior fix3 8353d85). PvI-3 advisory → P4. All 4 canonical gates green; fetched test-enforced-unreachable re-verified."]
 findings:
   blocking: 0
   needs_architect: 2

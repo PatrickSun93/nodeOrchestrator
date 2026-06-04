@@ -8,11 +8,12 @@ reviews_acked:
   - decisions/ADR-031-posture-b-executor-remote-plugin-provenance.md
   - decisions/ADR-032-remote-mcp-transport.md
   - origin/claude/P3.7-remote-impl (9 atomics, a49e86f)
-verdict: needs_architect
+verdict: clean
 verdict_history:
   - blocking
   - [2026-06-04, clean, "Architect routed R1+R2 🔴 + 7🟡 → all α (R1/R2 = honesty/claim-narrowings the mechanisms already supported, not redesigns; 7🟡 = contract tightenings incl. Y1-watchdog + Y6-cap which the architect overrode from partner-β to α). Senior absorbed into ADR-031 (D1/D1a/D2/D3/D4/D5/D6) + ADR-032 (D2/D5) + plan -2/-4/-5/-6/-7/-8/-9. See architect-routing-on-plan.md."]
   - [2026-06-04, needs_architect, "Impl-stage dual-lens R0-B: all 2🔴 + 7🟡 plan-stage findings verified resolved in code. 1 new 🟡 I1: ADR-031 D3 text-vs-code — in-process Posture-A importlib path removed entirely, all plugins forced Posture B via _PostureBFn closures; _PostureBFn constructs MCPServerConfig with api_key_env never set (always None) so build_scoped_env never injects a secret into the plugin child — the env boundary is structural, not just test-enforced. 7 🟢 confirmations (kill-watchdog, harness-env, loader interface, verify=False test, digest-before-extract, per-turn cap, staging cleanup). No new 🔴."]
+  - [2026-06-04, clean, "Architect routed I1 → α absorb via orchestrator (architect-routing-on-impl.md). NOTE: I1's premise (Posture-A path removed / B-for-all) was REVERSED by the architect's Y1 restore-per-contract ruling — junior fix1 0563034 restored dual posture (operator-placed → in-process Posture A; fetched → subprocess Posture B), so the in-process path now physically exists exactly as ADR-031 D3 inscribes (I1's ADR-vs-code gap is closed by restoring code to the contract, not by amending the ADR). I1's 3 structural guarantees (import boundary, api_key_env/env boundary, anti-laundering) documented in code by junior fix3 8353d85; the env boundary is now fetched-only (operator-placed Posture A runs in-process). Senior re-verified all 4 canonical gates green + fetched test-enforced-unreachable. See architect-routing-on-impl.md."]
 findings_count:
   red: 0
   yellow: 1

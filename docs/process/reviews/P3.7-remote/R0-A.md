@@ -4,12 +4,15 @@ task_id: P3.7-remote
 stage: impl
 reviewer: architect-partner
 date: 2026-06-04
-verdict: blocking
+verdict: clean
+verdict_history:
+  - blocking
+  - [2026-06-04, clean, "Architect routed via orchestrator (architect-routing-on-impl.md). B1 gate-red → alpha (junior fix2 fc13ba0 removed 2 unused type:ignore; senior re-verified mypy --strict canonical = Success/235 files). Y1 Posture-A-divergence → restore-per-contract (junior fix1 0563034 restored dual posture: operator-placed in-process Posture A / fetched subprocess Posture B; senior re-verified fetched test-enforced-unreachable holds, code now matches Accepted ADR-031 D3 so no ADR edit). Advisory P4. All 4 canonical gates green."]
 reviewed_ref: claude/P3.7-remote-impl @ a49e86f
 gate_run:
   ruff_check: pass
   ruff_format: pass
-  mypy_canonical_strict: FAIL
+  mypy_canonical_strict: FAIL_at_review_PASS_after_fix2_fc13ba0
   pytest: pass
 findings:
   blocking: 1
