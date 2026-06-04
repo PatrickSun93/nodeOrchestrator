@@ -89,9 +89,18 @@ _ROOM_ROSTER: dict[RoomType, frozenset[str]] = {
         {"logger", "operator", "planner", "skeptic", "synthesizer", "verifier"}
     ),
     RoomType.IDEA_VALIDATION: frozenset(
-        {"divergence_mapper", "logger", "operator", "planner", "prober", "skeptic", "synthesizer"}
+        {
+            "divergence_mapper",
+            "logger",
+            "mentor",
+            "operator",
+            "planner",
+            "prober",
+            "skeptic",
+            "synthesizer",
+        }
     ),
-    RoomType.FREE_CHAT: frozenset({"facilitator", "logger"}),
+    RoomType.FREE_CHAT: frozenset({"facilitator", "logger", "mentor"}),
 }
 
 # ---------------------------------------------------------------------------

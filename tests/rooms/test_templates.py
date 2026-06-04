@@ -116,13 +116,14 @@ _SCAFFOLD_ROSTERS: dict[RoomType, list[str]] = {
     RoomType.IDEA_VALIDATION: [
         "divergence_mapper",
         "logger",
+        "mentor",
         "operator",
         "planner",
         "prober",
         "skeptic",
         "synthesizer",
     ],
-    RoomType.FREE_CHAT: ["facilitator", "logger"],
+    RoomType.FREE_CHAT: ["facilitator", "logger", "mentor"],
 }
 
 

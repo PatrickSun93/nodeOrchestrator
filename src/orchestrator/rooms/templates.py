@@ -91,6 +91,7 @@ ROOM_TEMPLATES: dict[RoomType, RoomTemplate] = {
         declared_agents=[
             "divergence_mapper",
             "logger",
+            "mentor",
             "operator",
             "planner",
             "prober",
@@ -101,7 +102,7 @@ ROOM_TEMPLATES: dict[RoomType, RoomTemplate] = {
     ),
     RoomType.FREE_CHAT: RoomTemplate(
         room_type=RoomType.FREE_CHAT,
-        declared_agents=["facilitator", "logger"],
+        declared_agents=["facilitator", "logger", "mentor"],
         default_initial_state="setup",
     ),
 }

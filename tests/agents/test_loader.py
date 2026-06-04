@@ -348,6 +348,7 @@ def test_all_canonical_agents_load() -> None:
         "divergence_mapper",
         "facilitator",
         "logger",
+        "mentor",
         "operator",
         "planner",
         "prober",

@@ -301,3 +301,61 @@ class TestVerifierAgent:
         """verifier NOT in idea_validation declared_agents (non-declared room)."""
         assert "verifier" not in ROOM_TEMPLATES[RoomType.IDEA_VALIDATION].declared_agents
         assert "verifier" not in _room_agents(RoomType.IDEA_VALIDATION)
+
+
+# ---------------------------------------------------------------------------
+# P3.7-content-4: mentor (free_chat, idea_validation)
+# ---------------------------------------------------------------------------
+
+
+class TestMentorAgent:
+    """Discriminating tests for the mentor agent (P3.7-content-4)."""
+
+    def setup_method(self) -> None:
+        self.agent = _ALL_AGENTS["mentor"]
+
+    # Schema validation
+    def test_mentor_loaded_as_valid_agent(self) -> None:
+        """mentor.yaml loads and is a valid Agent instance."""
+        assert isinstance(self.agent, Agent)
+        assert self.agent.id == "mentor"
+        assert self.agent.role == "mentor"
+
+    def test_mentor_applies_to_room_states_non_empty(self) -> None:
+        """mentor.applies_to.room_states is non-empty."""
+        assert len(self.agent.applies_to.room_states) >= 1
+
+    # Present in declared room types
+    def test_mentor_present_in_free_chat_roster(self) -> None:
+        """mentor in free_chat declared_agents."""
+        assert "mentor" in ROOM_TEMPLATES[RoomType.FREE_CHAT].declared_agents
+
+    def test_mentor_present_in_idea_validation_roster(self) -> None:
+        """mentor in idea_validation declared_agents."""
+        assert "mentor" in ROOM_TEMPLATES[RoomType.IDEA_VALIDATION].declared_agents
+
+    # Activation: speak=True in each declared room type on USER_INPUT event
+    def test_mentor_speaks_on_user_input_in_free_chat(self) -> None:
+        """mentor speaks on USER_INPUT event when loaded for free_chat."""
+        agents = _room_agents(RoomType.FREE_CHAT)
+        assert "mentor" in agents
+        ev = _ev(EventType.USER_INPUT, content="can you explain this?")
+        assert _speaks(agents["mentor"], ev) is True
+
+    def test_mentor_speaks_on_user_input_in_idea_validation(self) -> None:
+        """mentor speaks on USER_INPUT event when loaded for idea_validation."""
+        agents = _room_agents(RoomType.IDEA_VALIDATION)
+        assert "mentor" in agents
+        ev = _ev(EventType.USER_INPUT, content="I am not sure I understand")
+        assert _speaks(agents["mentor"], ev) is True
+
+    # Absent from non-declared room types (present/missing partition)
+    def test_mentor_absent_from_research_roster(self) -> None:
+        """mentor NOT in research declared_agents (non-declared room)."""
+        assert "mentor" not in ROOM_TEMPLATES[RoomType.RESEARCH].declared_agents
+        assert "mentor" not in _room_agents(RoomType.RESEARCH)
+
+    def test_mentor_absent_from_bug_fix_roster(self) -> None:
+        """mentor NOT in bug_fix declared_agents (non-declared room)."""
+        assert "mentor" not in ROOM_TEMPLATES[RoomType.BUG_FIX].declared_agents
+        assert "mentor" not in _room_agents(RoomType.BUG_FIX)

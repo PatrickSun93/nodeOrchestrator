@@ -457,6 +457,7 @@ class TestExampleConfigs:
             "logger",
             "operator",
             "facilitator",
+            "mentor",
             "planner",
             "synthesizer",
             "verifier",
