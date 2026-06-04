@@ -93,8 +93,13 @@ class MCPTransport:
         self._timeouts = timeouts if timeouts is not None else server_cfg.timeouts
 
     def _make_params(self) -> StdioServerParameters:
+        command = self._server_cfg.command
+        if command is None:
+            raise MCPConnectionError(
+                f"Server {self._server_name!r}: stdio transport has no command"
+            )
         return StdioServerParameters(
-            command=self._server_cfg.command,
+            command=command,
             args=list(self._server_cfg.args),
             env=_build_scoped_env(self._server_cfg),
         )
