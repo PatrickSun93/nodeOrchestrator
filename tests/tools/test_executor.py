@@ -40,6 +40,7 @@ from orchestrator.core.event import (
     EventType,
     RoomId,
     ToolCallMeta,
+    ToolCallPendingMeta,
     ToolResultMeta,
     generate_event_id,
     generate_room_id,
@@ -604,6 +605,51 @@ def test_empty_window_zero_executions() -> None:
 
     cast_transport = session.transport
     cast_transport.call_tool.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_tool_call_pending_in_window_not_executed() -> None:
+    """TOOL_CALL_PENDING events in window are ignored by executor (ADR-030 D1 / B1).
+
+    The executor filters on EventType.TOOL_CALL only; a TOOL_CALL_PENDING event
+    (a durable pending record, not yet approved) must NOT be treated as executable.
+    """
+    store = _make_store()
+    room_id = _make_room(store)
+
+    pending_event = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.TOOL_CALL_PENDING,
+        author="agent:operator",
+        timestamp=now_ms(),
+        content="",
+        metadata=ToolCallPendingMeta(
+            tool_name="apply_edit",
+            call_id="call_pending_1",
+            params={"path": "/tmp/x"},
+            tier="hard_confirm",
+            initiating_agent="operator",
+        ).model_dump(),
+    )
+    store.append(pending_event)
+
+    session = _mcp_session()
+    execute_pending_tool_calls(
+        window_events=[pending_event],
+        room_id=room_id,
+        event_store=store,
+        mcp_sessions={"test_server": session},
+        local_tools={},
+        llm_router=_mock_llm_router(),
+    )
+
+    # No MCP call dispatched
+    cast_transport = session.transport
+    cast_transport.call_tool.assert_not_called()  # type: ignore[attr-defined]
+
+    # No TOOL_RESULT or TOOL_FAILED appended
+    events = store.get_room_events(room_id)
+    assert not any(e.type in (EventType.TOOL_RESULT, EventType.TOOL_FAILED) for e in events)
 
     events = store.get_room_events(room_id)
     assert not any(e.type in (EventType.TOOL_RESULT, EventType.TOOL_FAILED) for e in events)

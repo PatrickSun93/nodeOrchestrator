@@ -5,7 +5,7 @@ import type { EventType, RoomType } from "./api/client.ts";
 // Unknown values fall back to a safe generic — never the raw string.
 // Internal-only vocabulary (skill / state machine / autonomy / dissent) is 不暴露.
 
-// Event type labels — exhaustive over the 19 constitutional EventType values.
+// Event type labels — exhaustive over all constitutional EventType values (ADR-030 adds 2).
 const EVENT_TYPE_LABELS: Record<EventType, string> = {
   user_input: "用户消息",
   utterance: "发言",
@@ -23,9 +23,12 @@ const EVENT_TYPE_LABELS: Record<EventType, string> = {
   milestone: "里程碑",
   term_definition: "术语定义",
   decision_pivot: "决策转向",
-  autonomy_decision: "自主决策",
+  autonomy_decision: "待确认",
   autonomy_refusal: "拒绝执行",
   external_validation: "外部验证",
+  // ADR-030 D1: confirm-then-execute gating records
+  tool_call_pending: "等待确认",
+  tool_call_cancelled: "已取消",
 };
 
 // Agent id → display name. Keys on the product agents from config/agents/.
@@ -78,6 +81,25 @@ const ROOM_STATE_LABELS: Record<string, string> = {
 
 export function eventTypeLabel(type: EventType): string {
   return EVENT_TYPE_LABELS[type] ?? "消息";
+}
+
+// Tool name → human-friendly label (ADR-030 D6 / F2, D-C 不暴露).
+// Strips mcp__ prefix, maps known tools; unknown → "一个工具".
+const TOOL_NAME_MAP: Record<string, string> = {
+  apply_edit: "编辑文件",
+  propose_edit: "建议编辑",
+  read_file: "读取文件",
+  write_file: "写入文件",
+  run_command: "运行命令",
+  search_web: "网络搜索",
+  create_file: "创建文件",
+  delete_file: "删除文件",
+};
+
+export function toolNameLabel(rawName: string): string {
+  // Strip mcp__<server>__ prefix (D-C: never expose mcp__ to user).
+  const stripped = rawName.replace(/^mcp__[^_]+__/, "").replace(/^mcp__/, "");
+  return TOOL_NAME_MAP[stripped] ?? TOOL_NAME_MAP[rawName] ?? "一个工具";
 }
 
 export function authorLabel(author: string): string {

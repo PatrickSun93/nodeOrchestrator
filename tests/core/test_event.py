@@ -6,7 +6,7 @@ is tested in test_constitution.py; store behaviors in test_event_store.py.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from pydantic import ValidationError
@@ -25,7 +25,9 @@ from orchestrator.core.event import (
     RoomId,
     SummarySnapshotMeta,
     TimestampMs,
+    ToolCallCancelledMeta,
     ToolCallMeta,
+    ToolCallPendingMeta,
     ToolResultMeta,
     is_valid_author,
     now_ms,
@@ -601,3 +603,93 @@ class TestDecisionMetaPromotionExtension:
         assert meta["hypothesis_id"] is None
         assert meta["vk_id"] is None
         assert meta["user_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# ADR-030 B1: ToolCallPendingMeta + ToolCallCancelledMeta (new event types)
+# ---------------------------------------------------------------------------
+
+
+class TestToolCallPendingMeta:
+    """ToolCallPendingMeta schema invariants (ADR-030 D1 / B1)."""
+
+    _VALID: ClassVar[dict[str, Any]] = {
+        "tool_name": "apply_edit",
+        "call_id": "call_abc",
+        "params": {"path": "/tmp/x"},
+        "tier": "countdown_confirm",
+        "initiating_agent": "operator",
+    }
+
+    def test_frozen(self) -> None:
+        m = ToolCallPendingMeta(**self._VALID)
+        with pytest.raises((ValidationError, TypeError)):
+            m.tool_name = "other"
+
+    def test_extra_forbid(self) -> None:
+        with pytest.raises(ValidationError):
+            ToolCallPendingMeta(**self._VALID, extra_field="x")  # type: ignore[call-arg]
+
+    def test_tier_countdown(self) -> None:
+        m = ToolCallPendingMeta(**self._VALID)
+        assert m.tier == "countdown_confirm"
+
+    def test_tier_hard(self) -> None:
+        fields = dict(self._VALID)
+        fields["tier"] = "hard_confirm"
+        m = ToolCallPendingMeta(**fields)
+        assert m.tier == "hard_confirm"
+
+    def test_tier_auto_execute_invalid(self) -> None:
+        fields = dict(self._VALID)
+        fields["tier"] = "auto_execute"
+        with pytest.raises(ValidationError):
+            ToolCallPendingMeta(**fields)
+
+    def test_empty_tool_name_invalid(self) -> None:
+        fields = dict(self._VALID)
+        fields["tool_name"] = ""
+        with pytest.raises(ValidationError):
+            ToolCallPendingMeta(**fields)
+
+    def test_params_defaults_empty(self) -> None:
+        fields = {k: v for k, v in self._VALID.items() if k != "params"}
+        m = ToolCallPendingMeta(**fields)
+        assert m.params == {}
+
+    def test_validate_metadata_roundtrip(self) -> None:
+        result = validate_metadata(EventType.TOOL_CALL_PENDING, dict(self._VALID))
+        assert result["tool_name"] == "apply_edit"
+        assert result["tier"] == "countdown_confirm"
+        assert result["initiating_agent"] == "operator"
+
+    def test_validate_metadata_extra_field_rejected(self) -> None:
+        fields = dict(self._VALID)
+        fields["extra"] = "boom"
+        with pytest.raises(MetadataValidationError):
+            validate_metadata(EventType.TOOL_CALL_PENDING, fields)
+
+
+class TestToolCallCancelledMeta:
+    """ToolCallCancelledMeta schema invariants (ADR-030 D3 / B1)."""
+
+    def test_frozen(self) -> None:
+        m = ToolCallCancelledMeta(call_id="call_x")
+        with pytest.raises((ValidationError, TypeError)):
+            m.call_id = "other"
+
+    def test_extra_forbid(self) -> None:
+        with pytest.raises(ValidationError):
+            ToolCallCancelledMeta(call_id="call_x", extra="y")  # type: ignore[call-arg]
+
+    def test_empty_call_id_invalid(self) -> None:
+        with pytest.raises(ValidationError):
+            ToolCallCancelledMeta(call_id="")
+
+    def test_validate_metadata_roundtrip(self) -> None:
+        result = validate_metadata(EventType.TOOL_CALL_CANCELLED, {"call_id": "call_abc"})
+        assert result["call_id"] == "call_abc"
+
+    def test_validate_metadata_extra_rejected(self) -> None:
+        with pytest.raises(MetadataValidationError):
+            validate_metadata(EventType.TOOL_CALL_CANCELLED, {"call_id": "c", "extra": "boom"})

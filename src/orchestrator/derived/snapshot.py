@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.core.event import (
-    AutonomyDecisionMetadata,
+    PENDING_RESOLUTION_TYPES,
     DecisionMeta,
     Event,
     EventType,
@@ -21,7 +21,7 @@ from orchestrator.core.event import (
     RoomId,
     StateTransitionMeta,
     TimestampMs,
-    ToolCallMeta,
+    ToolCallPendingMeta,
 )
 from orchestrator.core.room import Room, RoomType
 
@@ -154,40 +154,33 @@ def produce_snapshot(
         DecisionRef(event_id=did) for did in decision_event_ids if did not in retracted_event_ids
     ]
 
-    # --- D2.3 tool_calls_pending_confirm ---
-    # For each TOOL_CALL TC, correlate with the most-recent preceding AUTONOMY_DECISION AD
-    # where AD.author == TC.author AND AD.metadata.operation_tool_id == TC.metadata.tool_name.
-    # TC is pending iff AD.tier in {countdown_confirm, hard_confirm}.
-    # Anomaly (no preceding AD): include with tier="unknown" per ADR-014 D2.3 conservative-include.
-    latest_ad_tier: dict[tuple[str, str], str] = {}  # (author, tool_name) -> tier
+    # --- D2.3 tool_calls_pending_confirm (ADR-030 D2 re-point + position-anchored predicate) ---
+    # A TOOL_CALL_PENDING event P is pending iff no event appearing AFTER P's position
+    # in room order carries P's call_id as a resolution:
+    #   TOOL_CALL / TOOL_RESULT / TOOL_FAILED / TOOL_CALL_CANCELLED
+    # The scan is position-anchored to P (not position-blind) to handle cross-turn
+    # call_id collisions: a turn-1 TOOL_RESULT(abc) does NOT resolve a turn-5
+    # TOOL_CALL_PENDING(abc) because the result is BEFORE the pending event.
+    # This predicate is byte-for-byte consistent with the B3 confirm endpoint (D3 step 2).
     tool_calls_pending: list[ToolCallRef] = []
-    for e in sorted_events:
-        if e.type == EventType.AUTONOMY_DECISION:
-            ad_meta = AutonomyDecisionMetadata.model_validate(e.metadata)
-            latest_ad_tier[(e.author, ad_meta.operation_tool_id)] = ad_meta.tier
-        elif e.type == EventType.TOOL_CALL:
-            tc_meta = ToolCallMeta.model_validate(e.metadata)
-            key = (e.author, tc_meta.tool_name)
-            tier = latest_ad_tier.get(key)
-            if tier in ("countdown_confirm", "hard_confirm"):
-                tool_calls_pending.append(
-                    ToolCallRef(
-                        event_id=e.id,
-                        tool_name=tc_meta.tool_name,
-                        autonomy_tier=tier,  # type: ignore[arg-type]
-                    )
+    for idx, e in enumerate(sorted_events):
+        if e.type != EventType.TOOL_CALL_PENDING:
+            continue
+        p_meta = ToolCallPendingMeta.model_validate(e.metadata)
+        # Scan only events AFTER this pending event's position.
+        resolved = any(
+            later.type in PENDING_RESOLUTION_TYPES
+            and str(later.metadata.get("call_id", "")) == p_meta.call_id
+            for later in sorted_events[idx + 1 :]
+        )
+        if not resolved:
+            tool_calls_pending.append(
+                ToolCallRef(
+                    event_id=e.id,
+                    tool_name=p_meta.tool_name,
+                    autonomy_tier=p_meta.tier,
                 )
-            elif tier is None:
-                # Anomaly path: TC without preceding correlated AD.
-                # Conservative-include per ADR-014 D2.3: "unknown" signals the anomaly.
-                tool_calls_pending.append(
-                    ToolCallRef(
-                        event_id=e.id,
-                        tool_name=tc_meta.tool_name,
-                        autonomy_tier="unknown",
-                    )
-                )
-            # tier == "auto_execute": tool already executed; not pending.
+            )
 
     # --- D2.5 last_state_transition ---
     # STATE_TRANSITION event maximizing (timestamp, id) lex. None if absent.

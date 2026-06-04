@@ -6,9 +6,13 @@ export type Room = components["schemas"]["Room"];
 export type RoomType = components["schemas"]["RoomType"];
 export type EventType = components["schemas"]["EventType"];
 export type Snapshot = components["schemas"]["Snapshot"];
+export type ToolCallRef = components["schemas"]["ToolCallRef"];
 export type IntentRequest = components["schemas"]["IntentRequest"];
 export type IntentResponse = components["schemas"]["IntentResponse"];
 export type IntentError = components["schemas"]["IntentError"];
+export type ConfirmRequest = components["schemas"]["ConfirmRequest"];
+export type ConfirmResponse = components["schemas"]["ConfirmResponse"];
+export type ConfirmError = components["schemas"]["ConfirmError"];
 
 const BASE = "";
 
@@ -55,6 +59,13 @@ export function postIntent(
   body: { type: "user_input"; content: string },
 ): Promise<IntentResponse> {
   return request<IntentResponse>(`${BASE}/rooms/${roomId}/intent`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function postConfirm(roomId: string, body: ConfirmRequest): Promise<ConfirmResponse> {
+  return request<ConfirmResponse>(`${BASE}/rooms/${roomId}/confirm`, {
     method: "POST",
     body: JSON.stringify(body),
   });

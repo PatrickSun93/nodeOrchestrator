@@ -74,3 +74,17 @@ may emit a `StreamErrorMessage` on the subscriber channel. Clients must
 treat `stage="turn"` as "intent already landed — reconcile via replay,
 do not re-post." `stage="append"` means nothing was persisted and the
 intent is safe to retry.
+
+## Confirm-path error (`ConfirmError` / ADR-030 D5)
+
+`POST /rooms/{room_id}/confirm` returns a `ConfirmError` (HTTP 422 or 500)
+when the confirm cannot proceed. The `stage` field mirrors `IntentError`:
+
+- `stage="append"` — nothing persisted, **safe to refresh-and-retry**:
+  `already_resolved`, `room_closed`, `not_found` (unknown `pending_event_id`).
+- `stage="execute"` — the `TOOL_CALL` **was appended** but the executor
+  raised: **do NOT re-confirm**; reconcile via replay. `appended_event_id`
+  holds the TOOL_CALL's id so the client can identify which call landed.
+
+If a confirm-triggered execution failure surfaces on the WS channel, the
+`StreamErrorMessage{stage:"execute"}` carries the same semantics.

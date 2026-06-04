@@ -2,6 +2,41 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { useRoomStore } from "./store.ts";
 import type { Event } from "./api/client.ts";
 
+function makePendingEvent(
+  id: string,
+  callId: string,
+  tier: "countdown_confirm" | "hard_confirm" = "countdown_confirm",
+  timestamp = 1,
+): Event {
+  return {
+    id,
+    room_id: "r1",
+    type: "tool_call_pending",
+    author: "agent:operator",
+    timestamp,
+    content: "",
+    metadata: {
+      tool_name: "apply_edit",
+      call_id: callId,
+      params: {},
+      tier,
+      initiating_agent: "operator",
+    },
+  };
+}
+
+function makeResolutionEvent(id: string, callId: string, type: Event["type"]): Event {
+  return {
+    id,
+    room_id: "r1",
+    type,
+    author: "agent:operator",
+    timestamp: 2,
+    content: "",
+    metadata: { call_id: callId },
+  };
+}
+
 function makeEvent(id: string, timestamp = 1): Event {
   return { id, room_id: "r1", type: "utterance", author: "agent:senior", timestamp, content: "hi" };
 }
@@ -113,5 +148,77 @@ describe("Zustand store", () => {
     applyEvent(makeEvent("e3", 300)); // new
     const ids = useRoomStore.getState().events.map((e) => e.id);
     expect(ids).toEqual(["e1", "e2", "e3"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F1: pending calls set (ADR-030 D6)
+// ---------------------------------------------------------------------------
+
+describe("pendingCalls store (F1 — ADR-030 D6)", () => {
+  beforeEach(() => {
+    useRoomStore.getState().reset();
+  });
+
+  it("applyEvent adds TOOL_CALL_PENDING to pendingCalls", () => {
+    useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc"));
+    const { pendingCalls } = useRoomStore.getState();
+    expect(pendingCalls.size).toBe(1);
+    const p = pendingCalls.get("p1");
+    expect(p?.tool_name).toBe("apply_edit");
+    expect(p?.call_id).toBe("call_abc");
+    expect(p?.autonomy_tier).toBe("countdown_confirm");
+  });
+
+  it("TOOL_CALL_PENDING deduplicates (same event_id not added twice)", () => {
+    useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc"));
+    useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc")); // dup
+    expect(useRoomStore.getState().pendingCalls.size).toBe(1);
+  });
+
+  it("applyEvent removes pending call on TOOL_CALL resolution", () => {
+    useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc"));
+    useRoomStore.getState().applyEvent(makeResolutionEvent("r1", "call_abc", "tool_call"));
+    expect(useRoomStore.getState().pendingCalls.size).toBe(0);
+  });
+
+  it("applyEvent removes pending call on TOOL_CALL_CANCELLED", () => {
+    useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc"));
+    useRoomStore
+      .getState()
+      .applyEvent(makeResolutionEvent("r1", "call_abc", "tool_call_cancelled"));
+    expect(useRoomStore.getState().pendingCalls.size).toBe(0);
+  });
+
+  it("applyEvent removes pending call on TOOL_RESULT", () => {
+    useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc"));
+    useRoomStore.getState().applyEvent(makeResolutionEvent("r1", "call_abc", "tool_result"));
+    expect(useRoomStore.getState().pendingCalls.size).toBe(0);
+  });
+
+  it("resolution for unknown call_id does not crash or modify set", () => {
+    useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc"));
+    useRoomStore.getState().applyEvent(makeResolutionEvent("r1", "call_other", "tool_call"));
+    // "call_abc" pending call remains since "call_other" doesn't match
+    expect(useRoomStore.getState().pendingCalls.size).toBe(1);
+  });
+
+  it("seedPendingCalls seeds from snapshot refs", () => {
+    const pendingEvt = makePendingEvent("p_seed", "call_seed", "hard_confirm");
+    const ref = {
+      event_id: "p_seed",
+      tool_name: "apply_edit",
+      autonomy_tier: "hard_confirm" as const,
+    };
+    useRoomStore.getState().seedPendingCalls([ref], [pendingEvt]);
+    const p = useRoomStore.getState().pendingCalls.get("p_seed");
+    expect(p?.call_id).toBe("call_seed");
+    expect(p?.autonomy_tier).toBe("hard_confirm");
+  });
+
+  it("setRoom resets pendingCalls", () => {
+    useRoomStore.getState().applyEvent(makePendingEvent("p1", "call_abc"));
+    useRoomStore.getState().setRoom("r2", "free_chat");
+    expect(useRoomStore.getState().pendingCalls.size).toBe(0);
   });
 });

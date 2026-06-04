@@ -11,7 +11,7 @@ No LLM imports — tool_calls arrive pre-parsed as ToolCall instances.
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -28,6 +28,7 @@ from orchestrator.core.event import (
     EventType,
     RoomId,
     ToolCallMeta,
+    ToolCallPendingMeta,
     build_author,
     generate_event_id,
     now_ms,
@@ -123,6 +124,25 @@ def process_tool_calls(
                 )
             )
         else:
+            # COUNTDOWN_CONFIRM / HARD_CONFIRM: persist the full payload so
+            # the confirm endpoint can reconstruct and execute it (ADR-030 D1).
+            event_store.append(
+                Event(
+                    id=generate_event_id(),
+                    room_id=room_id,
+                    type=EventType.TOOL_CALL_PENDING,
+                    author=build_author(agent_id),
+                    timestamp=now_ms(),
+                    content="",
+                    metadata=ToolCallPendingMeta(
+                        tool_name=tc.name,
+                        call_id=tc.id,
+                        params=tc.arguments,
+                        tier=cast(Literal["countdown_confirm", "hard_confirm"], result.tier.value),
+                        initiating_agent=agent_id,
+                    ).model_dump(),
+                )
+            )
             decisions.append(
                 ToolDispatchDecision(
                     call_id=tc.id,

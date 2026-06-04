@@ -3,10 +3,16 @@ import { useRoomStream } from "../hooks/useRoomStream.ts";
 import { MessageList } from "./MessageList.tsx";
 import { Composer } from "./Composer.tsx";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
+import { PendingDecisionList } from "./PendingDecision.tsx";
+import { ProgressPanel } from "./ProgressPanel.tsx";
 import { roomStateLabel, roomTypeLabel } from "../uiStrings.ts";
 import styles from "./RoomView.module.css";
 
-export function RoomView() {
+interface RoomViewProps {
+  onLeave?: () => void;
+}
+
+export function RoomView({ onLeave }: RoomViewProps) {
   const roomId = useRoomStore((s) => s.roomId);
   const roomType = useRoomStore((s) => s.roomType);
   const events = useRoomStore((s) => s.events);
@@ -22,9 +28,20 @@ export function RoomView() {
         <span className={styles.roomId}>{roomId}</span>
         {roomType && <span className={styles.roomType}>{roomTypeLabel(roomType)}</span>}
         <ConnectionStatus phase={phase} />
+        {onLeave && (
+          <button className={styles.leaveBtn} onClick={onLeave} data-testid="leave-room-btn">
+            离开
+          </button>
+        )}
       </header>
-      <MessageList events={events} />
-      <Composer />
+      <div className={styles.body}>
+        <div className={styles.main}>
+          <MessageList events={events} />
+          <PendingDecisionList />
+          <Composer />
+        </div>
+        <ProgressPanel roomId={roomId} />
+      </div>
     </div>
   );
 }

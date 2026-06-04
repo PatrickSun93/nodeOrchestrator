@@ -118,10 +118,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rooms/{room_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Confirm
+         * @description Confirm or cancel a pending gated tool call (ADR-030 D3).
+         *
+         *     Handler logic (backend-authoritative, atomic on writer_executor):
+         *     1. Resolve room; find the TOOL_CALL_PENDING by pending_event_id.
+         *     2. Room-state gate: closed room → ConfirmError{stage:'append', reason:'room_closed'}.
+         *     3. Still-pending check (layer 1) — position-anchored after the pending event.
+         *     4. cancel → append TOOL_CALL_CANCELLED, return.
+         *     5. approve → append agent-authored TOOL_CALL from record, execute, publish.
+         *
+         *     No decision surface: gate decision already made; human approval second factor only.
+         */
+        post: operations["_post_confirm_rooms__room_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ConfirmError
+         * @description Partial-confirm error envelope (ADR-030 D5, mirrors IntentError).
+         *
+         *     stage='append': nothing persisted — safe to refresh-and-retry.
+         *     stage='execute': TOOL_CALL appended — do NOT re-confirm; reconcile via replay.
+         *     reason: 'already_resolved' | 'room_closed' | 'not_found' | <executor error>
+         */
+        ConfirmError: {
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "append" | "execute";
+            /** Appended Event Id */
+            appended_event_id?: string | null;
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * ConfirmRequest
+         * @description Client-to-server confirm/cancel of a pending gated tool call (ADR-030 D3).
+         *
+         *     Only pending_event_id + decision are accepted — extra="forbid" makes it
+         *     type-impossible to smuggle tool_name/params/author (forge guard at schema layer,
+         *     mirroring IntentRequest ADR-025 D4).
+         */
+        ConfirmRequest: {
+            /** Pending Event Id */
+            pending_event_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "cancel";
+        };
+        /**
+         * ConfirmResponse
+         * @description Successful confirm result: the appended TOOL_CALL or TOOL_CALL_CANCELLED + turn events.
+         */
+        ConfirmResponse: {
+            appended_event: components["schemas"]["Event"];
+            /** Turn Events */
+            turn_events: components["schemas"]["Event"][];
+        };
         /** DecisionRef */
         DecisionRef: {
             /** Event Id */
@@ -158,7 +232,7 @@ export interface components {
         };
         /**
          * EventType
-         * @description The 19 constitutional event types.
+         * @description The constitutional event types (ADR-030 adds TOOL_CALL_PENDING + TOOL_CALL_CANCELLED).
          *
          *     See docs/architecture/event-model.md for why this list is constitutional
          *     and what to do (and not do) when extending it. In short: adding a type
@@ -166,7 +240,7 @@ export interface components {
          *     `generic_message` catch-all is forbidden.
          * @enum {string}
          */
-        EventType: "user_input" | "utterance" | "hypothesis" | "decision" | "rejection" | "retraction" | "observation" | "tool_call" | "tool_result" | "tool_failed" | "escalation" | "summary_snapshot" | "state_transition" | "milestone" | "term_definition" | "decision_pivot" | "autonomy_decision" | "autonomy_refusal" | "external_validation";
+        EventType: "user_input" | "utterance" | "hypothesis" | "decision" | "rejection" | "retraction" | "observation" | "tool_call" | "tool_result" | "tool_failed" | "escalation" | "summary_snapshot" | "state_transition" | "milestone" | "term_definition" | "decision_pivot" | "autonomy_decision" | "autonomy_refusal" | "external_validation" | "tool_call_pending" | "tool_call_cancelled";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -548,6 +622,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IntentError"];
+                };
+            };
+        };
+    };
+    _post_confirm_rooms__room_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfirmResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfirmError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfirmError"];
                 };
             };
         };

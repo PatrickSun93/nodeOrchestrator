@@ -16,6 +16,26 @@
   align-self: flex-start;
 }
 
+.decision {
+  background: #fef9c3;
+  align-self: flex-start;
+  border-left: 3px solid #ca8a04;
+}
+
+.system {
+  background: #f3f4f6;
+  align-self: center;
+  font-style: italic;
+  opacity: 0.8;
+  max-width: 100%;
+}
+
+.toolActivity {
+  background: #ecfdf5;
+  align-self: flex-start;
+  border-left: 3px solid #059669;
+}
+
 .header {
   display: flex;
   align-items: center;
@@ -41,4 +61,10 @@
   font-size: 0.95rem;
   white-space: pre-wrap;
   color: #111827;
+}
+
+.toolDesc {
+  font-size: 0.85rem;
+  color: #065f46;
+  font-weight: 500;
 }
