@@ -1,7 +1,15 @@
 task_id: P3.7-remote
-state: awaiting_senior_plan
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-04T13:11:56.838474Z'
+last_transition_at: '2026-06-04T15:10:36.877422Z'
 cycle_started_at: '2026-06-04T06:41:49.052348Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-04T15:10:36.877422Z'
+  actor: architect
+  from_state: awaiting_senior_plan
+  to_state: awaiting_junior_impl
+  reason: ADR-031 (Posture-B executor / remote provenance; RB-FS/NET residual accepted,
+    real sandbox→P4) + ADR-032 (remote MCP transport, streamable-http) accepted by
+    architect; plan-stage dual-lens clean after routing-absorption; plan merged. Advancing
+    B-coupled impl to junior.
 requires_cross_family_review: true
