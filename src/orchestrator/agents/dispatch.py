@@ -102,7 +102,14 @@ def dispatch_turn(
             snapshot=snapshot,
         )
 
+        # ADR-033 D2/D6: feed snapshot_excerpt into system block so a re-dispatched agent
+        # reasons over ALL prior-pass results, not only the latest (current_event trigger).
+        # No new LLMPurpose — still AGENT_RESPONSE (carry-forward #2).
         system_parts = [agent.persona, *context.skill_bodies]
+        if context.snapshot_excerpt:
+            system_parts.append(
+                f"## Investigation context (prior events in this turn)\n{context.snapshot_excerpt}"
+            )
         system = "\n\n".join(p for p in system_parts if p) or None
         request = LLMRequest(
             request_id=generate_request_id(),

@@ -25,6 +25,10 @@ from orchestrator.core.room import RoomType
 from orchestrator.skills.decision import decide_skills_for_context
 from orchestrator.skills.schema import Skill
 
+# ADR-033 D2/D6: bounded recent-event slice for the snapshot_excerpt context field.
+# Caps the excerpt injected into the dispatch_turn LLM prompt (system block).
+MAX_SNAPSHOT_EXCERPT_CHARS: int = 8_000
+
 
 def decide_agents_for_room(
     room_type: RoomType,
@@ -74,6 +78,51 @@ def decide_agents_for_room(
     )
 
 
+_EXCERPT_EVENT_TYPES = frozenset(
+    {
+        EventType.USER_INPUT,
+        EventType.UTTERANCE,
+        EventType.TOOL_RESULT,
+        EventType.TOOL_FAILED,
+        EventType.OBSERVATION,
+    }
+)
+
+
+def _render_snapshot_excerpt(snapshot: list[Event]) -> str | None:
+    """Render the most-recent relevant events as a bounded excerpt string.
+
+    Iterates from the NEWEST event backwards, accumulating lines until
+    MAX_SNAPSHOT_EXCERPT_CHARS is reached. Returns None if snapshot is empty
+    or no relevant events exist.
+
+    Rendered as: ``[<type>] <author>: <content>``
+    Events truncated to fit within the budget.  Trust framing: the excerpt
+    labels each event by type so the agent reads it as prior observations.
+    ADR-033 D2/D6 / ADR-011 amendment.
+    """
+    relevant = [e for e in snapshot if e.type in _EXCERPT_EVENT_TYPES]
+    if not relevant:
+        return None
+
+    lines: list[str] = []
+    chars_used = 0
+    for event in reversed(relevant):
+        content = (event.content or "").strip()
+        line = f"[{event.type.value}] {event.author}: {content}"
+        line_chars = len(line) + 1  # +1 for newline
+        if chars_used + line_chars > MAX_SNAPSHOT_EXCERPT_CHARS:
+            break
+        lines.append(line)
+        chars_used += line_chars
+
+    if not lines:
+        return None
+    # Reverse to chronological order (we collected newest-first).
+    lines.reverse()
+    return "\n".join(lines)
+
+
 def build_agent_context(
     agent: Agent,
     room_type: RoomType,
@@ -87,16 +136,14 @@ def build_agent_context(
     Pure function; no I/O, no LLM.  Calls ``decide_skills_for_context``
     and assembles the selected skills' bodies into ``AgentContext.skill_bodies``.
 
-    ``snapshot`` is accepted as the per-turn snapshot (ADR-011 D2 invariant)
-    but is not read in P1.4 — only the skill bodies are populated.  P1.5+
-    will use the snapshot for ``snapshot_excerpt`` once that field lands
-    on ``AgentContext``.
+    P4.1 populates ``snapshot_excerpt`` from the snapshot (bounded by
+    ``MAX_SNAPSHOT_EXCERPT_CHARS``), resolving the P1.4 deferral (ADR-033 D2/D6
+    + the ADR-011 substantive amendment).
 
     ``skill_bodies`` ordering follows ADR-009 D5: skills are selected by
     ``decide_skills_for_context`` in descending priority then ascending id
     order; we take ``SkillSelection.selected`` in that order.
     """
-    _ = snapshot  # explicitly unused in P1.4 (no snapshot_excerpt field yet)
     skill_selection = decide_skills_for_context(
         agent.id,
         room_type,
@@ -105,4 +152,5 @@ def build_agent_context(
         triggering_event_type=EventType.UTTERANCE,
     )
     skill_bodies = [s.body for s in skill_selection.selected]
-    return AgentContext(agent=agent, skill_bodies=skill_bodies)
+    excerpt = _render_snapshot_excerpt(snapshot)
+    return AgentContext(agent=agent, skill_bodies=skill_bodies, snapshot_excerpt=excerpt)

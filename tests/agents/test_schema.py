@@ -415,13 +415,17 @@ def test_agent_context_frozen() -> None:
         ctx.skill_bodies = ["x"]
 
 
-def test_agent_context_extra_forbid_rejects_snapshot_excerpt() -> None:
-    with pytest.raises(ValidationError):
-        AgentContext(  # type: ignore[call-arg]
-            agent=_MIN_AGENT,
-            skill_bodies=[],
-            snapshot_excerpt="...",
-        )
+def test_agent_context_snapshot_excerpt_accepted() -> None:
+    """P4.1: snapshot_excerpt is a first-class field on AgentContext (ADR-033 D2/D6)."""
+    excerpt = "[tool_result] agent: hi"
+    ctx = AgentContext(agent=_MIN_AGENT, skill_bodies=[], snapshot_excerpt=excerpt)
+    assert ctx.snapshot_excerpt == excerpt
+
+
+def test_agent_context_snapshot_excerpt_defaults_none() -> None:
+    """snapshot_excerpt defaults to None when omitted."""
+    ctx = AgentContext(agent=_MIN_AGENT, skill_bodies=[])
+    assert ctx.snapshot_excerpt is None
 
 
 # ===========================================================================

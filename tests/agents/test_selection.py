@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from textwrap import dedent
+from typing import Any
 
 from orchestrator.agents.schema import Agent, AgentContext, AgentMatchRecord
 from orchestrator.agents.selection import build_agent_context, decide_agents_for_room
@@ -323,3 +324,164 @@ def test_integration_skill_bodies_content_equals_source(tmp_path: Path) -> None:
     assert ctx.skill_bodies == [src_skill_body]
     # AND content differs from the sentinel (not just any non-empty value)
     assert ctx.skill_bodies != [sentinel_default]
+
+
+# ---------------------------------------------------------------------------
+# P4.1-6: snapshot_excerpt in build_agent_context (ADR-033 D2/D6)
+# ---------------------------------------------------------------------------
+
+
+def _make_event(room_id: str, event_type: Any, content: str) -> Any:
+    from orchestrator.core.event import Event, generate_event_id, now_ms
+
+    return Event(
+        id=generate_event_id(),
+        room_id=room_id,  # type: ignore[arg-type]
+        type=event_type,
+        author="user",
+        timestamp=now_ms(),
+        content=content,
+    )
+
+
+def test_build_agent_context_snapshot_excerpt_populated() -> None:
+    """snapshot_excerpt is populated from snapshot events (ADR-033 D2)."""
+    from orchestrator.core.event import EventType, generate_room_id
+
+    agent = _agent("a1")
+    room_id = generate_room_id()
+    events = [
+        _make_event(room_id, EventType.USER_INPUT, "investigate the bug"),
+        _make_event(room_id, EventType.TOOL_RESULT, "file content: def my_func(): pass"),
+    ]
+    ctx = build_agent_context(
+        agent, RoomType.RESEARCH, "exploration", available_skills={}, snapshot=events
+    )
+    assert ctx.snapshot_excerpt is not None
+    assert "investigate the bug" in ctx.snapshot_excerpt
+    assert "file content" in ctx.snapshot_excerpt
+
+
+def test_build_agent_context_snapshot_excerpt_bounded() -> None:
+    """snapshot_excerpt is bounded by MAX_SNAPSHOT_EXCERPT_CHARS."""
+    from orchestrator.agents.selection import MAX_SNAPSHOT_EXCERPT_CHARS
+    from orchestrator.core.event import EventType, generate_room_id
+
+    agent = _agent("a2")
+    room_id = generate_room_id()
+    events = [
+        _make_event(room_id, EventType.UTTERANCE, "x" * 1000)
+        for _ in range(20)
+    ]
+    ctx = build_agent_context(
+        agent, RoomType.RESEARCH, "exploration", available_skills={}, snapshot=events
+    )
+    assert ctx.snapshot_excerpt is not None
+    # Allow one line of tolerance above the cap (last line may push slightly over).
+    assert len(ctx.snapshot_excerpt) <= MAX_SNAPSHOT_EXCERPT_CHARS + 1100
+
+
+def test_build_agent_context_snapshot_excerpt_none_when_empty() -> None:
+    """snapshot_excerpt is None when snapshot has no relevant events."""
+    ctx = build_agent_context(
+        _agent("a3"), RoomType.RESEARCH, "exploration", available_skills={}, snapshot=[]
+    )
+    assert ctx.snapshot_excerpt is None
+
+
+def test_build_agent_context_snapshot_excerpt_in_llm_request() -> None:
+    """snapshot_excerpt reaches the dispatch_turn LLM system block (ADR-033 D2)."""
+    import sqlite3
+    from unittest.mock import MagicMock
+
+    from orchestrator.agents.dispatch import LLMRouterProtocol, dispatch_turn
+    from orchestrator.agents.schema import AgentAppliesTo, EventTypeTrigger
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        generate_event_id,
+        generate_room_id,
+        now_ms,
+    )
+    from orchestrator.core.event_store import EventStore
+    from orchestrator.core.room import Room
+    from orchestrator.llm.types import (
+        LLMRequest,
+        LLMResponse,
+        ModelId,
+        ProviderId,
+        Usage,
+        generate_request_id,
+    )
+
+    room_id = generate_room_id()
+    marker = "UNIQUE_MARKER_IN_UTTERANCE"
+    # Use UTTERANCE (no required metadata) for the prior-pass snapshot event.
+    snap_event = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.UTTERANCE,
+        author="agent:inv",
+        timestamp=now_ms(),
+        content=f"def my_func(): pass  # {marker}",
+    )
+    # current_event = USER_INPUT (agent's trigger fires on this).
+    current = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.USER_INPUT,
+        author="user",
+        timestamp=now_ms(),
+        content="investigate",
+    )
+
+    conn = sqlite3.connect(":memory:")
+    store = EventStore(conn)
+    store.init_schema()
+    room = Room(id=room_id, type=RoomType.RESEARCH, state="exploration")
+    store.append_room(room)
+    store.append(snap_event)
+    store.append(current)
+
+    agent = Agent(
+        id="inv",
+        role="r",
+        persona="p",
+        llm_config=_LLM,
+        speaking_triggers=[EventTypeTrigger(event_type=EventType.USER_INPUT)],
+        applies_to=AgentAppliesTo(room_types=["*"], room_states=["*"]),
+    )
+    captured: list[str] = []
+
+    def _router(req: LLMRequest) -> LLMResponse:
+        if req.system:
+            captured.append(req.system)
+        return LLMResponse(
+            request_id=generate_request_id(),
+            content="done",
+            model_id_requested=ModelId("m"),
+            model_id_used=ModelId("m"),
+            provider_id_used=ProviderId("p"),
+            usage=Usage(input_tokens=1, output_tokens=1),
+            latency_ms=0,
+            finish_reason="stop",
+        )
+
+    mock_router = MagicMock(spec=LLMRouterProtocol)
+    mock_router.call.side_effect = _router
+
+    dispatch_turn(
+        {"inv": agent},
+        room,
+        current,
+        event_store=store,
+        llm_router=mock_router,
+        available_skills={},
+        regex_registry={},
+        tools={},
+    )
+
+    assert captured, "dispatch_turn must call LLM"
+    assert any(marker in s for s in captured), (
+        f"snapshot_excerpt must reach LLM system block. Captured: {captured[:1]}"
+    )
