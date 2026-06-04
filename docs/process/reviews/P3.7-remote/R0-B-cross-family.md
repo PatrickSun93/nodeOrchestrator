@@ -8,11 +8,11 @@ reviews_acked:
   - decisions/ADR-031-posture-b-executor-remote-plugin-provenance.md
   - decisions/ADR-032-remote-mcp-transport.md
   - origin/claude/P3.7-remote-impl (9 atomics, a49e86f)
-verdict: clean
+verdict: needs_architect
 verdict_history:
   - blocking
   - [2026-06-04, clean, "Architect routed R1+R2 🔴 + 7🟡 → all α (R1/R2 = honesty/claim-narrowings the mechanisms already supported, not redesigns; 7🟡 = contract tightenings incl. Y1-watchdog + Y6-cap which the architect overrode from partner-β to α). Senior absorbed into ADR-031 (D1/D1a/D2/D3/D4/D5/D6) + ADR-032 (D2/D5) + plan -2/-4/-5/-6/-7/-8/-9. See architect-routing-on-plan.md."]
-  - [2026-06-04, clean, "Impl-stage dual-lens R0-B: all 2🔴 + 7🟡 plan-stage findings verified resolved in code. 1 new 🟡 (ADR-031 D3 text-vs-code: in-process Posture-A path removed entirely, all plugins forced Posture B — safer than ADR describes; ADR text stale). 7 🟢 confirmations of specific resolution mechanisms. No new 🔴."]
+  - [2026-06-04, needs_architect, "Impl-stage dual-lens R0-B: all 2🔴 + 7🟡 plan-stage findings verified resolved in code. 1 new 🟡 I1: ADR-031 D3 text-vs-code — in-process Posture-A importlib path removed entirely, all plugins forced Posture B via _PostureBFn closures; _PostureBFn constructs MCPServerConfig with api_key_env never set (always None) so build_scoped_env never injects a secret into the plugin child — the env boundary is structural, not just test-enforced. 7 🟢 confirmations (kill-watchdog, harness-env, loader interface, verify=False test, digest-before-extract, per-turn cap, staging cleanup). No new 🔴."]
 findings_count:
   red: 0
   yellow: 1
@@ -20,7 +20,9 @@ findings_count:
 note: >-
   Impl-stage dual-lens R0-B (cross-family, DeepSeek) on P3.7-remote impl @ a49e86f.
   Plan-stage: 2🔴 + 7🟡 + 4🟢 (all α-absorbed, verdict bumped to clean).
-  Impl-stage: 0🔴 + 1🟡 + 7🟢 (all plan-stage findings verified resolved; 1 ADR-text-vs-code doc gap).
+  Impl-stage: 0🔴 + 1🟡 + 7🟢 (all plan-stage findings verified resolved; 1 ADR-text-vs-code doc gap I1:
+  _PostureBFn constructs MCPServerConfig with api_key_env never set, so build_scoped_env
+  is always None for the plugin child — the env boundary is structural, not just test-enforced).
   Cross-family lens: adversarial trace of env-leak, subprocess-escape, digest-before-extract,
   verify=False, provenance-laundering, empty-diff invariants.
 ---
@@ -277,4 +279,4 @@ The one 🟡 finding (I1) is a documentation gap: ADR-031 D3 says Posture-A path
 
 ## Impl-stage verdict
 
-**clean** — 0🔴 / 1🟡 / 7🟢. All plan-stage 🔴/🟡 verified resolved in code. The 1 new 🟡 (I1) is non-blocking ADR-text-vs-code doc gap — code is correct and safer than ADR describes. Architect should confirm whether to update ADR-031 D3 or leave as-is.
+**needs_architect** — 0🔴 / 1🟡 / 7🟢. All plan-stage 🔴/🟡 verified resolved in code. The 1 new 🟡 (I1) is an ADR-text-vs-code doc gap: _PostureBFn constructs MCPServerConfig with api_key_env never set (always None), so build_scoped_env never injects a secret into the plugin child — the env boundary is structural, not just test-enforced. Code is correct and safer than ADR describes. Architect should confirm whether to update ADR-031 D3 or leave as-is.
