@@ -459,6 +459,7 @@ class TestExampleConfigs:
             "facilitator",
             "planner",
             "synthesizer",
+            "verifier",
         }
 
     def test_validate_full_example_config(self) -> None:

@@ -84,8 +84,10 @@ _ALL_AGENTS, _REGEX_REGISTRY = load_agents(_CONFIG_DIR, models=_MODELS)
 
 # Convenience: expected roster per scaffold room_type (room_type-filtered set)
 _ROOM_ROSTER: dict[RoomType, frozenset[str]] = {
-    RoomType.BUG_FIX: frozenset({"logger", "operator", "planner", "prober", "skeptic"}),
-    RoomType.CODE_REVIEW: frozenset({"logger", "operator", "planner", "skeptic", "synthesizer"}),
+    RoomType.BUG_FIX: frozenset({"logger", "operator", "planner", "prober", "skeptic", "verifier"}),
+    RoomType.CODE_REVIEW: frozenset(
+        {"logger", "operator", "planner", "skeptic", "synthesizer", "verifier"}
+    ),
     RoomType.IDEA_VALIDATION: frozenset(
         {"divergence_mapper", "logger", "operator", "planner", "prober", "skeptic", "synthesizer"}
     ),
@@ -241,10 +243,10 @@ class TestBugFixActivation:
         ev = _ev(EventType.DECISION, content="fix approach determined")
         assert _speaking_ids(self.agents, ev) == frozenset()
 
-    def test_state_transition_fix_proposed_fires_skeptic_and_operator(self) -> None:
-        """STATE_TRANSITION(fix_proposed) fires skeptic + operator via state_change."""
+    def test_state_transition_fix_proposed_fires_skeptic_operator_verifier(self) -> None:
+        """STATE_TRANSITION(fix_proposed) fires skeptic + operator + verifier via state_change."""
         ev = _st_ev(new_state="fix_proposed", prior_state="diagnosed")
-        assert _speaking_ids(self.agents, ev) == frozenset({"skeptic", "operator"})
+        assert _speaking_ids(self.agents, ev) == frozenset({"skeptic", "operator", "verifier"})
 
     # fix_proposed → closed
     def test_summary_snapshot_fires_no_existing_trigger(self) -> None:
@@ -304,10 +306,10 @@ class TestCodeReviewActivation:
         ev = _ev(EventType.DECISION, content="approved for merge")
         assert _speaking_ids(self.agents, ev) == frozenset({"synthesizer"})
 
-    def test_state_transition_approved_fires_no_agent(self) -> None:
-        """STATE_TRANSITION(approved) fires no agent in code_review."""
+    def test_state_transition_approved_fires_verifier(self) -> None:
+        """STATE_TRANSITION(approved) fires verifier in code_review."""
         ev = _st_ev(new_state="approved", prior_state="changes_requested")
-        assert _speaking_ids(self.agents, ev) == frozenset()
+        assert _speaking_ids(self.agents, ev) == frozenset({"verifier"})
 
     # approved → closed
     def test_summary_snapshot_fires_no_existing_trigger(self) -> None:

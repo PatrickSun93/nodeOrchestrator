@@ -111,8 +111,8 @@ def test_load_room_research_missing_list_nonempty_when_partial() -> None:
 # ---------------------------------------------------------------------------
 
 _SCAFFOLD_ROSTERS: dict[RoomType, list[str]] = {
-    RoomType.BUG_FIX: ["logger", "operator", "planner", "prober", "skeptic"],
-    RoomType.CODE_REVIEW: ["logger", "operator", "planner", "skeptic", "synthesizer"],
+    RoomType.BUG_FIX: ["logger", "operator", "planner", "prober", "skeptic", "verifier"],
+    RoomType.CODE_REVIEW: ["logger", "operator", "planner", "skeptic", "synthesizer", "verifier"],
     RoomType.IDEA_VALIDATION: [
         "divergence_mapper",
         "logger",
@@ -218,7 +218,7 @@ def test_load_room_empty_available_agents_scaffold_returns_full_roster_as_missin
     """Scaffold load_room with empty available_agents: missing == full declared roster."""
     room, missing = load_room(RoomType.BUG_FIX, {})
 
-    assert missing == ["logger", "operator", "planner", "prober", "skeptic"]
+    assert missing == ["logger", "operator", "planner", "prober", "skeptic", "verifier"]
     assert room.type == RoomType.BUG_FIX
     assert room.state == "setup"
 

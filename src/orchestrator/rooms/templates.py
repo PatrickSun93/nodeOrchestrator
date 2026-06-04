@@ -78,12 +78,12 @@ ROOM_TEMPLATES: dict[RoomType, RoomTemplate] = {
     # free_chat: facilitator (ADR-024 new role) + logger.
     RoomType.BUG_FIX: RoomTemplate(
         room_type=RoomType.BUG_FIX,
-        declared_agents=["logger", "operator", "planner", "prober", "skeptic"],
+        declared_agents=["logger", "operator", "planner", "prober", "skeptic", "verifier"],
         default_initial_state="setup",
     ),
     RoomType.CODE_REVIEW: RoomTemplate(
         room_type=RoomType.CODE_REVIEW,
-        declared_agents=["logger", "operator", "planner", "skeptic", "synthesizer"],
+        declared_agents=["logger", "operator", "planner", "skeptic", "synthesizer", "verifier"],
         default_initial_state="setup",
     ),
     RoomType.IDEA_VALIDATION: RoomTemplate(

@@ -353,5 +353,6 @@ def test_all_canonical_agents_load() -> None:
         "prober",
         "skeptic",
         "synthesizer",
+        "verifier",
     }
     assert set(agents) == expected

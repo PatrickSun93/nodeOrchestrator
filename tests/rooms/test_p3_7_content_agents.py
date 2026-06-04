@@ -243,3 +243,61 @@ class TestPlannerAgent:
         """planner NOT in free_chat declared_agents (non-declared room)."""
         assert "planner" not in ROOM_TEMPLATES[RoomType.FREE_CHAT].declared_agents
         assert "planner" not in _room_agents(RoomType.FREE_CHAT)
+
+
+# ---------------------------------------------------------------------------
+# P3.7-content-3: verifier (bug_fix, code_review)
+# ---------------------------------------------------------------------------
+
+
+class TestVerifierAgent:
+    """Discriminating tests for the verifier agent (P3.7-content-3)."""
+
+    def setup_method(self) -> None:
+        self.agent = _ALL_AGENTS["verifier"]
+
+    # Schema validation
+    def test_verifier_loaded_as_valid_agent(self) -> None:
+        """verifier.yaml loads and is a valid Agent instance."""
+        assert isinstance(self.agent, Agent)
+        assert self.agent.id == "verifier"
+        assert self.agent.role == "verifier"
+
+    def test_verifier_applies_to_room_states_non_empty(self) -> None:
+        """verifier.applies_to.room_states is non-empty."""
+        assert len(self.agent.applies_to.room_states) >= 1
+
+    # Present in declared room types
+    def test_verifier_present_in_bug_fix_roster(self) -> None:
+        """verifier in bug_fix declared_agents."""
+        assert "verifier" in ROOM_TEMPLATES[RoomType.BUG_FIX].declared_agents
+
+    def test_verifier_present_in_code_review_roster(self) -> None:
+        """verifier in code_review declared_agents."""
+        assert "verifier" in ROOM_TEMPLATES[RoomType.CODE_REVIEW].declared_agents
+
+    # Activation: speak=True in each declared room type (via state_change triggers)
+    def test_verifier_speaks_on_fix_proposed_in_bug_fix(self) -> None:
+        """verifier speaks on STATE_TRANSITION(fix_proposed) in bug_fix."""
+        agents = _room_agents(RoomType.BUG_FIX)
+        assert "verifier" in agents
+        ev = _st_ev(new_state="fix_proposed", prior_state="diagnosed")
+        assert _speaks(agents["verifier"], ev) is True
+
+    def test_verifier_speaks_on_approved_in_code_review(self) -> None:
+        """verifier speaks on STATE_TRANSITION(approved) in code_review."""
+        agents = _room_agents(RoomType.CODE_REVIEW)
+        assert "verifier" in agents
+        ev = _st_ev(new_state="approved", prior_state="changes_requested")
+        assert _speaks(agents["verifier"], ev) is True
+
+    # Absent from non-declared room types (present/missing partition)
+    def test_verifier_absent_from_research_roster(self) -> None:
+        """verifier NOT in research declared_agents (non-declared room)."""
+        assert "verifier" not in ROOM_TEMPLATES[RoomType.RESEARCH].declared_agents
+        assert "verifier" not in _room_agents(RoomType.RESEARCH)
+
+    def test_verifier_absent_from_idea_validation_roster(self) -> None:
+        """verifier NOT in idea_validation declared_agents (non-declared room)."""
+        assert "verifier" not in ROOM_TEMPLATES[RoomType.IDEA_VALIDATION].declared_agents
+        assert "verifier" not in _room_agents(RoomType.IDEA_VALIDATION)
