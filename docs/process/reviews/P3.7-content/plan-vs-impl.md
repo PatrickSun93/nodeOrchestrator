@@ -3,7 +3,19 @@ task_id: P3.7-content
 kind: plan-vs-impl
 cycle: 1
 reviewer: senior
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - verdict: needs_architect
+    at: 2026-06-04
+    note: >-
+      Initial verdict — one finding PvI-1 (`mypy --strict .` whole-tree form RED on duplicate
+      module tools_impl); canonical pyproject-scoped gate green. Routed to architect.
+  - verdict: clean
+    at: 2026-06-04
+    note: >-
+      Bumped per RC-10 after architect ruling (architect-routing-on-impl.md): PvI-1 →
+      canonical-is-gate (option A), plugins/ out of mypy scope by design; no impl change;
+      doc fix landed at 13f037f. Re-verified canonical gate green + 1653 tests pass.
 reviewed_branch: claude/P3.7-content-impl
 reviewed_head: b84d451
 plan: docs/process/senior-plans/P3.7-content.md
@@ -23,7 +35,14 @@ summary_note: >-
 
 # Plan-vs-impl — P3.7-content
 
-## Verdict: `needs_architect`
+## Verdict: `clean` (bumped from `needs_architect` per RC-10)
+
+> **Resolution (2026-06-04):** the single finding **PvI-1** was routed by the architect to
+> **canonical-is-gate (option A)** — pyproject `[tool.mypy] files=["src","tests"]` is the
+> authoritative gate; `plugins/` is out of mypy scope by design; **no impl change**; doc fix
+> landed at **13f037f**. See `architect-routing-on-impl.md`. Re-verified: canonical gate green
+> (ruff / ruff format / `mypy --strict` 222 files) + **1653 tests pass**. The original
+> finding text below is retained as the historical record.
 
 The impl is **faithful** to `senior-plans/P3.7-content.md` across all 11 atomics, and every
 new unit ships a genuinely **discriminating** test (not "renders something"). The constitutional
