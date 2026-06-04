@@ -150,7 +150,7 @@ def _make_env_probe_module(tmp_path: Path, secret_key: str) -> Path:
 class _NoLLM:
     """Stub LLMRouterProtocol — local tools never call interpret."""
 
-    def route(self, request: Any) -> Any:  # type: ignore[override]
+    def route(self, request: Any) -> Any:
         raise AssertionError("LLM should not be called for local tool tests")
 
 
@@ -170,7 +170,7 @@ def test_pb1_basic_subprocess_execution(tmp_path: Path) -> None:
     )
     fn = tools["echo"]
     assert hasattr(fn, "_is_posture_b_subprocess")
-    assert fn._is_posture_b_subprocess is True  # type: ignore[union-attr]
+    assert fn._is_posture_b_subprocess is True
 
     result = fn({})
     assert isinstance(result, LocalToolOutput)
