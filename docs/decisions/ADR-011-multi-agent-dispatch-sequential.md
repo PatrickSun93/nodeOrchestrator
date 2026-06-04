@@ -1,6 +1,12 @@
 # ADR-011: Multi-Agent Dispatch — Sequential, Snapshot-Per-Turn
 
 **Status:** Accepted — 2026-05-27 (revised 2026-05-27 absorbing R0-A-on-plan + R0-B-cross-family architect-routing — see `docs/process/reviews/P1.4/architect-routing.md`)
+
+> **[Amendment — P4.1 → ADR-033, Accepted 2026-06-04 by architect Peidong (together with ADR-033).]** ADR-033 (the agent turn-loop) makes **two** coupled changes to this ADR's contract:
+>
+> **(1) Snapshot-per-turn → snapshot-per-pass within a turn (extends D2).** The driver re-dispatches `dispatch_turn` ≤ `N=4` times within one turn (bounded also by a `120s` wall-clock deadline) so an agent reacts to tool results in-turn; each pass re-takes the per-turn snapshot at `dispatch_turn` entry, so pass `k` sees pass `k−1`'s appended results. Cross-turn causality is **unchanged** — `next_room_state` is evaluated **once per turn** (the initial pass); state transitions still take effect next turn. The within-turn pass count + wall-clock are bounded by `N` + the deadline + the zero-new-`TOOL_CALL` early-exit + the ADR-010 cooldown backstop (which keeps a non-tool-calling agent from a speak-loop). `dispatch_turn`'s **gate/dispatch path is reused unchanged**; the loop lives in the turn driver.
+>
+> **(2) `snapshot_excerpt` resolved — the D4 / `AgentContext` P1.4 deferral lands.** This ADR deferred `AgentContext.snapshot_excerpt` "until a concrete consumer drives the shape" (D4 honest-framing; `agents/selection.py:99` `_ = snapshot`; `agents/schema.py::AgentContext`). **The turn-loop is that consumer:** a re-dispatched agent must reason over its **accumulated** investigation (read result → search hits → references), not only the latest result. ADR-033 therefore adds `snapshot_excerpt` to `AgentContext`, populates it in `build_agent_context` (bounded by `MAX_SNAPSHOT_EXCERPT_CHARS`, most-recent slice), and feeds it into the `dispatch_turn` LLM prompt (`agents/dispatch.py:112`). This is **additive** + preserves every D-contract here: **no new `LLMPurpose`** (still `AGENT_RESPONSE`, D-on-purpose unchanged), **no new `EventType`**, snapshot-reading stays the per-turn/per-pass snapshot (no live reads), and the gate routes every resulting tool call (the excerpt is *context*, not a gate input). See ADR-033 D2/D4/D6.
 **Scope:** Governs the per-turn primitive that decides which loaded
 agent(s) speak on a given event and how their LLM calls are
 dispatched. Inscribes the sequential-dispatch model for P1.4 (with
