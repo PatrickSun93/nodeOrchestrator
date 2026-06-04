@@ -1,7 +1,17 @@
 task_id: P4.1
-state: awaiting_senior_plan
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-04T19:35:38.823986Z'
+last_transition_at: '2026-06-04T20:46:36.309602Z'
 cycle_started_at: '2026-06-04T19:26:51.518042Z'
-override_history: []
-requires_cross_family_review: false
+override_history:
+- timestamp: '2026-06-04T20:46:36.309602Z'
+  actor: architect
+  from_state: awaiting_senior_plan
+  to_state: awaiting_junior_impl
+  reason: ADR-033 Accepted (+ ADR-028 D3/D4 + ADR-011 snapshot_excerpt amendments)
+    by architect after R0-A-on-plan round-2 cleared the Y1/Y2/Y3 absorption; plan
+    merged to main (--no-ff). requires_cross_family_review flipped true (architect
+    ratified the senior dual-lens flip — impl-stage dual-lens R0-B on the widened
+    liveness + snapshot_excerpt surfaces, external-r0b-prompt.md written). Advancing
+    to junior impl (8 atomics, single-junior serial).
+requires_cross_family_review: true
