@@ -1,6 +1,8 @@
 # ADR-011: Multi-Agent Dispatch — Sequential, Snapshot-Per-Turn
 
 **Status:** Accepted — 2026-05-27 (revised 2026-05-27 absorbing R0-A-on-plan + R0-B-cross-family architect-routing — see `docs/process/reviews/P1.4/architect-routing.md`)
+
+> **[Light touch — P4.1 → ADR-033, Proposed 2026-06-04, pending architect Accept.]** ADR-033 (the agent turn-loop) **extends** the D2 snapshot-per-turn model to **snapshot-per-pass *within* a turn**: the driver re-dispatches `dispatch_turn` ≤ `N` times within one turn so an agent reacts to tool results in-turn; each pass re-takes the per-turn snapshot at `dispatch_turn` entry, so pass `k` sees pass `k−1`'s appended results. Cross-turn causality is **unchanged** — the state machine (`next_room_state`) is evaluated **once per turn** (the initial pass), and state transitions still take effect on the next turn. The within-turn pass count is bounded by `N` + the zero-new-`TOOL_CALL` early-exit + the D2/ADR-010 cooldown backstop (which keeps a non-tool-calling agent from a speak-loop). `dispatch_turn` is reused unchanged; the loop lives in the turn driver. See ADR-033 D2/D4/D6.
 **Scope:** Governs the per-turn primitive that decides which loaded
 agent(s) speak on a given event and how their LLM calls are
 dispatched. Inscribes the sequential-dispatch model for P1.4 (with
