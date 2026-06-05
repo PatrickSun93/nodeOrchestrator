@@ -48,6 +48,11 @@ t8 — B2 / log_event trusted-not-interpreted: tools/local.py never references
      EventType.OBSERVATION (local tools emit TOOL_RESULT, never OBSERVATION).
      Combined with the executor's behavioral tests in test_local.py §6 +
      test_b2_no_observation_event.
+
+t9 (B3-7) — no shell=True / os.system / shell-string in subprocess builder:
+     subprocess_tools.py + subprocess_trust.run_scoped_command must not use
+     shell=True, shell-string argv, or os.system. ADR-034 D3-i / carry-forward #6.
+     t6 (local.py in-process) still passes — this test covers the NEW subprocess surface.
 """
 
 from __future__ import annotations
@@ -466,7 +471,79 @@ def test_t8_b2_no_observation_in_local_tools() -> None:
 # t9 (B3-7): No shell=True / shell-string / os.system in subprocess builder
 # ---------------------------------------------------------------------------
 
-# (t9 is defined in B3-7 below)
+
+def test_t9_no_shell_in_subprocess_surface() -> None:
+    """B3-7: subprocess_tools.py and run_scoped_command must not use shell=True.
+
+    AST check mirrors t6 (local.py in-process) for the B3 subprocess surface.
+    ADR-034 D3-i / carry-forward #6: argv must be a list; shell=True / shell-string
+    / os.system are forbidden. Mirrors the ADR-032 verify=False constitution precedent.
+
+    t6 (local.py) must still pass — local.py is in-process-pristine; this test
+    covers the NEW subprocess surface only.
+    """
+    subprocess_tools_path = _TOOLS_PKG / "subprocess_tools.py"
+    subprocess_trust_path = _SRC / "mcp" / "subprocess_trust.py"
+
+    violations: list[str] = []
+
+    for path, scope in [
+        (subprocess_tools_path, "subprocess_tools.py"),
+        (subprocess_trust_path, "subprocess_trust.py (run_scoped_command context)"),
+    ]:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            # Forbidden: shell=True as keyword argument
+            if (
+                isinstance(node, ast.keyword)
+                and node.arg == "shell"
+                and isinstance(node.value, ast.Constant)
+                and node.value.value is True
+            ):
+                violations.append(
+                    f"  {scope}:{node.value.col_offset}: shell=True found"
+                )
+            # Forbidden: os.system(...)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "system"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "os"
+            ):
+                violations.append(
+                    f"  {scope}:{node.lineno}: os.system() call found"
+                )
+
+    # Verify argv to open_process/create_subprocess_exec is always a list (not a single string)
+    # in subprocess_tools.py — checked structurally by ensuring no string literal is passed
+    # as the sole positional arg to anyio.open_process or subprocess calls.
+    for path, scope in [(subprocess_tools_path, "subprocess_tools.py")]:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                fname = ""
+                if isinstance(func, ast.Attribute):
+                    fname = func.attr
+                elif isinstance(func, ast.Name):
+                    fname = func.id
+                if fname in ("open_process", "run_scoped_command") and node.args:
+                    first_arg = node.args[0]
+                    if isinstance(first_arg, ast.Constant) and isinstance(
+                        first_arg.value, str
+                    ):
+                        violations.append(
+                            f"  {scope}:{node.lineno}: "
+                            f"{fname}() called with shell-string (not list argv)"
+                        )
+
+    assert not violations, (
+        "t9 guard: shell=True / os.system / shell-string found in subprocess surface "
+        "(ADR-034 D3-i carry-forward #6 — argv must be a list, never shell=True):\n"
+        + "\n".join(violations)
+    )
+
 
 # ---------------------------------------------------------------------------
 # B3-5 drift sync-test: _SUBPROCESS_TOOL_NAMES == build_subprocess_tool_registry keys
