@@ -1,34 +1,62 @@
 .create {
-  padding: 1.5rem;
+  width: 100%;
   max-width: 400px;
+  padding: var(--space-6);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  background: var(--bg);
+  box-shadow: var(--shadow-card);
+}
+
+.create h2 {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  color: var(--fg1);
+  margin: 0 0 var(--space-3);
 }
 
 .row {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
+  gap: var(--space-2);
 }
 
 .select {
   flex: 1;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  padding: 0.5rem;
-  font-size: 0.9rem;
-  background: #fff;
-}
-
-.btn {
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  border: none;
-  background: #059669;
-  color: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-field);
+  padding: 10px var(--space-3);
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  background: var(--bg);
+  color: var(--fg1);
   cursor: pointer;
 }
 
+.select:focus {
+  outline: none;
+  border-color: var(--ai);
+}
+
+.btn {
+  padding: 9px var(--space-4);
+  border-radius: var(--radius-control);
+  border: none;
+  background: var(--ai);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.btn:hover {
+  background: #134f8a;
+  box-shadow: 0 4px 12px rgba(24, 95, 165, 0.22);
+}
+
 .error {
-  color: #dc2626;
-  font-size: 0.85rem;
-  margin-top: 0.5rem;
+  color: var(--reject);
+  font-size: var(--text-sm);
+  margin-top: var(--space-2);
 }
