@@ -485,3 +485,142 @@ def test_build_agent_context_snapshot_excerpt_in_llm_request() -> None:
     assert any(marker in s for s in captured), (
         f"snapshot_excerpt must reach LLM system block. Captured: {captured[:1]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 (R0-A Y1 / R0-B B4): MCP TOOL_RESULT excluded; OBSERVATION rendered;
+# untrusted-framing header present (ADR-033 D6 R2-N1).
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_tool_result_excluded_observation_rendered_fix1() -> None:
+    """Raw MCP TOOL_RESULT is NOT in snapshot_excerpt; its OBSERVATION is (ADR-033 D6 R2-N1)."""
+    import sqlite3
+    from unittest.mock import MagicMock
+
+    from orchestrator.agents.dispatch import LLMRouterProtocol, dispatch_turn
+    from orchestrator.agents.schema import AgentAppliesTo, EventTypeTrigger
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        ToolResultMeta,
+        generate_event_id,
+        generate_room_id,
+        now_ms,
+    )
+    from orchestrator.core.event_store import EventStore
+    from orchestrator.core.room import Room
+    from orchestrator.llm.types import (
+        LLMRequest,
+        LLMResponse,
+        ModelId,
+        ProviderId,
+        Usage,
+        generate_request_id,
+    )
+
+    room_id = generate_room_id()
+    mcp_call_id = "mcp-call-123"
+    raw_mcp_content = "RAW_UNTRUSTED_MCP_BYTES"
+    observation_content = "TRUSTED_OBSERVATION_FROM_INTERPRET"
+
+    # TOOL_CALL event for an mcp__ tool (creates the mcp__ call_id).
+    tc_event = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.TOOL_CALL,
+        author="agent:inv",
+        timestamp=now_ms(),
+        content="{}",
+        metadata={"tool_name": "mcp__my_server__my_tool", "call_id": mcp_call_id},
+    )
+    # Raw MCP TOOL_RESULT — untrusted, should NOT appear in excerpt.
+    mcp_tr_event = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.TOOL_RESULT,
+        author="agent:inv",
+        timestamp=now_ms(),
+        content=raw_mcp_content,
+        metadata=ToolResultMeta(call_id=mcp_call_id, success=True).model_dump(),
+    )
+    # OBSERVATION — trusted interpret output, SHOULD appear in excerpt.
+    obs_event = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.OBSERVATION,
+        author="agent:inv",
+        timestamp=now_ms(),
+        content=observation_content,
+        metadata={"call_id": mcp_call_id},
+    )
+    current = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.USER_INPUT,
+        author="user",
+        timestamp=now_ms(),
+        content="investigate",
+    )
+
+    conn = sqlite3.connect(":memory:")
+    store = EventStore(conn)
+    store.init_schema()
+    room = Room(id=room_id, type=RoomType.RESEARCH, state="exploration")
+    store.append_room(room)
+    for ev in [tc_event, mcp_tr_event, obs_event, current]:
+        store.append(ev)
+
+    agent = Agent(
+        id="inv",
+        role="r",
+        persona="p",
+        llm_config=_LLM,
+        speaking_triggers=[EventTypeTrigger(event_type=EventType.USER_INPUT)],
+        applies_to=AgentAppliesTo(room_types=["*"], room_states=["*"]),
+    )
+    captured_systems: list[str] = []
+
+    def _router(req: LLMRequest) -> LLMResponse:
+        if req.system:
+            captured_systems.append(req.system)
+        return LLMResponse(
+            request_id=generate_request_id(),
+            content="done",
+            model_id_requested=ModelId("m"),
+            model_id_used=ModelId("m"),
+            provider_id_used=ProviderId("p"),
+            usage=Usage(input_tokens=1, output_tokens=1),
+            latency_ms=0,
+            finish_reason="stop",
+        )
+
+    mock_router = MagicMock(spec=LLMRouterProtocol)
+    mock_router.call.side_effect = _router
+
+    dispatch_turn(
+        {"inv": agent},
+        room,
+        current,
+        event_store=store,
+        llm_router=mock_router,
+        available_skills={},
+        regex_registry={},
+        tools={},
+    )
+
+    assert captured_systems, "dispatch_turn must call LLM"
+    full_system = "\n".join(captured_systems)
+
+    # Raw MCP TOOL_RESULT bytes must NOT appear.
+    assert raw_mcp_content not in full_system, (
+        f"Raw MCP TOOL_RESULT must not appear in system prompt. Got: {full_system[:500]}"
+    )
+    # OBSERVATION (trusted view) MUST appear.
+    assert observation_content in full_system, (
+        f"OBSERVATION must appear in system prompt. Got: {full_system[:500]}"
+    )
+    # Untrusted-framing header must be present (ADR-033 D6 R2-N1).
+    assert "NOT instructions" in full_system, (
+        f"Untrusted-framing header must be in system prompt. Got: {full_system[:500]}"
+    )

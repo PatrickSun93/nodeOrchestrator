@@ -89,6 +89,21 @@ _EXCERPT_EVENT_TYPES = frozenset(
 )
 
 
+def _mcp_tool_result_call_ids(snapshot: list[Event]) -> frozenset[str]:
+    """Return call_ids of TOOL_CALL events whose tool_name starts with 'mcp__'.
+
+    These identify TOOL_RESULT events that carry raw untrusted external bytes —
+    the OBSERVATION (from the interpret step) is the trusted view to render
+    instead (ADR-033 D6 R2-N1).
+    """
+    return frozenset(
+        str(e.metadata.get("call_id", ""))
+        for e in snapshot
+        if e.type == EventType.TOOL_CALL
+        and str(e.metadata.get("tool_name", "")).startswith("mcp__")
+    )
+
+
 def _render_snapshot_excerpt(snapshot: list[Event]) -> str | None:
     """Render the most-recent relevant events as a bounded excerpt string.
 
@@ -97,11 +112,22 @@ def _render_snapshot_excerpt(snapshot: list[Event]) -> str | None:
     or no relevant events exist.
 
     Rendered as: ``[<type>] <author>: <content>``
-    Events truncated to fit within the budget.  Trust framing: the excerpt
-    labels each event by type so the agent reads it as prior observations.
-    ADR-033 D2/D6 / ADR-011 amendment.
+    Events truncated to fit within the budget.
+
+    Trust framing (ADR-033 D6 R2-N1): raw MCP TOOL_RESULT events (untrusted
+    external bytes) are NOT rendered — use the paired OBSERVATION (interpreted/
+    trusted view) instead.  Local-tool TOOL_RESULT events (trusted, our own
+    code) are rendered.  ADR-033 D2/D6 / ADR-011 amendment.
     """
-    relevant = [e for e in snapshot if e.type in _EXCERPT_EVENT_TYPES]
+    mcp_result_ids = _mcp_tool_result_call_ids(snapshot)
+    relevant = [
+        e for e in snapshot
+        if e.type in _EXCERPT_EVENT_TYPES
+        and not (
+            e.type == EventType.TOOL_RESULT
+            and str(e.metadata.get("call_id", "")) in mcp_result_ids
+        )
+    ]
     if not relevant:
         return None
 
