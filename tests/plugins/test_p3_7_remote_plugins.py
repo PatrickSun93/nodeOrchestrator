@@ -47,7 +47,7 @@ from orchestrator.plugins.fetch import FetchError, fetch_plugin_bundle
 from orchestrator.plugins.loader import load_plugins
 from orchestrator.plugins.schema import PLUGIN_HOST_CONTRACT_VERSION
 from orchestrator.tools.executor import (
-    MAX_POSTURE_B_CALLS_PER_TURN,
+    MAX_SUBPROCESS_CALLS_PER_TURN,
     LocalToolOutput,
     execute_pending_tool_calls,
 )
@@ -327,7 +327,7 @@ def test_demo4_posture_a_tool_sees_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_demo5_posture_a_tools_exempt_from_posture_b_cap() -> None:
-    """Posture-A (operator-placed) tools are exempt from MAX_POSTURE_B_CALLS_PER_TURN.
+    """Posture-A (operator-placed) tools are exempt from MAX_SUBPROCESS_CALLS_PER_TURN.
 
     Only Posture-B (_is_posture_b_subprocess marker) tools count toward the cap.
     Operator-placed tools have no subprocess overhead and are uncapped.
@@ -338,7 +338,7 @@ def test_demo5_posture_a_tools_exempt_from_posture_b_cap() -> None:
     store = _make_store()
     room_id = _make_room(store)
 
-    n = MAX_POSTURE_B_CALLS_PER_TURN + 2
+    n = MAX_SUBPROCESS_CALLS_PER_TURN + 2
     window: list[Event] = []
     for i in range(n):
         tc = _tc_event(room_id, "posture_b_echo", f"cap_cid_{i}", {"message": f"msg-{i}"})
@@ -360,7 +360,7 @@ def test_demo5_posture_a_tools_exempt_from_posture_b_cap() -> None:
         e
         for e in events
         if e.type == EventType.TOOL_FAILED
-        and e.metadata.get("error_class") == "turn_posture_b_cap_exceeded"
+        and e.metadata.get("error_class") == "turn_subprocess_cap_exceeded"
     ]
     # Posture A: all calls succeed, cap is not applied
     assert len(tool_results) == n

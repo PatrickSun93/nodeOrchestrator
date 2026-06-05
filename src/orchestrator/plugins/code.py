@@ -21,7 +21,7 @@ load_plugin_code() returns LocalToolFn closures for the SAME local_tools registr
 _execute_local_call runs them UNCHANGED (empty-decision-diff).
 
 The _is_posture_b_subprocess ClassVar marker on _PostureBFn lets executor.py
-identify fetched (Posture-B) tools for the per-turn cap (MAX_POSTURE_B_CALLS_PER_TURN).
+identify fetched (Posture-B) tools for the per-turn cap (MAX_SUBPROCESS_CALLS_PER_TURN).
 Operator-placed (Posture-A) tools lack the marker and are exempt from the cap.
 """
 
@@ -62,7 +62,8 @@ class _PostureBFn:
     down.  The child executes the plugin callable; the host never imports plugin code.
 
     The _is_posture_b_subprocess ClassVar marker lets executor.py identify this as
-    a Posture-B subprocess fn for the per-turn cap (MAX_POSTURE_B_CALLS_PER_TURN).
+    a subprocess-launching local tool for the per-turn cap (MAX_SUBPROCESS_CALLS_PER_TURN).
+    Now marks both plugin Posture-B tools AND B3 subprocess tools (ADR-034 D5).
     """
 
     _is_posture_b_subprocess: ClassVar[bool] = True

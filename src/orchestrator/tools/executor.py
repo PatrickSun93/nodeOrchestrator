@@ -42,10 +42,12 @@ _log = logging.getLogger("orchestrator.tools.executor")
 # MCP calls beyond this in one turn → TOOL_FAILED(turn_mcp_cap_exceeded).
 MAX_MCP_CALLS_PER_TURN: int = 10
 
-# Per-turn Posture-B subprocess plugin cap (ADR-031 D1 / R0-B Y6 → alpha).
-# Subprocess LocalToolFn calls beyond this in one turn → TOOL_FAILED(turn_posture_b_cap_exceeded).
+# Per-pass subprocess fork cap (ADR-031 D1 / ADR-034 D5 / R0-B Y6 → alpha).
+# Subprocess LocalToolFn calls beyond this per execute_pending_tool_calls invocation →
+# TOOL_FAILED(turn_subprocess_cap_exceeded). Covers both plugin Posture-B forks AND B3
+# subprocess tools (identified by _is_posture_b_subprocess marker).
 # Posture-A in-process tools are exempt (identified by absence of _is_posture_b_subprocess).
-MAX_POSTURE_B_CALLS_PER_TURN: int = 10
+MAX_SUBPROCESS_CALLS_PER_TURN: int = 10
 
 # Bounded deadline for the advisory MCP interpret call (ADR-028 D5 / R1).
 # On timeout: raw TOOL_RESULT stands; no OBSERVATION appended.
@@ -109,7 +111,7 @@ def execute_pending_tool_calls(
     }
 
     mcp_calls_this_turn = 0
-    posture_b_calls_this_turn = 0
+    subprocess_calls_this_turn = 0
 
     for tc_event in tool_calls:
         meta = tc_event.metadata
@@ -156,18 +158,20 @@ def execute_pending_tool_calls(
                         llm_router=llm_router,
                     )
             else:
-                # Posture-B subprocess cap: applied before dispatch (mechanism, not decision —
+                # Subprocess cap: applied before dispatch (mechanism, not decision —
                 # _execute_local_call decision logic is unchanged; empty-decision-diff holds).
+                # Covers both plugin Posture-B forks AND B3 subprocess tools
+                # (_is_posture_b_subprocess marks any subprocess-launching local tool).
                 _impl = local_tools.get(tool_name)
                 _is_posture_b: bool = _impl is not None and bool(
                     getattr(_impl, "_is_posture_b_subprocess", False)
                 )
                 if _is_posture_b:
-                    if posture_b_calls_this_turn >= MAX_POSTURE_B_CALLS_PER_TURN:
+                    if subprocess_calls_this_turn >= MAX_SUBPROCESS_CALLS_PER_TURN:
                         _log.warning(
-                            "executor: per-turn Posture-B cap (%d) reached; "
+                            "executor: per-turn subprocess cap (%d) reached; "
                             "call_id=%r tool=%r → TOOL_FAILED",
-                            MAX_POSTURE_B_CALLS_PER_TURN,
+                            MAX_SUBPROCESS_CALLS_PER_TURN,
                             call_id,
                             tool_name,
                         )
@@ -176,11 +180,11 @@ def execute_pending_tool_calls(
                             room_id,
                             call_id,
                             agent_id,
-                            f"turn_posture_b_cap_exceeded: limit={MAX_POSTURE_B_CALLS_PER_TURN}",
-                            error_class="turn_posture_b_cap_exceeded",
+                            f"turn_subprocess_cap_exceeded: limit={MAX_SUBPROCESS_CALLS_PER_TURN}",
+                            error_class="turn_subprocess_cap_exceeded",
                         )
                     else:
-                        posture_b_calls_this_turn += 1
+                        subprocess_calls_this_turn += 1
                         _execute_local_call(
                             tc_event=tc_event,
                             tool_name=tool_name,
