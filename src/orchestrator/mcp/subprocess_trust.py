@@ -215,7 +215,7 @@ def run_scoped_command(
     Reuses _terminate_subprocess + _kill_watchdog (ADR-031 D2 one-subprocess-protocol).
     Non-MCP plain-exec entrypoint on the one subprocess protocol. [Extended P4.2-B3 → ADR-034]
     """
-    from orchestrator.mcp._async_bridge import MCPTimeoutError, run_sync
+    from orchestrator.mcp._async_bridge import MCPConnectionError, MCPTimeoutError, run_sync
 
     try:
         return run_sync(
@@ -226,6 +226,13 @@ def run_scoped_command(
         )
     except MCPTimeoutError as exc:
         raise SubprocessTimeoutError(str(exc)) from exc
+    except MCPConnectionError as exc:
+        # run_sync wraps all non-MCPError exceptions as MCPConnectionError.
+        # Unwrap spawn failures (OSError) so callers can distinguish them.
+        cause = exc.__cause__
+        if isinstance(cause, OSError):
+            raise cause from exc
+        raise OSError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
