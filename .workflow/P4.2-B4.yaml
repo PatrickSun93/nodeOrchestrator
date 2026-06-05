@@ -1,7 +1,17 @@
 task_id: P4.2-B4
-state: awaiting_architect_accept
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-05T17:45:14.349774Z'
+last_transition_at: '2026-06-05T18:12:01.278337Z'
 cycle_started_at: '2026-06-05T17:16:11.206984Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-05T18:12:01.278337Z'
+  actor: architect
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: 'ADR-035 Accepted (network local tools: web_fetch app-level SSRF validator
+    + web_search Brave) by architect after plan-stage dual-lens (R0-A-on-plan 0R/3Y
+    + R0-B-on-plan 1R/4Y) cleared and routed findings absorbed (B1 DNS-resolve timeout,
+    Brave provider, CGNAT/CNAME/IP-literal tests, granular httpx.Timeout, retries=0).
+    Plan merged to main (GUI restyle verified intact). requires_cross_family_review=true
+    (impl-stage dual-lens). Advancing to junior impl (B4-1..8 serial).'
 requires_cross_family_review: true
