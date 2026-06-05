@@ -239,6 +239,19 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
 
     local_tools = {**local_tools, **build_subprocess_tool_registry(sandbox_root)}
 
+    # Network local tools (ADR-035 D4 / P4.2-B4-4): compose at the api/ root
+    # so local.py stays in-process-pristine (constitution t6).
+    # web_search provider config loaded once at bootstrap; absent → fail-closed (not configured).
+    from orchestrator.tools.network_tools import build_network_tool_registry
+
+    _web_search_config = config_dir / "web_search.yaml"
+    local_tools = {
+        **local_tools,
+        **build_network_tool_registry(
+            web_search_config_path=_web_search_config if _web_search_config.exists() else None
+        ),
+    }
+
     from orchestrator.api.llm_adapter import RealLLMRouter
 
     llm_router: LLMRouterProtocol = RealLLMRouter(

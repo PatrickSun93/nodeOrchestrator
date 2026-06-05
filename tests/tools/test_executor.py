@@ -653,3 +653,58 @@ def test_tool_call_pending_in_window_not_executed() -> None:
 
     events = store.get_room_events(room_id)
     assert not any(e.type in (EventType.TOOL_RESULT, EventType.TOOL_FAILED) for e in events)
+
+
+# ---------------------------------------------------------------------------
+# §8 Network tool (B4-4): web_fetch TOOL_CALL → TOOL_RESULT end-to-end through executor
+# ---------------------------------------------------------------------------
+
+
+def test_web_fetch_tool_call_reaches_tool_result() -> None:
+    """web_fetch TOOL_CALL (mocked transport) → TOOL_RESULT through execute_pending_tool_calls.
+
+    Integration test: confirms the network registry wiring lands the tool as a normal
+    local-tool TOOL_RESULT, not TOOL_FAILED.  The _NetworkToolFn is used directly
+    (not through api/app.py) to avoid HTTP egress.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from orchestrator.tools.network_tools import _NetworkToolFn, build_network_tool_registry
+
+    store = _make_store()
+    room_id = _make_room(store)
+
+    # Mock build_ssrf_client so web_fetch doesn't egress.
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.url = "https://example.com/"
+    mock_resp.iter_bytes.return_value = iter([b"hello from example"])
+
+    mock_client = MagicMock()
+    mock_client.build_request.return_value = MagicMock()
+    mock_client.send.return_value = mock_resp
+
+    registry = build_network_tool_registry()
+    tc = _tc_event_params(room_id, "web_fetch", "wf_1", {"url": "https://example.com/"})
+    store.append(tc)
+
+    # Patch build_ssrf_client while the tool executes (closure looks up name at call time).
+    with patch("orchestrator.tools.network_tools.build_ssrf_client", return_value=mock_client):
+        execute_pending_tool_calls(
+            window_events=[tc],
+            room_id=room_id,
+            event_store=store,
+            mcp_sessions={},
+            local_tools=registry,
+            llm_router=_mock_llm_router(),
+        )
+
+    events = store.get_room_events(room_id)
+    result_events = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(result_events) == 1, "web_fetch TOOL_CALL should produce exactly one TOOL_RESULT"
+    assert "hello from example" in result_events[0].content
+
+    # Confirm web_fetch fn carries the network tool marker
+    web_fetch_fn = registry["web_fetch"]
+    assert isinstance(web_fetch_fn, _NetworkToolFn)
+    assert getattr(web_fetch_fn, "_is_network_tool", False) is True
