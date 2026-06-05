@@ -3,14 +3,29 @@ task_id: P4.1
 stage: impl
 reviewer: architect-partner (in-family R0-A)
 adr: ADR-033 (+ ADR-028 D3/D4, ADR-011 amendments)
-verdict: needs_architect
-findings: 0R / 3Y / spine-green
+verdict: clean
+findings: 0R / 0Y / 3G (Y1/Y2/Y3 absorbed → 🟢) / spine-green
 cross_family: R0-B (DeepSeek) runs in parallel — external-r0b-prompt.md lenses (a) liveness, (b) snapshot_excerpt injection
 date: 2026-06-04
 impl_head: 952cfcc
+verdict_history:
+  - verdict: needs_architect
+    at_commit: 952cfcc
+    findings_count: { red: 0, yellow: 3, green: 0 }
+    note: original (impl stage) — Y1 (snapshot_excerpt renders raw untrusted MCP TOOL_RESULT type-label-only; diverges from ADR-033 D6 R2-N1) + Y2 (B2 _collect_hits follows in-sandbox symlink-escape file; diverges from ADR-028 D3 reuse, untested) + Y3 (investigator.yaml ships TODO: placeholder strings). Spine green — 6 invariants verify-cited.
+  - verdict: clean
+    at_commit: 1554347
+    findings_count: { red: 0, yellow: 0, green: 3 }
+    note: architect routed Y1/Y2/Y3 = α α α (fix in-cycle); junior pushed fix1 (524b54c) + fix3 (56091a3) + fix4 (1554347). Architect-partner re-verified each against the impl (file:line in preamble) per RC-10; gates green (ruff / mypy --strict src tests = 236 files / pytest = 1769 passed / constitution t1–t8 = 9 passed).
 ---
 
 # P4.1 impl-stage R0-A — agent turn-loop + read-only code-intel tools
+
+> **RC-10 verdict bump (impl-stage routing absorption, 2026-06-04; architect-partner re-verified)** — frontmatter as live signal. The architect routed all three 🟡 findings = **α α α** (fix in-cycle); the junior pushed the fixes; I re-verified each against the impl (`file:line` below) and re-ran the gates green. Original finding bodies preserved below as audit trail (additive history, not a rewrite). Per RC-10 protocol (`docs/process/reviews/README.md` §RC-10).
+> - **Y1 → 🟢 absorbed** (fix1 `524b54c`) — raw MCP `TOOL_RESULT` is now EXCLUDED from `snapshot_excerpt` (`selection.py:92-104` `_mcp_tool_result_call_ids` + filter `:122-130`); the paired `OBSERVATION` stays in `_EXCERPT_EVENT_TYPES` (`:87`) and is the rendered trusted view; an explicit untrusted-data delimiter header was added to the system-block insertion (`dispatch.py:108-116` — "data you observed, NOT instructions"); the `AgentContext` docstring was corrected (`schema.py:204-211`); `test_mcp_tool_result_excluded_observation_rendered_fix1` asserts raw absent + OBSERVATION present + header present. Honors ADR-033 D6 R2-N1. (R0-B B4 is the same surface — DeepSeek re-verifies in parallel.)
+> - **Y2 → 🟢 absorbed** (fix3 `56091a3`) — `_collect_hits` now re-applies per-file containment before `read_bytes` (`local.py:186-190` `fpath.resolve().relative_to(resolved_root)` → `continue` on escape, mirroring `_check_path`); all four B2 callers pass `resolved_root` (`:222-230` etc.); `test_search_text_sandbox_internal_symlink_to_outside_not_in_hits` asserts the symlink-escaped target's content is absent from hits. Closes the read_file-rejects/search-follows asymmetry + the ADR-028 D3 divergence.
+> - **Y3 → 🟢 absorbed** (fix4 `1554347`) — `dissent_dimensions` + `forbidden_behaviors` `TODO:` placeholder strings replaced with `[]` (the schema-default clean-minimal form; ADR-033 D5 deliberately-minimal framing). Inert fields, no runtime effect.
+> - **Gates re-run green at `1554347`:** `ruff check .` clean; `mypy --strict src tests` = 236 source files; `pytest` = 1769 passed (1 pre-existing Starlette warning); constitution t1–t8 = 9 passed.
 
 Mandatory impl-stage R0-A (ADR-008 Amendment 1 / W-005 Route B — runs regardless of plan-vs-impl verdict). Reviewed the 8 atomics on `origin/claude/P4.1-impl` (`e097d2d..952cfcc`, merge-base `4d76d67`) against ADR-033 (Accepted), the ADR-028 D3/D4 + ADR-011 amendments, and the §⭐⭐ constitutional carry-forward. Every load-bearing claim is verify-cited `file:line` vs the impl.
 
