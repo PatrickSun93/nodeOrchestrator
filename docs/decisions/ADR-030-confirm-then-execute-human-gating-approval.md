@@ -125,6 +125,7 @@ The properties the cross-family R0-B probes (`requires_cross_family_review: true
 - `docs/process/reviews/P3.6/external-r0b-prompt.md` (the dual-lens R0-B — gating-approval forge/idempotency/timer/partial-turn/backend-authoritative lens).
 - ADR-025 (the frozen contract the confirm endpoint changes — D2 HTTP-write split, D4 forge-prevention, D5 partial-turn, D6 single-writer/pub-sub) + `src/orchestrator/api/{app.py,wire.py,asyncapi.md}` + `openapi.json`.
 - ADR-027 (D2 feed-the-gate-unchanged, D6 confirm-then-execute deferred) + ADR-028 (the runtime executor — D1 placement, D2 dispatch + the `call_id` double-exec guard, D4 no-re-dispatch, D6 t4 sole-appender) + `src/orchestrator/{agents/tool_dispatch.py,autonomy/emission.py,tools/executor.py}`.
+- **[Cross-ref P4.2-B5 → ADR-036, Accepted 2026-06-05]** ADR-036 is the **first real actuation** of this ADR's confirm path: `apply_edit`/`send_email`/`git_push` are the first mutation tools plugged into the existing `_post_confirm → execute_pending_tool_calls` flow (ADR-030 D3 step 5); B5 adds zero confirm/endpoint/snapshot code — it wires three impls through the path this ADR built.
 - ADR-026 (the GUI spine + view this extends — HR#1 no-decision, HR#5 no-forge, D3 `ui_strings` 不暴露) + `ui/src/*`.
 - ADR-014 (the snapshot derivation contract D2.3 re-pointed) + `src/orchestrator/derived/snapshot.py` + `core/event.py` (`EventType`, `ToolCallMeta`, `AutonomyDecisionMetadata`).
 - `handoff.md` §6.2/§6.3/§6.4 (不暴露; 关键时刻明显 — 决策/审批必须有视觉强调; pattern 2 决策三段式) ; `docs/process/dual-lens-r0b.md` (the dispatch criterion).
