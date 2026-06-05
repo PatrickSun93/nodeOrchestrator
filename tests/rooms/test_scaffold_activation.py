@@ -84,9 +84,11 @@ _ALL_AGENTS, _REGEX_REGISTRY = load_agents(_CONFIG_DIR, models=_MODELS)
 
 # Convenience: expected roster per scaffold room_type (room_type-filtered set)
 _ROOM_ROSTER: dict[RoomType, frozenset[str]] = {
-    RoomType.BUG_FIX: frozenset({"logger", "operator", "planner", "prober", "skeptic", "verifier"}),
+    RoomType.BUG_FIX: frozenset(
+        {"investigator", "logger", "operator", "planner", "prober", "skeptic", "verifier"}
+    ),
     RoomType.CODE_REVIEW: frozenset(
-        {"logger", "operator", "planner", "skeptic", "synthesizer", "verifier"}
+        {"investigator", "logger", "operator", "planner", "skeptic", "synthesizer", "verifier"}
     ),
     RoomType.IDEA_VALIDATION: frozenset(
         {
@@ -578,10 +580,18 @@ def test_facilitator_llm_config_cheap_warm() -> None:
 
 
 def test_research_roster_after_p3_7_content() -> None:
-    """Research loads 6 agents after P3.7-content (synthesizer added)."""
+    """Research loads 7 agents after P4.1 (investigator added; ADR-033 D5)."""
     research_agents = _room_agents(RoomType.RESEARCH)
     assert frozenset(research_agents.keys()) == frozenset(
-        {"divergence_mapper", "logger", "operator", "prober", "skeptic", "synthesizer"}
+        {
+            "divergence_mapper",
+            "investigator",
+            "logger",
+            "operator",
+            "prober",
+            "skeptic",
+            "synthesizer",
+        }
     )
     assert "facilitator" not in research_agents
 

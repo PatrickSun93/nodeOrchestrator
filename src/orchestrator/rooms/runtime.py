@@ -44,6 +44,25 @@ from orchestrator.rooms.state_machine import next_room_state
 from orchestrator.skills.schema import Skill
 
 
+def select_dispatch_agents(room: Room, available_agents: dict[str, Agent]) -> dict[str, Agent]:
+    """Filter available agents to those eligible for dispatch in this room + state.
+
+    Load-time filter: ``applies_to.room_types`` includes ``room.type.value``
+    or is ``["*"]`` (ADR-012 D3).
+    Dispatch-time filter: ``applies_to.room_states`` includes ``room.state``
+    or is ``["*"]`` (ADR-012 D3).
+
+    Pure — no I/O, no LLM. Reused by both ``run_turn`` (pass 0) and the
+    driver loop re-dispatch passes (ADR-033 D2: single source of truth).
+    """
+    selection = decide_agents_for_room(room.type, room.state, available_agents=available_agents)
+    return {
+        agent.id: agent
+        for agent in selection.loaded
+        if agent.applies_to.room_states == ["*"] or room.state in agent.applies_to.room_states
+    }
+
+
 def run_turn(
     room: Room,
     current_event: Event,
@@ -102,17 +121,8 @@ def run_turn(
         )
         event_store.append(transition_event)
 
-    # 4. Load-time filter: which agents enter this room_type?
-    selection = decide_agents_for_room(room.type, room.state, available_agents=available_agents)
-
-    # 5. Dispatch-time filter: which loaded agents are active in the current
-    #    room_state?  Agents whose applies_to.room_states is ["*"] are always
-    #    active; concrete room_states must include room.state.
-    filtered: dict[str, Agent] = {
-        agent.id: agent
-        for agent in selection.loaded
-        if agent.applies_to.room_states == ["*"] or room.state in agent.applies_to.room_states
-    }
+    # 4+5. Filter agents eligible for this room type + state (ADR-033 D2: single source of truth).
+    filtered = select_dispatch_agents(room, available_agents)
 
     # 6. Dispatch turn to filtered agents.
     return dispatch_turn(

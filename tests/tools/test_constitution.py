@@ -1,6 +1,7 @@
 """P3.4-C2-4: tools/ package constitutional invariant tests (ADR-028 D6).
 
 Mirrors tests/mcp/test_constitution.py for the tools/ leaf package.
+P4.1-8 extends with t5-t8 (ADR-033 D6).
 
 t1 — tools/ is a downstream leaf:
      No upstream layer (core/autonomy/agents/llm/rooms/skills/connectors/
@@ -26,6 +27,27 @@ t4 — execution keys on TOOL_CALL only (input-boundary structural + behavioral)
      named behavioral guard and the no-forge acceptance test in tests/api/.
      (behavioral) No TOOL_CALL in window -> zero server/impl calls
        (tested in test_executor.py section 7; verified here via AST).
+
+t5 — driver loop (_write_and_turn) invokes no autonomy-decision symbol (ADR-033 D6):
+     The re-dispatch loop in api/app.py does not reference decide_tier /
+     emit_gate_decision / score / gate / select_model_and_provider.
+     Autonomy decisions happen inside dispatch_turn (agents/ layer); the loop
+     only calls dispatch_turn + execute_pending_tool_calls — both unchanged.
+
+t6 — B2 code-intel tools are in-process (ADR-033 D5 carry-forward #6):
+     tools/local.py does not import subprocess / use Popen / call os.system.
+     All code-intel tools (search_text, search_code, find_references,
+     find_definition) use os.walk + re in-process.
+
+t7 — TOOL_CALL guard exists before execute_pending_tool_calls in driver loop:
+     The re-dispatch loop checks for new TOOL_CALL events and breaks if zero
+     before calling execute_pending_tool_calls — execute-on-TOOL_CALL-only
+     structural guard (ADR-033 D3 condition 1 / D1).
+
+t8 — B2 / log_event trusted-not-interpreted: tools/local.py never references
+     EventType.OBSERVATION (local tools emit TOOL_RESULT, never OBSERVATION).
+     Combined with the executor's behavioral tests in test_local.py §6 +
+     test_b2_no_observation_event.
 """
 
 from __future__ import annotations
@@ -35,6 +57,7 @@ from pathlib import Path
 
 _SRC = Path(__file__).resolve().parent.parent.parent / "src" / "orchestrator"
 _TOOLS_PKG = _SRC / "tools"
+_API_PKG = _SRC / "api"
 
 
 # ---------------------------------------------------------------------------
@@ -263,4 +286,177 @@ def test_t4_tool_call_sole_appender_in_src() -> None:
     assert not append_violations, (
         "t4 guard: TOOL_CALL event appended outside the two legitimate appenders "
         "(ADR-030 D1 two-appender invariant violated):\n" + "\n".join(append_violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# t5: Driver loop (_write_and_turn) invokes no autonomy-decision symbol (ADR-033 D6)
+# ---------------------------------------------------------------------------
+
+_DRIVER_LOOP_FORBIDDEN = frozenset(
+    {"decide_tier", "emit_gate_decision", "score", "select_model_and_provider"}
+)
+
+
+def test_t5_driver_loop_no_autonomy_decision_symbols() -> None:
+    """_write_and_turn in api/app.py must not reference autonomy-decision symbols.
+
+    The re-dispatch loop calls dispatch_turn + execute_pending_tool_calls only.
+    All autonomy decisions happen inside dispatch_turn (agents/ layer).
+    ADR-033 D6.
+    """
+    app_path = _API_PKG / "app.py"
+    tree = ast.parse(app_path.read_text(encoding="utf-8"))
+
+    fn_node = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_write_and_turn":
+            fn_node = node
+            break
+
+    assert fn_node is not None, "t5: _write_and_turn not found in api/app.py"
+
+    violations: list[str] = []
+    for node in ast.walk(fn_node):
+        if isinstance(node, (ast.Name, ast.Attribute)):
+            name = node.id if isinstance(node, ast.Name) else node.attr
+            if name in _DRIVER_LOOP_FORBIDDEN:
+                violations.append(f"  app.py:{node.lineno}: {name!r} referenced in _write_and_turn")
+
+    assert not violations, (
+        "t5 guard: _write_and_turn references autonomy-decision symbols "
+        "(loop must not re-gate; ADR-033 D6):\n" + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# t6: B2 code-intel tools are in-process (no subprocess / Popen / os.system)
+# ---------------------------------------------------------------------------
+
+
+def test_t6_b2_no_subprocess_in_local_tools() -> None:
+    """tools/local.py must not import subprocess or use Popen / os.system.
+
+    All B2 code-intel tools (search_text, search_code, find_references,
+    find_definition) use os.walk + re in-process. ADR-033 D5 carry-forward #6.
+    """
+    local_path = _TOOLS_PKG / "local.py"
+    tree = ast.parse(local_path.read_text(encoding="utf-8"))
+
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "subprocess" or alias.name.startswith("subprocess."):
+                    violations.append(f"  local.py:{node.lineno}: imports {alias.name!r}")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and (
+                node.module == "subprocess" or node.module.startswith("subprocess.")
+            ):
+                violations.append(f"  local.py:{node.lineno}: from {node.module!r} import ...")
+        elif isinstance(node, ast.Name) and node.id == "Popen":
+            violations.append(f"  local.py:{node.lineno}: references Popen as Name")
+        elif isinstance(node, ast.Attribute):
+            if node.attr == "Popen":
+                violations.append(f"  local.py:{node.lineno}: references .Popen")
+            if (
+                node.attr == "system"
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "os"
+            ):
+                violations.append(f"  local.py:{node.lineno}: calls os.system")
+
+    assert not violations, (
+        "t6 guard: tools/local.py uses subprocess/Popen/os.system "
+        "(B2 tools must be in-process; ADR-033 D5 carry-forward #6):\n"
+        + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# t7: TOOL_CALL guard exists before execute_pending_tool_calls in driver loop
+# ---------------------------------------------------------------------------
+
+
+def test_t7_loop_tool_call_guard_before_execute() -> None:
+    """Driver loop has a TOOL_CALL guard that can break before execute_pending_tool_calls.
+
+    Structural check: the re-dispatch For loop in _write_and_turn contains
+    both (a) an If node whose test involves EventType.TOOL_CALL and (b) an
+    execute_pending_tool_calls call — confirming execute-on-TOOL_CALL-only
+    per pass (ADR-033 D3 C1 / D1).
+    """
+    app_path = _API_PKG / "app.py"
+    tree = ast.parse(app_path.read_text(encoding="utf-8"))
+
+    fn_node = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_write_and_turn":
+            fn_node = node
+            break
+
+    assert fn_node is not None, "t7: _write_and_turn not found in api/app.py"
+
+    # Find the re-dispatch For loop (iterating over range(MAX_TURN_LOOP_PASSES)).
+    loop_node = None
+    for node in ast.walk(fn_node):
+        if isinstance(node, ast.For):
+            loop_node = node
+            break
+
+    assert loop_node is not None, "t7: no For loop found in _write_and_turn"
+
+    # The loop body must reference EventType.TOOL_CALL (guard check).
+    has_tool_call_check = False
+    has_execute_call = False
+    for node in ast.walk(loop_node):
+        if isinstance(node, ast.Attribute) and node.attr == "TOOL_CALL":
+            has_tool_call_check = True
+        if isinstance(node, ast.Call) and (
+            (isinstance(node.func, ast.Name) and node.func.id == "execute_pending_tool_calls")
+            or (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "execute_pending_tool_calls"
+            )
+        ):
+            has_execute_call = True
+
+    assert has_tool_call_check, (
+        "t7 guard: re-dispatch loop has no EventType.TOOL_CALL guard — "
+        "execute-on-TOOL_CALL-only structural invariant missing (ADR-033 D3 C1)"
+    )
+    assert has_execute_call, (
+        "t7 guard: re-dispatch loop has no execute_pending_tool_calls call — "
+        "loop body structure unexpected"
+    )
+
+
+# ---------------------------------------------------------------------------
+# t8: B2 / log_event trusted-not-interpreted — no OBSERVATION in tools/local.py
+# ---------------------------------------------------------------------------
+
+
+def test_t8_b2_no_observation_in_local_tools() -> None:
+    """tools/local.py must not reference EventType.OBSERVATION or the string 'OBSERVATION'.
+
+    Local tools emit TOOL_RESULT (via LocalToolOutput → executor); they are
+    trusted (our own code) and never routed through the interpret step
+    (ADR-033 D5 / ADR-028 D2). Behavioral verification: test_local.py
+    test_b2_no_observation_event + test_log_event_returns_tool_result.
+    """
+    local_path = _TOOLS_PKG / "local.py"
+    source = local_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "OBSERVATION":
+            violations.append(f"  local.py:{node.lineno}: references .OBSERVATION")
+        elif isinstance(node, ast.Constant) and node.value == "OBSERVATION":
+            violations.append(f"  local.py:{node.lineno}: string literal 'OBSERVATION'")
+
+    assert not violations, (
+        "t8 guard: tools/local.py references OBSERVATION — local tools must emit "
+        "TOOL_RESULT only (trusted-not-interpreted; ADR-033 D5 / ADR-028 D2):\n"
+        + "\n".join(violations)
     )

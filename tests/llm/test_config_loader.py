@@ -451,14 +451,15 @@ class TestExampleConfigs:
             for yaml_path in sorted(agents_dir.glob("*.yaml"))
         }
         assert set(agent_configs.keys()) == {
+            "divergence_mapper",
+            "facilitator",
+            "investigator",
+            "logger",
+            "mentor",
+            "operator",
+            "planner",
             "prober",
             "skeptic",
-            "divergence_mapper",
-            "logger",
-            "operator",
-            "facilitator",
-            "mentor",
-            "planner",
             "synthesizer",
             "verifier",
         }

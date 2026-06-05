@@ -347,6 +347,7 @@ def test_all_canonical_agents_load() -> None:
     expected = {
         "divergence_mapper",
         "facilitator",
+        "investigator",
         "logger",
         "mentor",
         "operator",
