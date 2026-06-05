@@ -75,14 +75,16 @@ PAYLOAD_LIMIT_BYTES = 65_536  # 64 KiB
 # MAX_TURN_LOOP_PASSES = N re-dispatch passes after pass 0 (total dispatch_turn calls ≤ 1+N=5).
 MAX_TURN_LOOP_PASSES: int = 4
 
-# ADR-033 D3 condition 4 / D4: wall-clock deadline for the full turn-loop (all passes).
-# Bounds the single-writer occupancy independent of (agents x provider timeout_s).
-# Cross-room head-of-line block: the single ThreadPoolExecutor(max_workers=1) stalls
-# every room's writes while one room's loop runs. 120s caps the felt occupancy while
-# still allowing the flagship 4-hop investigation chain.
-# The deadline is a BOUNDARY check (between passes), not mid-pass interruption — an
-# in-flight LLM call is not cancelled; absolute wall-clock ≤ deadline + one final pass.
-MAX_TURN_LOOP_WALL_CLOCK_S: float = 120.0
+# ADR-033 D3 condition 4 / D4: wall-clock deadline for re-dispatch overhead (passes 1…N).
+# HONEST SCOPE: this constant caps the time spent on re-dispatch passes AFTER pass 0.
+# Pass 0 (run_turn + execute_pending_tool_calls) is NOT bounded by this constant — its
+# dominant term is agents x provider_timeout_s (up to 4 x 600s for claude_code_cli).
+# A true pass-0 / turn wall-clock cap requires async cancellation (ADR-028 D5 / P4.2).
+# Cross-room head-of-line: the single ThreadPoolExecutor(max_workers=1) serialises all
+# rooms; pass 0 blocks them for up to agents x provider_timeout_s regardless of this cap.
+# This constant limits re-dispatch overhead only — still allows the 4-hop flagship chain.
+# Checked at re-dispatch pass boundaries (between passes, never mid-pass).
+MAX_REDISPATCH_WALL_CLOCK_S: float = 120.0
 
 
 @dataclass
@@ -428,8 +430,9 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             )
 
             for _pass in range(MAX_TURN_LOOP_PASSES):
-                # Termination condition 4: wall-clock deadline (D3 / D4 — boundary check).
-                if time.monotonic() - loop_start >= MAX_TURN_LOOP_WALL_CLOCK_S:
+                # Termination condition 4: re-dispatch overhead deadline (D3 / D4).
+                # Caps time spent on passes 1…N; pass 0 is not constrained by this.
+                if time.monotonic() - loop_start >= MAX_REDISPATCH_WALL_CLOCK_S:
                     break
 
                 # Check what the previous pass produced (from prev_pass_cursor to now).

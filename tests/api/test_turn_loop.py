@@ -440,11 +440,11 @@ def test_state_machine_runs_once_per_turn() -> None:
 
 
 def test_turn_loop_wall_clock_deadline_exits(tmp_path: Any) -> None:
-    """§6: when wall-clock deadline fires at pass boundary, loop does not re-dispatch.
+    """§6: when re-dispatch deadline fires at pass boundary, loop does not re-dispatch.
 
-    Patches MAX_TURN_LOOP_WALL_CLOCK_S to -1.0 (always expired) so the deadline
+    Patches MAX_REDISPATCH_WALL_CLOCK_S to -1.0 (always expired) so the deadline
     check fires on the first boundary (before pass 1). The in-flight pass 0 is
-    not interrupted. ADR-033 D3 condition 4 / D4: absolute wall-clock cap.
+    not interrupted. ADR-033 D3 condition 4 / D4: re-dispatch overhead cap.
     """
     import orchestrator.api.app as _app_mod
     from orchestrator.tools.local import build_local_tool_registry
@@ -477,9 +477,9 @@ def test_turn_loop_wall_clock_deadline_exits(tmp_path: Any) -> None:
     ctx.sandbox_root = tmp_path
 
     app = _make_test_app(ctx)
-    # Set wall-clock deadline to -1.0 (always expired): the first boundary check
+    # Set re-dispatch deadline to -1.0 (always expired): the first boundary check
     # will see monotonic() - loop_start >= -1.0 (always True since difference >= 0).
-    with TestClient(app) as client, patch.object(_app_mod, "MAX_TURN_LOOP_WALL_CLOCK_S", -1.0):
+    with TestClient(app) as client, patch.object(_app_mod, "MAX_REDISPATCH_WALL_CLOCK_S", -1.0):
         room_id = _post_room(client)
         _post_intent(client, room_id)
 
