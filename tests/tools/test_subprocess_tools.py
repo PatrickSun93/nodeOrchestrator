@@ -256,6 +256,30 @@ def test_spawn_failure_raises_local_tool_error(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Timeout → subprocess_timeout in TOOL_FAILED message (B3-2 acceptance; R0-A Y1)
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_raises_local_tool_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Timeout from run_scoped_command → LocalToolError with subprocess_timeout in message.
+
+    Symmetric twin of test_spawn_failure_raises_local_tool_error.
+    Covers the _dispatch except-SubprocessTimeoutError branch (R0-A Y1 gap).
+    """
+    import orchestrator.tools.subprocess_tools as st_mod
+    from orchestrator.mcp.subprocess_trust import SubprocessTimeoutError
+
+    def _raise_timeout(*args: object, **kwargs: object) -> None:
+        raise SubprocessTimeoutError("timed out after 30s")
+
+    monkeypatch.setattr(st_mod, "run_scoped_command", _raise_timeout)
+    with pytest.raises(LocalToolError, match="subprocess_timeout"):
+        _dispatch("run_lint", ["ruff", "check", "x.py"], tmp_path, _SUBPROCESS_TIMEOUTS["run_lint"])
+
+
+# ---------------------------------------------------------------------------
 # git_blame requires path
 # ---------------------------------------------------------------------------
 
