@@ -515,10 +515,13 @@ def test_t9_no_shell_in_subprocess_surface() -> None:
                     f"  {scope}:{node.lineno}: os.system() call found"
                 )
 
-    # Verify argv to open_process/create_subprocess_exec is always a list (not a single string)
-    # in subprocess_tools.py — checked structurally by ensuring no string literal is passed
-    # as the sole positional arg to anyio.open_process or subprocess calls.
-    for path, scope in [(subprocess_tools_path, "subprocess_tools.py")]:
+    # Verify argv to open_process/run_scoped_command is always a list (not a single string)
+    # in subprocess_tools.py AND subprocess_trust.py — symmetric with the shell=True/os.system
+    # checks above (defense-in-depth; no live gap but asymmetry is fragile).
+    for path, scope in [
+        (subprocess_tools_path, "subprocess_tools.py"),
+        (subprocess_trust_path, "subprocess_trust.py"),
+    ]:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):

@@ -136,7 +136,7 @@ def _make_run_lint(sandbox_root: Path) -> _SubprocessToolFn:
         _check_disallowed(params, allowed, "run_lint")
         path_str: str | None = params.get("path") or None
         abs_path = _check_path(path_str, resolved_root) if path_str else resolved_root
-        argv: list[str] = ["ruff", "check", str(abs_path)]
+        argv: list[str] = ["ruff", "check", "--", str(abs_path)]
         return _dispatch("run_lint", argv, resolved_root, _SUBPROCESS_TIMEOUTS["run_lint"])
 
     return _SubprocessToolFn(_impl)
