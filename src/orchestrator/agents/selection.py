@@ -99,6 +99,7 @@ _SUBPROCESS_TOOL_NAMES: frozenset[str] = frozenset(
         "git_blame",
         "git_log",
         "git_diff",
+        "git_push",
     }
 )
 
