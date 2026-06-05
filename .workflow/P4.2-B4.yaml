@@ -1,7 +1,7 @@
 task_id: P4.2-B4
-state: awaiting_junior_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-06-05T18:12:01.278337Z'
+last_transition_at: '2026-06-05T21:50:29.550058Z'
 cycle_started_at: '2026-06-05T17:16:11.206984Z'
 override_history:
 - timestamp: '2026-06-05T18:12:01.278337Z'
@@ -14,4 +14,20 @@ override_history:
     Brave provider, CGNAT/CNAME/IP-literal tests, granular httpx.Timeout, retries=0).
     Plan merged to main (GUI restyle verified intact). requires_cross_family_review=true
     (impl-stage dual-lens). Advancing to junior impl (B4-1..8 serial).'
+- timestamp: '2026-06-05T21:50:29.550058Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: closed
+  reason: 'P4.2-B4 merged to main (PR #56, 0ee0267). Network local tools: web_fetch
+    (app-level SSRF validator — IP-range+CGNAT+metadata denylist, resolve-then-pin,
+    bounded DNS, per-hop redirect re-validation, credential-strip, retries=0, granular
+    timeout, streamed-bounded) + web_search (Brave, env key). ADR-035 Accepted + ADR-028
+    D3/ADR-031 D1a amendments. All impl-stage reviews 0🔴, gates green (mypy 242 +
+    full pytest + t1-t10); plan-stage R0-B 1🔴+4🟡 all resolved in impl. Architect routed
+    all impl-stage findings = defer/accept: DNS-executor head-of-line + web_search-stream
+    + NAT64 + redirect-live-test + parse-guard → P4.3/follow-up (inscribed ADR-035
+    forward-watch); RC-17 (web_search folded into B4-2 commit) retro-noted. Honest
+    egress residual (public-host exfil) Accepted, retired by P4.3. Merged via architect
+    override (Decision 10: all findings reviewed+routed, 0🔴, no fixes needed). P4.2
+    sub-slice 2/3 complete; B5 (mutation, lean) next.'
 requires_cross_family_review: true
