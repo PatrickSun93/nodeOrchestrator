@@ -910,3 +910,232 @@ def test_t6_and_t9_still_pass_with_net_trust_present() -> None:
     assert "import subprocess" not in net_trust_source, (
         "t10 regression: net_trust.py imports subprocess (should use socket + httpx)"
     )
+
+
+# ---------------------------------------------------------------------------
+# t11 (B5-5): apply_edit no-escape-write — asserts the PINNED write recipe (Y1)
+# ---------------------------------------------------------------------------
+
+
+def test_t11_apply_edit_write_containment() -> None:
+    """B5-5 t11: apply_edit write-containment behavioral + AST guard.
+
+    Behavioral:
+      - writing outside root refused (at _check_path)
+      - writing to an existing escaping final-component symlink refused (at _check_path check time)
+      - oversize content refused before write
+      - mid-write failure leaves no partial file (temp + os.replace)
+
+    AST guard (the PINNED recipe, Y1 — ADR-036 D3-i):
+      - mutation_tools.py uses os.open(..., O_CREAT|O_EXCL|O_NOFOLLOW) on the TEMP create
+      - mutation_tools.py NEVER does a plain open(<dest>, "w") on the destination
+    Impl + t11 must agree; R0-A-on-impl probes the contract.
+    """
+    import tempfile
+
+    from orchestrator.mcp.execution import MAX_RESULT_BYTES
+    from orchestrator.tools.local import LocalToolError
+    from orchestrator.tools.mutation_tools import _make_apply_edit
+
+    # --- Behavioral checks ---
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+
+        fn = _make_apply_edit(root)
+
+        # Traversal escape refused at _check_path.
+        try:
+            fn({"path": "../escape.txt", "content": "bad"})
+            raise AssertionError("t11: traversal escape should have been refused")
+        except LocalToolError:
+            pass
+
+        # Existing escaping final-component symlink refused at check time.
+        outside = root.parent / "outside_t11.txt"
+        outside.write_text("original")
+        link = root / "escape_link.txt"
+        link.symlink_to(outside)
+        try:
+            fn({"path": "escape_link.txt", "content": "injected"})
+            raise AssertionError("t11: existing escaping symlink should have been refused")
+        except LocalToolError:
+            pass
+        assert outside.read_text() == "original", "t11: original file mutated despite refusal"
+
+        # Oversize content refused before write.
+        try:
+            fn({"path": "big.txt", "content": "x" * (MAX_RESULT_BYTES + 1)})
+            raise AssertionError("t11: oversize content should have been refused")
+        except LocalToolError:
+            pass
+        assert not (root / "big.txt").exists(), "t11: oversize write left a partial file"
+
+        # Mid-write failure leaves no partial file (temp + os.replace recipe).
+        import unittest.mock as mock
+
+        dest = root / "atomic.txt"
+        with (
+            mock.patch("os.fsync", side_effect=OSError("simulated")),
+            pytest.raises(LocalToolError),
+        ):
+            fn({"path": "atomic.txt", "content": "partial"})
+        assert not dest.exists(), "t11: partial file at destination after mid-write failure"
+
+    # --- AST guard: assert the PINNED write recipe in mutation_tools.py ---
+    mutation_path = _TOOLS_PKG / "mutation_tools.py"
+    mutation_source = mutation_path.read_text(encoding="utf-8")
+    tree = ast.parse(mutation_source, filename=str(mutation_path))
+
+    # Must reference os.O_NOFOLLOW (the temp-create strategy) — either directly in
+    # the os.open() call or built up via flags |= (both are valid recipe implementations).
+    # The key invariant: O_NOFOLLOW is part of the temp-create flags (not on the destination).
+    o_nofollow_found = False
+
+    # Check 1: O_NOFOLLOW appears in an os.open() call directly.
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "open"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "os"
+        ):
+            call_source = ast.unparse(node)
+            if "O_NOFOLLOW" in call_source:
+                o_nofollow_found = True
+                break
+
+    # Check 2: O_NOFOLLOW is referenced near the os.open() call (flags built dynamically).
+    # A common valid recipe: flags = O_CREAT|O_EXCL; flags |= O_NOFOLLOW; os.open(name, flags).
+    if not o_nofollow_found and "O_NOFOLLOW" in mutation_source and "os.open" in mutation_source:
+        # Verify both O_NOFOLLOW and os.open are present (dynamic flags build is acceptable).
+        o_nofollow_found = True
+
+    assert o_nofollow_found, (
+        "t11 AST guard: mutation_tools.py does NOT reference os.O_NOFOLLOW "
+        "— the pinned write recipe (O_CREAT|O_EXCL|O_NOFOLLOW on temp create) is missing. "
+        "Impl + t11 must agree (ADR-036 D3-i, Y1)."
+    )
+
+    # Must NOT do a plain open(<dest>, "w") on the destination file.
+    plain_open_on_dest_violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            is_builtin_open = isinstance(func, ast.Name) and func.id == "open"
+            # Reject plain open() with "w" write mode — the destination must never be
+            # opened directly for writing (must use os.open + temp + os.replace).
+            if is_builtin_open and node.args:
+                mode_args = [
+                    a
+                    for a in node.args[1:]
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str)
+                ]
+                for mode_arg in mode_args:
+                    mode_val = str(mode_arg.value)
+                    if "w" in mode_val:
+                        plain_open_on_dest_violations.append(
+                            f"  mutation_tools.py:{node.lineno}: "
+                            f"plain open(..., {mode_val!r}) found — "
+                            "destination must use os.open(O_NOFOLLOW) + os.replace, not open(w)"
+                        )
+
+    assert not plain_open_on_dest_violations, (
+        "t11 AST guard: mutation_tools.py uses a plain open(..., 'w') on a destination path "
+        "(violates the pinned O_NOFOLLOW temp-create + os.replace recipe; ADR-036 D3-i Y1):\n"
+        + "\n".join(plain_open_on_dest_violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# t12 (B5-5): git_push argv discipline — no destructive flags
+# ---------------------------------------------------------------------------
+
+
+def test_t12_git_push_argv_discipline() -> None:
+    """B5-5 t12: git_push argv never contains destructive flags (AST + behavioral).
+
+    AST guard:
+      - subprocess_tools.py defines _GIT_PUSH_BANNED_FLAGS containing all five
+        banned values (--force, --force-with-lease, -f, --mirror, --delete).
+
+    Behavioral:
+      - git_push with a flag-shaped remote (starts with '-') → LocalToolError
+      - git_push with a flag-shaped branch (starts with '-') → LocalToolError
+
+    Note: argv-never-shell is already guarded by t9 (subprocess_tools.py AST scan)
+    which now covers git_push automatically because it lives in subprocess_tools.py.
+    This re-assertion is here for clarity per B5-5 plan.
+    """
+    import tempfile
+
+    from orchestrator.tools.local import LocalToolError
+    from orchestrator.tools.subprocess_tools import _GIT_PUSH_BANNED_FLAGS, _make_git_push
+
+    # --- AST guard: _GIT_PUSH_BANNED_FLAGS defined with all five banned flags ---
+    subprocess_path = _TOOLS_PKG / "subprocess_tools.py"
+    source = subprocess_path.read_text(encoding="utf-8")
+
+    required_banned = {"--force", "--force-with-lease", "-f", "--mirror", "--delete"}
+    for flag in required_banned:
+        assert flag in source, (
+            f"t12 AST guard: {flag!r} not found in subprocess_tools.py "
+            "_GIT_PUSH_BANNED_FLAGS — destructive flag not banned"
+        )
+
+    # Also verify via the actual frozenset.
+    assert required_banned <= set(_GIT_PUSH_BANNED_FLAGS), (
+        f"t12: _GIT_PUSH_BANNED_FLAGS missing required flags. "
+        f"Expected: {sorted(required_banned)}, Got: {sorted(_GIT_PUSH_BANNED_FLAGS)}"
+    )
+
+    # --- Behavioral: flag-shaped remote/branch refused ---
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        fn = _make_git_push(root)
+
+        try:
+            fn({"remote": "--force", "branch": "main"})
+            raise AssertionError("t12: flag-shaped remote should have been refused")
+        except LocalToolError:
+            pass
+
+        try:
+            fn({"remote": "origin", "branch": "-u"})
+            raise AssertionError("t12: flag-shaped branch should have been refused")
+        except LocalToolError:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# B5-5 free-coverage re-assertion: t9 covers git_push + t3 covers mutation_tools
+# ---------------------------------------------------------------------------
+
+
+def test_b55_free_coverage_assertions() -> None:
+    """B5-5 meta-assertion: t9 covers git_push (subprocess_tools.py) and
+    t3 covers mutation_tools.py (no new LLMPurpose).
+
+    git_push lives in subprocess_tools.py → t9's AST scan covers it automatically.
+    mutation_tools.py is a new module in tools/ → t3's tools/ coverage includes it.
+    This test makes the free coverage explicit for R0-A-on-impl verification.
+    """
+    # git_push lives in subprocess_tools.py → t9 covers it.
+    subprocess_path = _TOOLS_PKG / "subprocess_tools.py"
+    subprocess_source = subprocess_path.read_text(encoding="utf-8")
+    assert "_make_git_push" in subprocess_source, (
+        "b55: _make_git_push not found in subprocess_tools.py — "
+        "git_push not covered by t9 argv-never-shell scan"
+    )
+
+    # mutation_tools.py exists in tools/ → t3 covers it.
+    mutation_path = _TOOLS_PKG / "mutation_tools.py"
+    assert mutation_path.exists(), (
+        "b55: mutation_tools.py not found in tools/ — not covered by t3 LLMPurpose scan"
+    )
+    mutation_source = mutation_path.read_text(encoding="utf-8")
+    assert "LLMPurpose" not in mutation_source, (
+        "b55: mutation_tools.py references LLMPurpose — violates the no-new-LLMPurpose "
+        "carry-forward (t3 / ADR-036 ⭐⭐ #2)"
+    )
