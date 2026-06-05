@@ -13,7 +13,18 @@ artifacts:
   - src/orchestrator/api/app.py (wiring)
   - docs/decisions/ADR-028 D3 + ADR-031 D2 amendments
   - tests/{tools/test_subprocess_tools,tools/test_constitution,mcp/test_subprocess_trust,plugins/test_posture_b,plugins/test_p3_7_remote_plugins}.py
-verdict: needs_architect
+verdict: clean
+verdict_history:
+- verdict: needs_architect
+  at: impl R0-A original (commit db4ed45)
+  summary: '2Y (Y1 missing timeout acceptance-test; Y2 error-class message-level +
+    D5 inscription gap) + 3 nits (N1/N2/N3); blocking none'
+- verdict: clean
+  at: '2026-06-05T17:05:37Z'
+  actor: architect-partner
+  reason: 're-verification (RC-10) — architect routed all 5 findings = fix; junior
+    pushed B3-8..B3-12. Each verify-cited resolved; gates re-run green (ruff · mypy
+    --strict 238 files · pytest 1795 · t1–t9 + drift + excerpt 28). See §5.'
 findings: 2 minor (Y1 missing timeout acceptance-test; Y2 distinct-error-class realized message-level-not-metadata + inscription gap) + 3 trivial nits
 blocking: none
 gates: ruff PASS · mypy --strict PASS (238 files) · pytest PASS (1793) · t1–t9 + drift + excerpt PASS (12)
@@ -76,3 +87,17 @@ This is **forced by empty-executor-diff**: `_execute_local_call` is byte-frozen 
 - **N1–N3** — fold in only if Y1/Y2 reopen the files; otherwise leave.
 
 The parallel cross-family impl-stage R0-B (r0b) re-probes the same trust + liveness spine; synthesize both before routing. Once routed (and Y1/Y2 absorbed if α), the remaining step is your cycle-close dispatch for P4.2-B3 → then B4 (network).
+
+## 5. Verdict bump → clean (re-verification, RC-10)
+
+The architect routed all five §2/§3 findings = **fix**; the junior pushed B3-8..B3-12 (HEAD `3c63414`). Re-verified each commit resolves its finding by verify-cite, with the full gate suite re-run green. Verdict bumped **needs_architect → clean** (original verdict preserved in `verdict_history`; §2–§4 body left intact as the original-review record).
+
+- **Y1** (missing timeout acceptance-test) → **B3-10 (`3a33517`).** `tests/tools/test_subprocess_tools.py::test_timeout_raises_local_tool_error` monkeypatches `run_scoped_command` to raise `SubprocessTimeoutError` and asserts `_dispatch` raises `LocalToolError` matching `subprocess_timeout` — route (a) exactly, the symmetric twin of `test_spawn_failure_raises_local_tool_error`. The patch hits the real branch: `subprocess_tools.py:24-25` imports `run_scoped_command` as a bare name, which `_dispatch:93` calls and `:96-99` re-wraps. The formerly-uncovered tool-level re-wrap is now covered (3 passed by name).
+- **Y2** (distinct error classes message-level + D5 inscription gap) → **B3-9 (`bea5792`).** ADR-034 **§D5** result-semantics (`ADR-034:86`, under heading at `:82`, next heading `:92`) now inscribes that the timeout/spawn-failure classes are encoded in the TOOL_FAILED *message* (`subprocess_timeout:` / `subprocess_spawn_failed:`) while structured `error_class` stays the shared default (`"executor_error"`) because `_execute_local_call` is byte-frozen (empty-executor-diff / ADR-031 HR#2) — route (a), inscribe-don't-discover; the executor invariant is **not** reopened.
+- **N1** (stale cite) → **B3-12 (`3c63414`).** ADR-034 D3-iv:70 cite `_mcp_tool_result_call_ids` → `_external_output_tool_result_call_ids` (the real post-B3-5 symbol); now resolvable. The "mcp-prefix-only" qualifier reads as P4.1-lineage prose, immediately completed by the "B3 **widens**" clause — no reader is left misinformed.
+- **N2** (asymmetric t9) → **B3-12.** The argv-is-list AST check now iterates `subprocess_tools.py` **and** `subprocess_trust.py` (`test_constitution.py:519-523`, `subprocess_trust_path` defined `:486`), symmetric with the shell=True/os.system checks; t9 green by name.
+- **N3** (run_lint `--`) → **B3-12.** `_make_run_lint` argv is now `["ruff","check","--",abs]` — belt-and-suspenders parity with the git trio; `test_run_lint_happy_path` (asserts exit-code, not argv) still green.
+
+**No regression in R0-A scope from the two R0-B fixes.** B3-8 (`a38e283`) moves `_kill_watchdog(pid)` **inside** the `CancelScope(shield=True)` so it runs on the timeout-cancel path (the scope's `__exit__` re-raises the deferred `CancelledError`, so the prior out-of-scope call was unreachable) — this *strengthens* the kill-no-orphan liveness probe (4), no posture change; covered by `test_run_scoped_command_timeout_watchdog_called` (`test_subprocess_trust.py:320`). B3-11 (`990fd19`) adds a one-line cap-name comment in `executor.py:50` — pure comment, `_execute_local_call` stays byte-frozen (probe (5) holds; t3b green).
+
+**Gates re-run (HEAD `3c63414`):** ruff PASS · mypy --strict canonical (`src tests`, 238 files) PASS · pytest **1795 passed** (= original 1793 + Y1 timeout test + B3-8 watchdog spy) · t1–t9 + drift + excerpt PASS (targeted union 28 passed, 0 fail/skip). → **clean.** Cycle-close dispatch (synthesis with R0-B) is the architect's next step.
