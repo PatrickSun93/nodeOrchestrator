@@ -1,7 +1,7 @@
 task_id: P4.2-B5
-state: awaiting_junior_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-06-05T22:43:50.068128Z'
+last_transition_at: '2026-06-05T23:38:37.327810Z'
 cycle_started_at: '2026-06-05T21:51:57.660802Z'
 override_history:
 - timestamp: '2026-06-05T22:43:50.068128Z'
@@ -14,4 +14,20 @@ override_history:
     apply_edit O_NOFOLLOW-temp+os.replace recipe). Plan merged to main. Single-lens
     (requires_cross_family_review=false). Advancing to junior impl (B5-1..6 serial;
     B5-6 inscribes ADR-028 D3 + cross-refs).'
+- timestamp: '2026-06-05T23:38:37.327810Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: closed
+  reason: 'P4.2-B5 merged to main (PR #57, d393526). Mutation local tools: apply_edit
+    (in-proc, O_NOFOLLOW-temp + atomic os.replace, write-time _check_path) + send_email
+    (config-driven HTTP, domain-allowlist, key-to-header-only) + git_push (subprocess,
+    SSH_AUTH_SOCK ambient-auth overlay, argv-never-shell, no-force, remote-output-untrusted).
+    All actuate via the existing ADR-030 confirm path (gate-decides-tier/confirm-actuates/executor-tier-agnostic,
+    empty-executor-diff 4th time). ADR-036 Accepted + ADR-028 D3/ADR-030/034/035 cross-refs.
+    plan-vs-impl clean; single-lens R0-A 0-blocking (Y1 write-recipe airtight impl+t11-agree;
+    N1 git_push exfil-by-remote routed alpha -> inscribed ADR-036 D3-iii residual,
+    no code change; M-2 apply_edit trusted-output-echo forward-watch). Gates green
+    (mypy 244, 192 tools tests t1-t12). Merged via architect override (Decision 10:
+    reviewed+routed, 0 blocking, inscription-only). *** P4.2 COMPLETE (B3+B4+B5 all
+    closed) *** P4.3 (heavy sandbox) next.'
 requires_cross_family_review: false
