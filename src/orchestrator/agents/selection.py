@@ -102,16 +102,33 @@ _SUBPROCESS_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# Network tool names to exclude from snapshot_excerpt (ADR-035 D3-iii / B4-6).
+# Web content is the MOST untrusted output (attacker-authorable by definition) — raw
+# TOOL_RESULT, not interpreted → OBSERVATION; excluded from the cross-agent system-block
+# steering surface. Must stay in sync with build_network_tool_registry() keys — guarded
+# by the drift sync-test in test_constitution.py (B4-6 sync-test). Defined here in the
+# consumer (t1 forbids agents→tools imports at runtime).
+_NETWORK_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "web_fetch",
+        "web_search",
+    }
+)
+
 
 def _external_output_tool_result_call_ids(snapshot: list[Event]) -> frozenset[str]:
     """Return call_ids of TOOL_CALL events whose results carry untrusted external bytes.
 
-    Excludes from snapshot_excerpt:
+    Excludes from snapshot_excerpt (three trust-class origins):
       (a) mcp__ tools — raw untrusted external bytes; OBSERVATION is the trusted view.
       (b) subprocess tools (_SUBPROCESS_TOOL_NAMES) — local-but-untrusted output
           (ADR-034 D3-iv; the third trust class: local-but-untrusted → raw, framed,
           excerpt-excluded). Keyed on TOOL_CALL tool_name (not a ToolResultMeta flag)
           because writing a flag would require editing _execute_local_call (byte-frozen).
+      (c) network tools (_NETWORK_TOOL_NAMES) — open-web bytes are attacker-authorable
+          by definition; the MOST untrusted output yet (ADR-035 D3-iii). Raw TOOL_RESULT
+          + untrusted framing, NOT interpreted → OBSERVATION (no new LLMPurpose).
+          Drift guard: build_network_tool_registry keys == _NETWORK_TOOL_NAMES (sync-test).
 
     Watch-point (R0-B A2): this builds the call_id set from TOOL_CALL events in the
     snapshot; if a TOOL_CALL ever aged out of the window while its TOOL_RESULT remained,
@@ -125,6 +142,7 @@ def _external_output_tool_result_call_ids(snapshot: list[Event]) -> frozenset[st
         and (
             str(e.metadata.get("tool_name", "")).startswith("mcp__")
             or str(e.metadata.get("tool_name", "")) in _SUBPROCESS_TOOL_NAMES
+            or str(e.metadata.get("tool_name", "")) in _NETWORK_TOOL_NAMES
         )
     )
 
@@ -139,10 +157,11 @@ def _render_snapshot_excerpt(snapshot: list[Event]) -> str | None:
     Rendered as: ``[<type>] <author>: <content>``
     Events truncated to fit within the budget.
 
-    Trust framing (ADR-033 D6 R2-N1 / ADR-034 D3-iv): raw MCP TOOL_RESULT events
-    (untrusted external bytes) and subprocess TOOL_RESULT events (local-but-untrusted)
-    are NOT rendered. In-process local-tool TOOL_RESULT events (trusted, our own code)
-    are rendered. ADR-033 D2/D6 / ADR-011 amendment / ADR-034 D3-iv.
+    Trust framing (ADR-033 D6 R2-N1 / ADR-034 D3-iv / ADR-035 D3-iii): raw MCP TOOL_RESULT
+    events (untrusted external bytes), subprocess TOOL_RESULT events (local-but-untrusted),
+    and network TOOL_RESULT events (open-web, most-untrusted: attacker-authorable) are NOT
+    rendered. In-process local-tool TOOL_RESULT events (trusted, our own code) are rendered.
+    ADR-033 D2/D6 / ADR-011 amendment / ADR-034 D3-iv / ADR-035 D3-iii.
     """
     external_result_ids = _external_output_tool_result_call_ids(snapshot)
     relevant = [

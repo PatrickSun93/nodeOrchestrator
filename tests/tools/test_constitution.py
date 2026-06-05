@@ -640,3 +640,93 @@ def test_b35_subprocess_result_excluded_from_excerpt() -> None:
     assert excerpt is not None and "safe_local_result" in excerpt, (
         f"Trusted local TOOL_RESULT missing from snapshot_excerpt: {excerpt!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# B4-6 drift sync-test: _NETWORK_TOOL_NAMES == build_network_tool_registry keys
+# ---------------------------------------------------------------------------
+
+
+def test_b46_network_tool_names_drift_guard() -> None:
+    """Drift guard: selection._NETWORK_TOOL_NAMES must equal the registry keys.
+
+    A tool added to build_network_tool_registry without updating
+    _NETWORK_TOOL_NAMES would silently escape the excerpt-exclusion filter.
+    This test fails the build in that case.
+
+    Crosses the agents→tools layer boundary in test code only (not at runtime).
+    """
+    from orchestrator.agents.selection import _NETWORK_TOOL_NAMES
+    from orchestrator.tools.network_tools import build_network_tool_registry
+
+    registry_keys = set(build_network_tool_registry().keys())
+
+    assert registry_keys == set(_NETWORK_TOOL_NAMES), (
+        "Drift: build_network_tool_registry keys != selection._NETWORK_TOOL_NAMES.\n"
+        f"Registry has: {sorted(registry_keys)}\n"
+        f"selection has: {sorted(_NETWORK_TOOL_NAMES)}\n"
+        "Update _NETWORK_TOOL_NAMES in agents/selection.py to match."
+    )
+
+
+def test_b46_network_result_excluded_from_excerpt() -> None:
+    """Network TOOL_RESULT is absent from excerpt; reaches agent as current_event (B4-6).
+
+    Two-channel split: injection string in web_fetch TOOL_RESULT must NOT appear in
+    snapshot_excerpt (system block), confirming excerpt exclusion works correctly.
+    Same-pass coupling watch-point (ADR-034 D3-iv / ADR-035 D3-iii).
+    """
+    from orchestrator.agents.selection import _render_snapshot_excerpt
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        generate_event_id,
+        generate_room_id,
+        now_ms,
+    )
+
+    injection = "INJECTED_NETWORK_CANARY_STRING_DO_NOT_RENDER"
+    rid = generate_room_id()
+
+    # TOOL_CALL for web_fetch
+    tc = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_CALL,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content="",
+        metadata={"tool_name": "web_fetch", "call_id": "cid_net_1", "params": {}},
+    )
+    # TOOL_RESULT for web_fetch containing injection
+    tr = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_RESULT,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content=injection,
+        metadata={"call_id": "cid_net_1", "success": True},
+    )
+    # In-process local TOOL_RESULT (trusted — should still appear)
+    safe_tr = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_RESULT,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content="safe_local_result",
+        metadata={"call_id": "cid_safe_1", "success": True},
+    )
+
+    snapshot = [tc, tr, safe_tr]
+    excerpt = _render_snapshot_excerpt(snapshot)
+
+    # Network TOOL_RESULT must be absent from excerpt
+    assert excerpt is None or injection not in excerpt, (
+        f"Network TOOL_RESULT injection string appeared in snapshot_excerpt: {excerpt!r}"
+    )
+    # In-process local TOOL_RESULT must still appear
+    assert excerpt is not None and "safe_local_result" in excerpt, (
+        f"Trusted local TOOL_RESULT missing from snapshot_excerpt: {excerpt!r}"
+    )
