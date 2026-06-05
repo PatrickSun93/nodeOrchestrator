@@ -1,10 +1,12 @@
 """P3.7-remote-4: subprocess_trust.py unit tests (ADR-031 D2).
 
 Covers:
-  - build_scoped_env: env scoping (c2 lesson)
+  - scoped_env / build_scoped_env: env scoping (c2 lesson)
   - _kill_watchdog: kills alive process; no-ops on dead process (discriminating)
   - subprocess_mcp_stdio: SIGTERM-ignoring child still killed (no orphan);
     pure refactor: existing MCP transport tests remain green
+  - run_scoped_command (B3-1): echo round-trip, non-zero exit, truncation,
+    timeout → kill-no-orphan (B3-1 acceptance tests)
 """
 
 from __future__ import annotations
@@ -15,16 +17,58 @@ import sys
 import tempfile
 import textwrap
 import time
+from pathlib import Path
 
 import pytest
 
 from orchestrator.mcp.config import MCPServerConfig, MCPTimeouts
 from orchestrator.mcp.subprocess_trust import (
     _SAFE_ENV_KEYS,
+    SubprocessTimeoutError,
     _kill_watchdog,
     build_scoped_env,
+    run_scoped_command,
+    scoped_env,
 )
 from orchestrator.mcp.transport import MCPTimeoutError, MCPTransport
+
+# ---------------------------------------------------------------------------
+# scoped_env (B3-1: factored core)
+# ---------------------------------------------------------------------------
+
+
+def test_scoped_env_excludes_secrets() -> None:
+    """scoped_env() core excludes keys outside _SAFE_ENV_KEYS."""
+    secret_key = "ORCH_SCOPED_ENV_SECRET_B3_1"
+    os.environ[secret_key] = "should_not_appear"
+    try:
+        result = scoped_env()
+        assert secret_key not in result
+        for key in result:
+            assert key in _SAFE_ENV_KEYS, f"Unexpected key {key!r} in scoped_env() result"
+    finally:
+        os.environ.pop(secret_key, None)
+
+
+def test_scoped_env_overlay_and_api_key() -> None:
+    """scoped_env() overlays extra_env and injects api_key_env."""
+    secret_key = "SCOPED_ENV_API_B3_1"
+    os.environ[secret_key] = "tok_xyz"
+    try:
+        result = scoped_env(extra_env={"EXTRA_KEY": "extra_val"}, api_key_env=secret_key)
+        assert result["EXTRA_KEY"] == "extra_val"
+        assert result[secret_key] == "tok_xyz"
+    finally:
+        os.environ.pop(secret_key, None)
+
+
+def test_build_scoped_env_delegates_to_scoped_env() -> None:
+    """build_scoped_env is a thin wrapper: same behaviour as scoped_env."""
+    cfg = MCPServerConfig(command="echo", env={"MY_KEY": "my_val"}, tools={})
+    via_build = build_scoped_env(cfg)
+    via_core = scoped_env({"MY_KEY": "my_val"})
+    assert via_build == via_core
+
 
 # ---------------------------------------------------------------------------
 # build_scoped_env
@@ -183,3 +227,90 @@ def test_sigterm_ignoring_child_killed_no_orphan() -> None:
     finally:
         if os.path.exists(pid_file):
             os.unlink(pid_file)
+
+
+# ---------------------------------------------------------------------------
+# run_scoped_command (B3-1 acceptance tests)
+# ---------------------------------------------------------------------------
+
+
+def test_run_scoped_command_echo_round_trip(tmp_path: Path) -> None:
+    """Echo round-trip: exit 0, output captured correctly."""
+    env = scoped_env()
+    result = run_scoped_command(
+        [sys.executable, "-c", "import sys; print('hello B3-1'); sys.exit(0)"],
+        cwd=tmp_path,
+        env=env,
+    )
+    assert result.exit_code == 0
+    assert "hello B3-1" in result.output
+    assert not result.truncated
+
+
+def test_run_scoped_command_nonzero_exit_no_raise(tmp_path: Path) -> None:
+    """Non-zero exit code is captured; run_scoped_command does NOT raise."""
+    env = scoped_env()
+    result = run_scoped_command(
+        [sys.executable, "-c", "import sys; sys.exit(42)"],
+        cwd=tmp_path,
+        env=env,
+    )
+    assert result.exit_code == 42
+    assert not result.truncated
+
+
+def test_run_scoped_command_truncation(tmp_path: Path) -> None:
+    """Output > max_bytes → output is truncated, truncated flag set."""
+    env = scoped_env()
+    small_cap = 64
+    # Write 200 bytes of output
+    script = "print('x' * 200)"
+    result = run_scoped_command(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        max_bytes=small_cap,
+    )
+    assert result.truncated
+    assert len(result.output.encode("utf-8")) <= small_cap + 10  # allow decode rounding
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM signal semantics are Unix-only")
+def test_run_scoped_command_timeout_kills_no_orphan(tmp_path: Path) -> None:
+    """Timeout kills the child process; no orphan left behind.
+
+    Tests the common case: grandchild in the same process group (pytest-worker /
+    git-subcommand shape). Does NOT assert the adversarial setpgid(0,0) escape,
+    which is the Accepted kill residual inscribed in ADR-034 D4 (retired by P4.3).
+    """
+    pid_file = tmp_path / "child.pid"
+    script = textwrap.dedent(
+        f"""
+        import os, time
+        with open({str(pid_file)!r}, "w") as f:
+            f.write(str(os.getpid()))
+        time.sleep(9999)
+        """
+    ).strip()
+    env = scoped_env()
+
+    with pytest.raises(SubprocessTimeoutError):
+        run_scoped_command(
+            [sys.executable, "-c", script],
+            cwd=tmp_path,
+            env=env,
+            timeout_s=1.0,
+        )
+
+    # Allow teardown to complete
+    time.sleep(1.5)
+
+    if pid_file.exists():
+        child_pid = int(pid_file.read_text().strip())
+        try:
+            os.kill(child_pid, 0)
+            pytest.fail(
+                f"Child PID {child_pid} still alive after timeout — orphan detected"
+            )
+        except ProcessLookupError:
+            pass  # Expected: killed by _terminate_subprocess + _kill_watchdog
