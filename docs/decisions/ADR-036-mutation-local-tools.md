@@ -1,0 +1,150 @@
+# ADR-036: Mutation local tools — confirm-actuation, write/exfil/push threat models, ambient-auth + exfil-by-recipient residuals
+
+**Status:** Proposed — senior-drafted for P4.2-B5 (the LAST of the three serial P4.2 sub-slices: B3 subprocess ✅ → B4 network ✅ → **B5 mutation**, closing P4.2). Awaiting architect Accept (RC-23: stays *Proposed* until the architect accepts; never self-accepted). **Single-lens** (`requires_cross_family_review: false`, brief decision 5): the impl-stage review is **R0-A only** — a sharp focused threat-probe on the three closures, the `git_push` ambient-auth allowance, the `apply_edit` write-containment, and the gate-owned-tier edge. The ADR-028 D3 amendment (strike the mutation deferral) + the ADR-030/034/035 cross-refs are inscribed at impl (plan task B5-6), matching the eventual Accepted status.
+
+**Scope:** The **mutation execution posture** for the three deferred mutation local tools — `apply_edit` (the first tool that WRITES the workspace), `send_email` (the first tool that SENDS externally), `git_push` (the first tool that mutates a REMOTE; `tools.yaml` rev 1, the most irreversible tool in the system) — shipped by **wiring three thin impls through the EXISTING ADR-030 confirm-then-execute path**, reusing B3 subprocess / B4 network / the `_check_path` containment machinery. Inscribes: the **confirm-actuation flow** (gate-decides-tier / confirm-actuates / executor-tier-agnostic), the **three threat models**, the **output-untrusted treatment** (`git_push` remote output), the **placement/reuse**, and the **two new honest residuals** (`git_push` ambient-auth-only + the named `SSH_AUTH_SOCK` passthrough; `send_email` exfil-by-recipient + the recipient/domain allowlist). Amends ADR-028 D3 (these three no-longer-deferred). Does **NOT** govern: the autonomy gate's decision logic (unchanged, ADR-027 D2); the confirm-then-execute machinery (unchanged, ADR-030 — B5 adds zero confirm/endpoint/snapshot code); a never-AUTO floor for mutations (a separate autonomy slice, explicitly out of B5 — D2); real-credential push (deferred — D3-iii); the P4.3 syscall/egress sandbox (the `RB-FS/NET` retirement path).
+
+---
+
+## Context
+
+P4.1 (ADR-033) closed the in-turn investigation loop; B3 (ADR-034) gave it subprocess reach (tests/lint/git-history); B4 (ADR-035) gave it open-web reach. After all three, an agent can **read / search / test / lint / read-git / fetch-the-web in-turn** — but it **cannot change anything**. B5 adds the **"act" half** of the flagship bug-fix loop (investigate → … → **apply the fix + notify + push it**). ADR-028 D3 deferred these as *"mutation tools … HARD/COUNTDOWN tier; **provably dead until confirm-then-execute lands**"* — it landed in P3.6 (ADR-030), so they are now unblocked.
+
+B5 is **mostly wiring**. The confirm-then-execute machinery is fully built and cross-family-reviewed (ADR-030, P3.6) but **actuates nothing**: every mutation tool is `not_implemented`, so a human can approve a pending `apply_edit` and the executor fires `_execute_local_call` → fail-closed `not_implemented` (`executor.py:396-411`). B5 makes the approval **do something** — implement + register the three impls; the existing confirm endpoint (`_post_confirm` → `_confirm_on_writer`, `app.py:518`) already reconstructs the gate-produced `TOOL_CALL` and invokes the **existing** `execute_pending_tool_calls` (ADR-030 D3 step 5). The reuse seams all exist: `_check_path` (sandbox containment, built for read); `run_scoped_command` + `scoped_env` + `_SubprocessToolFn` (B3); `_NetworkToolFn` + the `web_search` provider-config-with-`api_key_env` shape (B4); the per-pass caps; the `_external_output_tool_result_call_ids` union; the registry merge (`app.py:207/240/250`).
+
+The genuinely-new surface is narrow but high-stakes — these are the **first irreversible + outward-facing** tools:
+- **`apply_edit` is the first WRITE** — `_check_path` was built for *read* containment; a *write* through it is destructive (an out-of-sandbox overwrite is not just an info-leak). The MVP read posture (ADR-028 D3) deliberately Accepted resolve→open TOCTOU; a writer must be **stricter**.
+- **`git_push` mutates a REMOTE, and `scoped_env()` strips the very secret it needs** — B3's secret-stripping (the c2 lesson) prevents `git_push` from authenticating. This is B5's load-bearing new question (D3-iii).
+- **`send_email` egresses to an agent-chosen RECIPIENT** — the exfil vector, the `send_email` analog of B4's public-host-exfil residual (D3-ii).
+
+---
+
+## ⭐⭐ Constitutional carry-forward (NON-NEGOTIABLE — inscribed, not decided; per P4-roadmap §10)
+
+The senior inscribes; the impl enforces; R0-A probes each.
+
+1. **Execution stays DOWNSTREAM of the gate; the executor is tier-AGNOSTIC and tool-AGNOSTIC (ADR-028 #1 / ADR-030 / t4).** Mutation tools route the **unchanged** `process_tool_calls` → `emit_gate_decision` path. **The gate decides the tier; B5 never re-gates and never special-cases a mutation.** A COUNTDOWN/HARD call → `TOOL_CALL_PENDING` (not executed); a confirm-approved (or, if the gate so decides, an AUTO) `TOOL_CALL` → `_execute_local_call`. The executor **cannot tell** a confirmed mutation from an AUTO read — and **must not** (a mutation-specific "always confirm" check in the executor would be re-gating downstream = a t2/t4 violation). See D2.
+2. **No LLM judgment; no new `LLMPurpose` (t2/t3).** The mutation path is pure code — no "is this edit/recipient/push safe" LLM judgment. Output is **not** interpreted by default; existing `t3` covers the whole `tools/` package — **free**.
+3. **The mutation trust boundary is REAL, HONEST about its residuals.** `apply_edit` sandbox-bound (write-time re-resolve `_check_path`, no traversal/symlink-escape via `O_NOFOLLOW`, bounded content size, atomic write); `send_email` credential-scoped (key only to the fixed provider) + recipient-bounded; `git_push` argv-never-shell + ambient-auth-scoped + remote-output-untrusted. **Two new honest residuals (D3):** `git_push` ambient-auth-only (the named `SSH_AUTH_SOCK` passthrough; real-credential injection deferred) and `send_email` exfil-by-recipient (the recipient/domain allowlist is the operator tightening). Plus the inherited FS/network `RB-FS/NET` (retired by P4.3).
+4. **Reuse, don't rebuild — no new execution substrate, no new confirm machinery.** `apply_edit` reuses `_check_path`; `send_email` reuses the B4 `_NetworkToolFn` marker + the `web_search` provider-config shape; `git_push` reuses B3 `run_scoped_command` + `scoped_env` + `_SubprocessToolFn`. The ADR-030 confirm path is reused **whole** — B5 adds **zero** confirm/endpoint/snapshot code.
+5. **`tools/` stays a downstream leaf (t1); `_execute_local_call` stays byte-unchanged (empty-executor-diff, the 4th time).** The per-pass caps (subprocess for `git_push`, network for `send_email`) live in the existing `execute_pending_tool_calls` **loop**; `apply_edit` rides the plain in-process branch (no marker, no cap, like `read_file`). B5 adds **no** executor-decision edit.
+6. **The gate-produced `TOOL_CALL` is the SOLE entry to actuation.** No mutation executes except via a `TOOL_CALL` the gate produced — AUTO (turn-loop) or confirm-approved (ADR-030 D3 step 5, the human second factor). B5 introduces no side path that mutates without a gate-produced `TOOL_CALL`.
+
+---
+
+## Decisions
+
+### D1 — Ship the three true mutations; classifications stand; `propose_edit` stays deferred
+
+The three ship in B5: `apply_edit` (`tools.yaml:31-32`, rev 2), `send_email` (`:47-48`, rev 3), `git_push` (`:49-50`, rev 1). Classifications are **confirmed as-is** (ADR-028 D3 amendment below). **Verified tier across all 6 shipped agent configs (gate = reversibility-only, `scoring.py`), no user-intent:** `git_push` (1) → **HARD everywhere**; `apply_edit` (2) → **COUNTDOWN** (facilitator/mentor `confirm=2`) or **HARD**; `send_email` (3) → **COUNTDOWN** (facilitator/investigator/operator/mentor) or **HARD** (skeptic/prober). **None reaches AUTO without intent** (every `threshold_auto ≥ 4 > 3`). The AUTO-under-intent edge is D2.
+
+**`propose_edit` (rev 5) is OUT (architect-ratified, brief decision 1).** It *generates a reviewable diff* and does **not** apply it (`tools.yaml:30`) — closer to a B2-class read-only/content-gen tool than a mutation (it reaches AUTO at rev 5 for facilitator/mentor). It lands later, beside `apply_edit`'s UX; its tier/UX story is orthogonal to the state-changing surface B5 ships.
+
+**Why all three now:** value-first sequencing (P4-roadmap §7); the confirm path + the reuse seams are shared, so splitting would not shrink the posture work. B5 closes P4.2.
+
+### D2 — Confirm-then-execute ACTUATION: the gate decides the tier; confirm only actuates (THE core)
+
+This is the lead inscription, and the cleanest of the three P4.2 cores — **the path already exists; B5 plugs into it.** B5 adds **zero** confirm/endpoint/snapshot code.
+
+- **The gate decides the tier** (`process_tool_calls` → `emit_gate_decision`, unchanged). Rev 1/2/3 → COUNTDOWN/HARD (default) → `process_tool_calls` appends a **`TOOL_CALL_PENDING`** (ADR-030 D1) — **not executed**. The P4.1 turn-loop's `execute_pending_tool_calls` filters on `EventType.TOOL_CALL` only (`executor.py:108`), so a `TOOL_CALL_PENDING` is **skipped** — the mutation does **not** auto-fire in-turn. ✓
+- **Confirm actuates.** Human `POST /rooms/{id}/confirm {pending_event_id, approve}` → `_post_confirm` → `_confirm_on_writer` (on the single writer, `app.py:518`) → reconstructs a real `TOOL_CALL` from the persisted `ToolCallPendingMeta` (ADR-030 D3 step 5) → invokes the **existing** `execute_pending_tool_calls([that TOOL_CALL])` → `_execute_local_call` → **the B5 impl runs.** So **B5's "confirm-then-execute integration" = implement + register the impls.** The gate decided countdown/hard; the human supplied the second factor; **confirm only actuates** — it adds no decision.
+- **The executor is tier-AGNOSTIC and tool-AGNOSTIC.** It cannot tell a confirmed mutation from an AUTO read, and **must not** — a mutation-specific "always confirm" override inside the executor would be **downstream re-gating** (a t2/t4 violation, carry-forward #1).
+- **The honest edge: the gate CAN route a mutation to AUTO (architect-ratified ACCEPT, brief decision 2(i)).** `decide_tier` lowers `eff_auto = threshold_auto − user_intent_modifier` under `user_explicit_intent`. **Verified:** with explicit intent, `send_email` (rev 3) reaches **AUTO** for operator (6−3=3) and facilitator (4−1=3) — it then executes **in-turn, no confirm**, like any AUTO local tool. **B5 does NOT special-case this, and MUST NOT.** The operator owns the human-in-the-loop guarantee via thresholds; B5 stays a pure tool-impl slice. A **never-AUTO floor** for destructive/external-visibility ops (a hard-guard forcing them ≥ COUNTDOWN regardless of score/intent) would be an **autonomy-gate change** that re-opens the P1.3 `hard_guards.py` placeholder — it is a **separate autonomy slice, explicitly OUT of B5's scope**, named here, not built.
+
+### D3 — Threat model: three tools, two new residuals
+
+**(i) `apply_edit` — the FIRST tool that WRITES the workspace.** Untrusted input = the LLM-proposed **path + content**. `_check_path` is reused — but it was built for **read** containment; a **write** is higher-stakes. The senior pins:
+- **Write-time containment (TOCTOU-tightened).** Re-resolve the path **at write time** via `_check_path` (not only a pre-check); `_check_path`'s `(root / path).resolve()` + `relative_to(root)` already rejects any **parent-component symlink** that escapes root (resolve follows all symlinks). This is **stricter than the ADR-028 D3 read posture** (which Accepted resolve→open TOCTOU as out-of-scope) because a write is destructive.
+- **Symlink-write refusal (`O_NOFOLLOW`-class).** Refuse to write **through** an in-sandbox **final-component** symlink that escapes — the read tools only *skip* such; a writer must *refuse*. Open the write target with `O_NOFOLLOW` on the final component so a final symlink (which `_check_path`'s parent-resolve does not catch when the symlink IS the target) cannot be written through → `TOOL_FAILED`.
+- **Bounded content size.** Reject content larger than a cap (`MAX_RESULT_BYTES` analog on **input**) before writing — the OOM/abuse guard, write side.
+- **Atomic write / no partial file on failure.** Write to a temp file in the contained directory, then `os.replace` (atomic); a mid-write failure leaves the original intact, never a truncated file.
+- **Output = local status** (path + bytes written) — agent-supplied content written by *our own code*, **TRUSTED → NOT in the external-output set** (no `_*_TOOL_NAMES` membership, no excerpt exclusion, no interpret). The first mutation whose output is trusted.
+
+**(ii) `send_email` — external egress + recipient/credential surface; data-exfil-by-email.** Reuse the **`web_search` shape**: a **FIXED provider endpoint** (operator-configured) + an `api_key_env` credential sent **only** to the provider header — so **SSRF is N/A** (fixed endpoint, not agent-chosen; plain `httpx.Client`, not `build_ssrf_client`). The agent-chosen part is the **RECIPIENT** — the exfil vector: a prompt-injected agent mails `<secret>` to `attacker@evil.com`.
+- **Mitigation:** the operator-configured provider + a **recipient / domain allowlist** (operator config) — the egress-allowlist analog to B4's data-exfil residual. A recipient outside the allowlist → `TOOL_FAILED` before send.
+- **Honest residual (exfil-by-recipient).** Without an allowlist (or to any allowlisted-but-attacker-reachable address), exfil-by-recipient is **not prevented** — Accepted honestly, **not claimed solved**; the allowlist is the named operator tightening (exactly as B4's public-host-exfil residual + egress allowlist).
+- **Credential:** the provider key goes to the provider auth header **only**, **never** logged/echoed/onto any other surface (the c2 lesson, email scale; mirrors `web_search`'s `BRAVE_API_KEY` discipline).
+- **Output = provider send-status.** Conservative-include `send_email` in `_NETWORK_TOOL_NAMES` (consistent with `web_search`, ~free via the existing drift sync-test) → raw `TOOL_RESULT`, untrusted-framed, excerpt-excluded, not interpreted.
+
+**(iii) `git_push` — mutates a REMOTE; the credential tension is B5's load-bearing new question.** Reuse B3 `run_scoped_command` + **argv-never-shell** (the existing `t9` AST scan covers `subprocess_tools.py` → **free** for `git_push`) + bounded output. The tensions:
+- **Ambient-auth-only (the credential resolution — brief decision 3).** `scoped_env()` strips all secrets (the c2 lesson) — but its `_SAFE_ENV_KEYS` **already passes `HOME`**, so `git`'s ambient auth **works under scoped_env for the common cases**: `credential.helper` (reads `~/.gitconfig` / `~/.git-credentials` — HOME present), and SSH with **on-disk key files** (`~/.ssh/id_*`, `~/.ssh/config`, `~/.ssh/known_hosts` — all under HOME). **The one gap is `ssh-agent`**, which needs `SSH_AUTH_SOCK` — **not** in `_SAFE_ENV_KEYS`, so stripped → ssh-agent auth fails. **Resolution:** `git_push` passes a **named, minimal, non-secret** env allowance — `SSH_AUTH_SOCK` (a unix-socket path, **not** a credential value) — via `scoped_env(extra_env=…)` when present, restoring ssh-agent auth. **No credential/token/api-key value is ever injected.** MVP supports **ambient/local auth only**; real-credential push (injecting a PAT/token as a secret) is **deferred** (a future named-secret allowance, beyond B5).
+- **Honest residual (ambient-auth-only + the named passthrough).** `git_push` authenticates to ambiently-authed or local remotes only; the `SSH_AUTH_SOCK` passthrough is itself a **narrow, named, inscribed** widening of B3's strip-everything posture (a handle to the user's agent — but `git_push`'s argv is fixed `git push <remote> <ref>`, no arbitrary `ssh`, so the surface is narrow). Accepted honestly; real-credential push is the deferred follow-up.
+- **Irreversibility (rev 1, the most irreversible tool) → argv discipline.** No `--force` / `--force-with-lease` / `-f` / `--mirror` / `--delete` in the fixed argv (history-rewrite / branch-deletion forbidden unless explicitly allowed later); the remote and ref/branch are **constrained params** (validated, never flag-shaped — the B3 `--`-before-path precedent + an allowlisted param shape); bounded output.
+- **Remote-output-untrusted.** `git_push` stdout carries **remote-controlled** text (pre-receive/update-hook output, branch-protection rejection messages, remote MOTD) → attacker-authorable → **UNTRUSTED**. `git_push` joins `_SUBPROCESS_TOOL_NAMES` (free — it rides `build_subprocess_tool_registry`; the output-untrusted union already covers that set, the existing drift sync-test enforces it).
+
+**Plus the liveness terms (inscribed, not chosen):** `apply_edit` is fast/bounded (in-process, bounded content); `send_email` rides the network cap + a bounded `httpx.Timeout`; `git_push` rides the subprocess cap + a bounded timeout + bounded output + kill-no-orphan — each a finite term in the ADR-028 D5 single-writer bound, multiplied by the turn-loop's `(1+N)` passes (ADR-033 D4).
+
+### D4 — Placement: organize-by-substrate; `apply_edit` in a dedicated `mutation_tools.py` (empty-executor-diff)
+
+All three ride the **EXISTING** `execute_pending_tool_calls` → `_execute_local_call` (no executor-decision edit):
+- **`send_email` → `tools/network_tools.py`** — a `_NetworkToolFn` (gets `_is_network_tool` + the network cap free); added to `build_network_tool_registry` **and** to `_NETWORK_TOOL_NAMES` (the b46 drift sync-test enforces the pair) → output-untrusted free.
+- **`git_push` → `tools/subprocess_tools.py`** — a `_SubprocessToolFn` (gets `_is_posture_b_subprocess` + `run_scoped_command` + the subprocess cap free); added to `build_subprocess_tool_registry` **and** to `_SUBPROCESS_TOOL_NAMES` (the b35 drift sync-test enforces the pair) → output-untrusted free; the existing `t9` AST scan covers its argv-never-shell free.
+- **`apply_edit` → a NEW `tools/mutation_tools.py`** (in-process, no marker, no cap, like `read_file`), reusing `_check_path` imported from `local.py` (the `subprocess_tools.py` precedent of importing `_check_path`).
+
+**Why `mutation_tools.py` for `apply_edit`, not `local.py` (senior call — chosen to AVOID a constitution-test change).** Constitution **t6** bans only *subprocess* in `local.py` (`test_constitution.py:344`), **not** writes — so an in-process `apply_edit` is *permitted* there. But `local.py` is **read-only-by-convention** (its module docstring + `t8` frame it as the trusted, read-only set), and putting the first writer there would erode that convention and warrant a new "local.py may write" constitution note. A dedicated `mutation_tools.py` keeps `local.py` read-only-pristine (t6/t8 untouched), gives the mutation surface a clean home, and `apply_edit` loses **no** free reuse by living outside `local.py` (it needs no subprocess/network marker). This is the leaner choice — **one new file, no constitution-test change.** (Surfaced as a senior placement call; not an architect decision unless the architect prefers the `local.py`-write carve-out.)
+
+**Per-pass caps are trivially satisfied on the confirm path** (one confirmed call per `/confirm`), but the `git_push`/`send_email` markers still route them through the capped branches for consistency + the AUTO-under-intent case.
+
+**Carry-forward confirmation:** t1 (`tools/` leaf), t2 (no autonomy decision), t3 (no new `LLMPurpose` — existing test covers all of `tools/`, free), t4 (execute-on-`TOOL_CALL`-only — the confirm-approved `TOOL_CALL` is the ADR-030-broadened second appender, already inscribed + guarded), t6 (`local.py` no-subprocess — `git_push`/`send_email` stay OUT of `local.py`; `apply_edit` is in-process in `mutation_tools.py`). The gate stays the sole chokepoint, downstream.
+
+### D5 — Constitution tests: the new write/push invariants
+
+The brief's three named invariants resolve as:
+- **`argv-never-shell` on `git_push` — FREE.** `git_push` lives in `subprocess_tools.py`; the existing `t9` (`test_t9_no_shell_in_subprocess_surface`) AST-scans that file → covered with no new test. Re-asserted in the ADR + the plan.
+- **No new `LLMPurpose` — FREE.** The existing `t3` covers all of `tools/`; `mutation_tools.py` adds no purpose → covered. Re-asserted.
+- **`apply_edit` no-escape-write — NEW (`t11`).** A behavioral test: writing outside the sandbox root → refused; writing through an escaping final-component symlink → refused; oversize content → refused; a mid-write failure leaves no partial file. Plus an AST guard that the mutation write path uses `O_NOFOLLOW` (never a plain `open(..., 'w')` for the final write target) — the `verify=False` / `shell=True` constitution-precedent applied to symlink-escape-write.
+- **`git_push` irreversibility argv discipline — NEW (`t12`).** An AST + behavioral guard that `git_push`'s argv never contains `--force` / `--force-with-lease` / `-f` / `--mirror` / `--delete` — the destructive-flag ban (rev 1 is the most irreversible tool).
+
+The two **drift sync-tests** (b35 subprocess, b46 network) auto-extend: adding `git_push`/`send_email` to their registries **forces** matching additions to `_SUBPROCESS_TOOL_NAMES` / `_NETWORK_TOOL_NAMES` or the existing tests fail — a free forcing function for the output-untrusted union.
+
+---
+
+## Considered alternatives
+
+- **`apply_edit` in `local.py`** (t6 permits in-process writes there). Rejected (D4): erodes the read-only-by-convention posture + needs a new constitution note; `mutation_tools.py` is leaner and keeps t6/t8 pristine.
+- **A new `mutation_tools.py` home for all three + a `_MUTATION_TOOL_NAMES` set + drift-test + output-union extension + per-tool cap decisions.** Rejected (D4): more scaffolding, cuts against lean; organize-by-substrate inherits the B3/B4 caps + drift-tests + output-unions for free (`send_email`→network, `git_push`→subprocess).
+- **A never-AUTO floor for mutations (a hard-guard forcing ≥ COUNTDOWN).** Rejected for B5 (D2): an autonomy-gate change that re-opens the P1.3 `hard_guards.py` placeholder — a separate slice, not a tool-impl slice; the gate-owned tier is architect-ratified Accept.
+- **Injecting a push credential (PAT/token) into `git_push`'s scoped env now.** Rejected for the MVP (D3-iii): a new named *secret* allowance re-opens the c2 env-leak class at a higher bar; the `SSH_AUTH_SOCK` non-secret passthrough + HOME-based ambient auth cover the common cases; real-credential push is the deferred follow-up.
+- **Shipping `propose_edit` alongside `apply_edit`.** Rejected (D1, architect-ratified): a near-read-only diff-generator (reaches AUTO at rev 5), orthogonal to the state-changing surface; lands later with `apply_edit`'s UX.
+- **An executor-side "mutations always confirm" override.** Rejected (D2 / carry-forward #1): downstream re-gating = a t2/t4 violation; the gate is the sole tier decider.
+- **Interpreting `send_email` / `git_push` output → `OBSERVATION`.** Rejected (consistent with ADR-034 D3-iv / ADR-035 D3-iii): costs an LLM call + a lossy summary; the precise send-status / remote-rejection bytes are the value; raw, framed, excerpt-excluded.
+
+---
+
+## Consequences
+
+**Easier:** the flagship bug-fix loop can finally **act** (apply a fix + notify + push) end-to-end; the first real actuation of the ADR-030 confirm path exists; the mutation posture + the two residuals are inscribed for any future write/send/push tool; P4.2 closes.
+
+**Harder:** the first **irreversible + outward-facing** runtime surfaces now exist — a workspace writer, an external sender, a remote pusher — each with an honest residual until P4.3 (FS/network sandbox) and the deferred follow-ups (real-credential push, exfil-prevention egress firewall); `send_email` adds an operator config + a provider secret; the `SSH_AUTH_SOCK` passthrough is a narrow named widening of B3's strip-everything posture.
+
+**Neutral:** classifications unchanged (rev 1/2/3 stand); no new `EventType`, no new `LLMPurpose`; `_execute_local_call` byte-unchanged (the 4th time); the confirm-then-execute machinery byte-unchanged (B5 adds zero confirm code); the B3 subprocess + B4 network surfaces byte-unchanged except their registry/name-set additions.
+
+---
+
+## Reversibility
+
+| Change | Cost to reverse / evolve |
+|---|---|
+| The three tools (registry entries + closures) | **Low** — additive; removing an entry returns it to fail-closed `not_implemented`. |
+| `tools/mutation_tools.py` (`apply_edit` + `build_mutation_tool_registry`) | **Low** — additive new module; `local.py` untouched (read-only-pristine, t6/t8 hold). |
+| `send_email` in `network_tools.py` + `_NETWORK_TOOL_NAMES` add + `config/email.yaml(.example)` | **Low–Med** — additive closure + a name-set entry (drift-guarded) + an operator config + a provider secret; the recipient/domain allowlist is tightenable without a design change. |
+| `git_push` in `subprocess_tools.py` + `_SUBPROCESS_TOOL_NAMES` add | **Low** — additive closure + a name-set entry (drift-guarded); rides `run_scoped_command` + the subprocess cap + `t9` argv-ban for free. |
+| **D3-iii `SSH_AUTH_SOCK` named passthrough** | **Low (named allowance)** — a single non-secret env key overlaid via `scoped_env(extra_env=…)`; removing it returns `git_push` to HOME-only ambient auth (on-disk keys / credential.helper still work). |
+| **D3-iii ambient-auth-only residual → real-credential push** | **Additive (forward-watch)** — a future named-*secret* allowance (PAT/token scoped to the push), beyond B5; the ambient-auth path does not reverse. |
+| **D3-ii `send_email` exfil-by-recipient residual → egress firewall / allowlist** | **Additive (forward-watch)** — the recipient/domain allowlist is the interim operator tightening; full prevention is the P4.3 egress firewall, on the same `RB-FS/NET` retirement path. |
+| **D3-i `apply_edit` FS residual → P4.3 syscall sandbox** | **Additive (forward-watch)** — write-containment + `O_NOFOLLOW` + atomic write are app-level; the FS sandbox wraps them (defense-in-depth, does not reverse). |
+| `t11` (write-containment) + `t12` (git_push argv discipline) | **Low** — additive constitution tests; the drift sync-tests (b35/b46) auto-extend. |
+
+---
+
+## References
+
+- ADR-028 D2 (trust binary + the third local-but-untrusted class), D3 (mutation deferral — **amended by this ADR**: the three are no-longer-deferred), D5 (single-writer liveness bound), D6 (empty-executor-diff + t1/t2/t3/t4).
+- ADR-030 D1 (`TOOL_CALL_PENDING`), D3 (confirm endpoint, step 5 reconstruct → `execute_pending_tool_calls`), t4 two-appender broadening — **the actuation path B5 plugs into, unchanged**.
+- ADR-034 D2 (lighter-inline subprocess + `RB-FS/NET`), D3-i (argv-never-shell, `t9`), D3-iv (output-as-untrusted: raw, framed, excerpt-excluded), D5 (Posture-B cap path + empty-executor-diff) — `git_push` reuses this posture.
+- ADR-035 D1 (fixed-provider `api_key_env` shape, `web_search`), D2 (egress residual + the operator-allowlist knob), D3-ii (data-exfil), D3-iii (output-as-untrusted, `_NETWORK_TOOL_NAMES`) — `send_email` reuses this shape.
+- ADR-031 D1a (`RB-FS/NET` honest residual), D2 (one subprocess protocol / `scoped_env`).
+- ADR-027 D2 (the gate decision logic — unchanged), P1.3 `hard_guards.py` (the never-AUTO-floor placeholder — out of B5).
+- P4-roadmap §7 (flagship loop / value-first), §8 (B5 lean dual-lens pre-class → single-lens), §10 (constitutional spine, honest-residual inscription).
+- `src/orchestrator/tools/executor.py:108,396-411` (`_execute_local_call` + the `not_implemented` fail-closed B5 replaces), `mcp/subprocess_trust.py:49-59,74-96` (`_SAFE_ENV_KEYS` incl. `HOME`; `scoped_env`), `tools/local.py:120-135` (`_check_path`), `tools/network_tools.py:176-253` (the `web_search` shape), `agents/selection.py:95-147` (the output-untrusted union + the two name-sets), `api/app.py:207/240/250,518` (the registry merge + `_post_confirm`), `tools.yaml:31-32,47-50` (rev 2/3/1).
+```
