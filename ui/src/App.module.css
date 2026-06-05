@@ -1,54 +1,111 @@
 .app {
-  font-family:
-    system-ui,
-    -apple-system,
-    sans-serif;
+  font-family: var(--font-ui);
   height: 100vh;
   display: flex;
   flex-direction: column;
 }
 
-.title {
+/* ---- Lobby page --------------------------------------------------------- */
+.lobbyWrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.lobbyBrand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: 40px var(--space-4) var(--space-2);
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-avatar);
+  background: var(--ai);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.wordmark {
+  font-size: var(--text-title);
+  font-weight: var(--weight-medium);
+  color: var(--fg1);
+  letter-spacing: -0.015em;
+}
+
+.lobbyTag {
   text-align: center;
-  padding: 2rem 1rem 0.5rem;
-  font-size: 1.5rem;
-  color: #111827;
+  color: var(--fg3);
+  font-size: var(--text-sm);
+  padding: 0 var(--space-4) var(--space-2);
+  max-width: 460px;
+  margin: 0 auto;
+  line-height: var(--leading-body);
 }
 
 .lobby {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 1rem;
+  padding: var(--space-4);
 }
 
 .divider {
-  color: #9ca3af;
-  padding: 0.5rem;
-  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--fg4);
+  font-size: var(--text-xs);
+  padding: 14px 0;
+  width: 100%;
+  max-width: 400px;
 }
 
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+
+/* ---- Leave summary card ------------------------------------------------- */
 .leaveSummary {
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  margin: 1rem auto;
-  max-width: 480px;
-  font-size: 0.9rem;
-  color: #166534;
+  background: #fff;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  padding: 14px var(--space-4);
+  margin: var(--space-4) auto 0;
+  max-width: 460px;
+  font-size: var(--text-sm);
+  color: var(--fg2);
+  box-shadow: var(--shadow-card);
 }
 
 .leaveSummary p {
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--space-2);
 }
 
 .returnBtn {
-  background: #16a34a;
+  background: var(--ai);
   color: #fff;
   border: none;
-  border-radius: 6px;
-  padding: 0.4rem 1rem;
+  border-radius: var(--radius-control);
+  padding: 9px var(--space-4);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.returnBtn:hover {
+  background: #134f8a;
+  box-shadow: 0 4px 12px rgba(24, 95, 165, 0.22);
 }

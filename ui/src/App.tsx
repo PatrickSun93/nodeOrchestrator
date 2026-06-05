@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { IconSparkles } from "@tabler/icons-react";
 import { useRoomStore } from "./store.ts";
 import { getEvents, getSnapshot } from "./api/client.ts";
 import { RoomPicker } from "./components/RoomPicker.tsx";
@@ -73,26 +74,34 @@ export default function App() {
 
   return (
     <div className={styles.app}>
-      <h1 className={styles.title}>Orchestrator</h1>
-      {leaveSummary && (
-        <div className={styles.leaveSummary} data-testid="leave-summary">
-          <p>
-            已离开房间。本次会话共 {leaveSummary.eventCountOnLeave} 条消息
-            {leaveSummary.decisionCount > 0 && `，作出了 ${leaveSummary.decisionCount} 个决定`}。
-          </p>
-          <button
-            className={styles.returnBtn}
-            data-testid="return-room-btn"
-            onClick={() => void handleReturn(leaveSummary.roomId)}
-          >
-            返回房间
-          </button>
+      <div className={styles.lobbyWrap}>
+        <div className={styles.lobbyBrand}>
+          <div className={styles.avatar}>
+            <IconSparkles size={18} />
+          </div>
+          <span className={styles.wordmark}>Orchestrator</span>
         </div>
-      )}
-      <div className={styles.lobby}>
-        <RoomCreate />
-        <div className={styles.divider}>— 或者 —</div>
-        <RoomPicker />
+        <p className={styles.lobbyTag}>想清楚一件事，和能挑战你想法的助手一起。</p>
+        {leaveSummary && (
+          <div className={styles.leaveSummary} data-testid="leave-summary">
+            <p>
+              已离开房间。本次会话共 {leaveSummary.eventCountOnLeave} 条消息
+              {leaveSummary.decisionCount > 0 && `，作出了 ${leaveSummary.decisionCount} 个决定`}。
+            </p>
+            <button
+              className={styles.returnBtn}
+              data-testid="return-room-btn"
+              onClick={() => void handleReturn(leaveSummary.roomId)}
+            >
+              返回房间
+            </button>
+          </div>
+        )}
+        <div className={styles.lobby}>
+          <RoomCreate />
+          <div className={styles.divider}>或者</div>
+          <RoomPicker />
+        </div>
       </div>
     </div>
   );
