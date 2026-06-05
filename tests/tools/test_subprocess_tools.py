@@ -288,3 +288,193 @@ def test_git_blame_requires_path(tmp_path: Path) -> None:
     """git_blame without path → LocalToolError."""
     with pytest.raises(LocalToolError, match="'path' is required"):
         _invoke("git_blame", tmp_path, {})
+
+
+# ---------------------------------------------------------------------------
+# B5-3: git_push tests (ADR-036 D3-iii)
+# ---------------------------------------------------------------------------
+
+
+def test_git_push_is_subprocess_tool_fn(tmp_path: Path) -> None:
+    """git_push carries _is_posture_b_subprocess = True."""
+    fn = build_subprocess_tool_registry(tmp_path)["git_push"]
+    assert getattr(fn, "_is_posture_b_subprocess", False) is True
+
+
+def test_git_push_in_registry(tmp_path: Path) -> None:
+    """git_push appears in build_subprocess_tool_registry keys."""
+    assert "git_push" in build_subprocess_tool_registry(tmp_path)
+
+
+def test_git_push_flag_shaped_remote_refused(tmp_path: Path) -> None:
+    """git_push rejects remote that starts with '-' (flag-shaped)."""
+    with pytest.raises(LocalToolError, match="looks like a flag"):
+        _invoke("git_push", tmp_path, {"remote": "--force", "branch": "main"})
+
+
+def test_git_push_flag_shaped_branch_refused(tmp_path: Path) -> None:
+    """git_push rejects branch that starts with '-' (flag-shaped)."""
+    with pytest.raises(LocalToolError, match="looks like a flag"):
+        _invoke("git_push", tmp_path, {"remote": "origin", "branch": "-u"})
+
+
+def test_git_push_banned_flag_as_remote_refused(tmp_path: Path) -> None:
+    """git_push refuses if remote value is a banned destructive flag."""
+    with pytest.raises(LocalToolError):
+        _invoke("git_push", tmp_path, {"remote": "--force", "branch": "main"})
+
+
+def test_git_push_disallowed_param_refused(tmp_path: Path) -> None:
+    """git_push refuses params outside {remote, branch}."""
+    with pytest.raises(LocalToolError, match="disallowed param"):
+        _invoke("git_push", tmp_path, {"remote": "origin", "branch": "main", "force": True})
+
+
+def test_git_push_happy_path_local_remote(tmp_path: Path) -> None:
+    """git_push to a local bare remote repo succeeds; output contains exit_code."""
+    import subprocess as _subprocess
+
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    _subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+
+    src = tmp_path / "src"
+    src.mkdir()
+    _subprocess.run(["git", "init", str(src)], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        check=True,
+        cwd=str(src),
+        capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "config", "user.name", "Test"], check=True, cwd=str(src), capture_output=True
+    )
+    (src / "f.txt").write_text("hello")
+    _subprocess.run(["git", "add", "."], check=True, cwd=str(src), capture_output=True)
+    _subprocess.run(
+        ["git", "commit", "-m", "init"], check=True, cwd=str(src), capture_output=True
+    )
+
+    result = _invoke("git_push", src, {"remote": str(bare), "branch": "main"})
+    assert "exit_code=" in result.content
+
+
+def test_git_push_ssh_auth_sock_overlaid_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SSH_AUTH_SOCK is passed to subprocess env when present in os.environ."""
+    import orchestrator.tools.subprocess_tools as st_mod
+
+    captured_env: dict[str, str] = {}
+
+    def _fake_scoped_env(
+        extra_env: dict[str, str] | None = None, api_key_env: str | None = None
+    ) -> dict[str, str]:
+        env = {k: "x" for k in _SAFE_ENV_KEYS}
+        if extra_env:
+            env.update(extra_env)
+        captured_env.update(env)
+        return env
+
+    monkeypatch.setattr(st_mod, "scoped_env", _fake_scoped_env)
+
+    fake_sock = "/tmp/fake_ssh_agent.sock"
+    monkeypatch.setenv("SSH_AUTH_SOCK", fake_sock)
+
+    # Mock run_scoped_command to avoid real subprocess
+    from orchestrator.mcp.subprocess_trust import SubprocessTimeoutError  # noqa: F401
+
+    class FakeResult:
+        exit_code = 0
+        output = "pushed"
+        truncated = False
+
+    def _fake_run(*args: Any, **kwargs: Any) -> FakeResult:
+        return FakeResult()
+
+    monkeypatch.setattr(st_mod, "run_scoped_command", _fake_run)
+
+    _invoke("git_push", tmp_path, {"remote": "origin", "branch": "main"})
+    assert captured_env.get("SSH_AUTH_SOCK") == fake_sock, (
+        "SSH_AUTH_SOCK was not passed to subprocess env when present"
+    )
+
+
+def test_git_push_ssh_auth_sock_absent_no_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When SSH_AUTH_SOCK is absent from os.environ, it is NOT injected into subprocess env."""
+    import orchestrator.tools.subprocess_tools as st_mod
+
+    captured_env: dict[str, str] = {}
+
+    def _fake_scoped_env(
+        extra_env: dict[str, str] | None = None, api_key_env: str | None = None
+    ) -> dict[str, str]:
+        env = {k: "x" for k in _SAFE_ENV_KEYS}
+        if extra_env:
+            env.update(extra_env)
+        captured_env.update(env)
+        return env
+
+    monkeypatch.setattr(st_mod, "scoped_env", _fake_scoped_env)
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+
+    class FakeResult:
+        exit_code = 0
+        output = "pushed"
+        truncated = False
+
+    def _fake_run(*args: Any, **kwargs: Any) -> FakeResult:
+        return FakeResult()
+
+    monkeypatch.setattr(st_mod, "run_scoped_command", _fake_run)
+
+    _invoke("git_push", tmp_path, {"remote": "origin", "branch": "main"})
+    assert "SSH_AUTH_SOCK" not in captured_env, (
+        "SSH_AUTH_SOCK injected into env even when absent from os.environ"
+    )
+
+
+def test_git_push_result_excluded_from_excerpt(tmp_path: Path) -> None:
+    """git_push TOOL_RESULT is absent from snapshot_excerpt (b35 behavioral extension).
+
+    git_push joins _SUBPROCESS_TOOL_NAMES; its remote-controlled output should not
+    appear in the steering excerpt.
+    """
+    from orchestrator.agents.selection import _render_snapshot_excerpt
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        generate_event_id,
+        generate_room_id,
+        now_ms,
+    )
+
+    injection = "GIT_PUSH_CANARY_INJECTION_DO_NOT_RENDER"
+    rid = generate_room_id()
+
+    tc = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_CALL,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content="",
+        metadata={"tool_name": "git_push", "call_id": "cid_push_1", "params": {}},
+    )
+    tr = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_RESULT,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content=injection,
+        metadata={"call_id": "cid_push_1", "success": True},
+    )
+    snapshot = [tc, tr]
+    excerpt = _render_snapshot_excerpt(snapshot)
+    assert excerpt is None or injection not in excerpt, (
+        f"git_push TOOL_RESULT appeared in snapshot_excerpt: {excerpt!r}"
+    )

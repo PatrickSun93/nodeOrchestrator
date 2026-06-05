@@ -131,3 +131,4 @@ Each B3 tool is a **non-`mcp__` local-registry entry** whose `LocalToolFn` launc
 - ADR-032 (constitution-test-forbids-`verify=False` precedent → applied to `shell=True`).
 - P4-roadmap §7 (flagship loop / value-first), §8 (heavy-set dual-lens), §10 (constitutional spine, honest-residual inscription).
 - `src/orchestrator/tools/executor.py:158-202` (Posture-B cap path), `mcp/subprocess_trust.py` (seam), `agents/selection.py:92-130` (excerpt exclusion), `api/app.py:454` (`current_event` channel).
+- **[Cross-ref P4.2-B5 → ADR-036, Accepted 2026-06-05]** `git_push` reuses this ADR's Posture-B substrate (`run_scoped_command` + `scoped_env` + `_SubprocessToolFn` + `_dispatch`); adds the named `SSH_AUTH_SOCK` non-secret env overlay (ADR-036 D3-iii, push-back 1 RATIFIED); rides `t9` argv-never-shell free.

@@ -1,4 +1,4 @@
-"""Subprocess local tool closures (ADR-034 D1/D3/D5; P4.2-B3-2).
+"""Subprocess local tool closures (ADR-034 D1/D3/D5; P4.2-B3-2; ADR-036 D3-iii B5-3).
 
 Each closure is a LocalToolFn that:
   - Validates its param allowlist (no flag passthrough).
@@ -10,11 +10,13 @@ Each closure is a LocalToolFn that:
 Do NOT add to tools/local.py (constitution t6 forbids subprocess there — local.py
 is in-process-pristine; subprocess surface lives here only).
 
-Env: scoped_env() with no extra_env, no api_key_env — B3 tools need no secrets.
+B3 tools env: scoped_env() with no extra_env, no api_key_env — B3 tools need no secrets.
+git_push env: scoped_env(extra_env={SSH_AUTH_SOCK: ...}) for ssh-agent (ADR-036 D3-iii).
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any, ClassVar
@@ -35,7 +37,19 @@ _SUBPROCESS_TIMEOUTS: dict[str, float] = {
     "git_blame": 10.0,
     "git_log": 10.0,
     "git_diff": 10.0,
+    "git_push": 30.0,
 }
+
+# Named non-secret env keys to passthrough for git_push (ADR-036 D3-iii).
+# SSH_AUTH_SOCK is a unix-socket PATH (not a credential value); allows ssh-agent auth.
+# HOME is already in _SAFE_ENV_KEYS (credential.helper + on-disk SSH keys work).
+# No api_key_env passed -> no secret value injected (scoped_env secret-injection off).
+_GIT_PUSH_ENV_PASSTHROUGH: frozenset[str] = frozenset({"SSH_AUTH_SOCK"})
+
+# Destructive git flags banned from git_push argv (ADR-036 D3-iii; rev 1 = most irreversible).
+_GIT_PUSH_BANNED_FLAGS: frozenset[str] = frozenset(
+    {"--force", "--force-with-lease", "-f", "--mirror", "--delete"}
+)
 
 _GIT_LOG_MAX_COUNT_MIN = 1
 _GIT_LOG_MAX_COUNT_MAX = 100
@@ -81,14 +95,21 @@ def _check_disallowed(
         )
 
 
-def _dispatch(tool_name: str, argv: list[str], cwd: Path, timeout_s: float) -> LocalToolOutput:
+def _dispatch(
+    tool_name: str,
+    argv: list[str],
+    cwd: Path,
+    timeout_s: float,
+    extra_env: dict[str, str] | None = None,
+) -> LocalToolOutput:
     """Call run_scoped_command and format result as LocalToolOutput.
 
     Non-zero exit → TOOL_RESULT (expected output; failing tests/lint is not an error).
     Timeout → raise LocalToolError with subprocess_timeout class encoded in message.
     Spawn failure → raise LocalToolError with subprocess_spawn_failed class encoded.
+    extra_env: overlay non-secret env vars (e.g. SSH_AUTH_SOCK for git_push).
     """
-    env = scoped_env()  # no extra_env, no api_key_env — B3 tools need no secrets
+    env = scoped_env(extra_env=extra_env or {})  # no api_key_env — no secret injection
     try:
         result = run_scoped_command(
             argv, cwd=cwd, env=env, timeout_s=timeout_s, max_bytes=MAX_RESULT_BYTES
@@ -203,13 +224,84 @@ def _make_git_diff(sandbox_root: Path) -> _SubprocessToolFn:
     return _SubprocessToolFn(_impl)
 
 
+def _make_git_push(sandbox_root: Path) -> _SubprocessToolFn:
+    """Build a git_push impl for the sandbox root (ADR-036 D3-iii).
+
+    argv: fixed ["git", "push", <remote>, <branch>] — never shell-string (t9 covers this).
+    env: scoped_env with SSH_AUTH_SOCK overlay for ssh-agent (named non-secret passthrough).
+         HOME already in _SAFE_ENV_KEYS (credential.helper + on-disk SSH keys work).
+         No api_key_env -> no secret value injected.
+    Output: remote push status as raw TOOL_RESULT (remote text = attacker-authorable).
+    Destructive flags banned: --force/--force-with-lease/-f/--mirror/--delete (t12 guards).
+    """
+    resolved_root = sandbox_root.resolve()
+    allowed: frozenset[str] = frozenset({"remote", "branch"})
+
+    def _impl(params: dict[str, Any]) -> LocalToolOutput:
+        _check_disallowed(params, allowed, "git_push")
+
+        remote = str(params.get("remote", "origin"))
+        branch_raw: str | None = params.get("branch") or None
+
+        # Resolve current branch if not specified.
+        if branch_raw is None:
+            # Read current HEAD branch from git (scoped_env, no network).
+            head_env = scoped_env()
+            try:
+                head_result = run_scoped_command(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=resolved_root,
+                    env=head_env,
+                    timeout_s=5.0,
+                    max_bytes=256,
+                )
+                branch_raw = head_result.output.strip() or "HEAD"
+            except (SubprocessTimeoutError, OSError):
+                branch_raw = "HEAD"
+
+        branch = branch_raw
+
+        # Reject flag-shaped remote/branch (values starting with "-").
+        if remote.startswith("-"):
+            raise LocalToolError(
+                f"git_push: remote {remote!r} looks like a flag (starts with '-'); "
+                "rejected to prevent argv injection"
+            )
+        if branch.startswith("-"):
+            raise LocalToolError(
+                f"git_push: branch {branch!r} looks like a flag (starts with '-'); "
+                "rejected to prevent argv injection"
+            )
+
+        # Validate no banned destructive flags appear in remote/branch (defense-in-depth).
+        for val, label in [(remote, "remote"), (branch, "branch")]:
+            if val in _GIT_PUSH_BANNED_FLAGS:
+                raise LocalToolError(
+                    f"git_push: {label} {val!r} is a banned destructive flag"
+                )
+
+        # Fixed argv — no shell, no interpolation (t9 + t12 guard).
+        argv: list[str] = ["git", "push", remote, branch]
+
+        # Named SSH_AUTH_SOCK overlay: passthrough unix-socket PATH (not a secret value).
+        extra_env: dict[str, str] = {
+            k: os.environ[k] for k in _GIT_PUSH_ENV_PASSTHROUGH if k in os.environ
+        }
+
+        return _dispatch(
+            "git_push", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_push"], extra_env=extra_env
+        )
+
+    return _SubprocessToolFn(_impl)
+
+
 # ---------------------------------------------------------------------------
 # Registry builder
 # ---------------------------------------------------------------------------
 
 
 def build_subprocess_tool_registry(sandbox_root: Path) -> dict[str, LocalToolFn]:
-    """Build the 5 subprocess local tools for the given sandbox root.
+    """Build the subprocess local tools for the given sandbox root.
 
     Returns a dict keyed by tool name (matching tools.yaml classifications).
     Each value is a _SubprocessToolFn carrying _is_posture_b_subprocess = True.
@@ -220,4 +312,5 @@ def build_subprocess_tool_registry(sandbox_root: Path) -> dict[str, LocalToolFn]
         "git_blame": _make_git_blame(sandbox_root),
         "git_log": _make_git_log(sandbox_root),
         "git_diff": _make_git_diff(sandbox_root),
+        "git_push": _make_git_push(sandbox_root),
     }

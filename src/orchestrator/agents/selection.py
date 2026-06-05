@@ -99,6 +99,7 @@ _SUBPROCESS_TOOL_NAMES: frozenset[str] = frozenset(
         "git_blame",
         "git_log",
         "git_diff",
+        "git_push",
     }
 )
 
@@ -112,6 +113,7 @@ _NETWORK_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "web_fetch",
         "web_search",
+        "send_email",
     }
 )
 
