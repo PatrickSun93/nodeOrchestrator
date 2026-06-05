@@ -1,57 +1,78 @@
 .composer {
-  border-top: 1px solid #e5e7eb;
-  padding: 0.75rem;
-  background: #fff;
+  border-top: 1px solid var(--hairline);
+  padding: 14px 20px 18px;
+  background: var(--bg);
 }
 
 .row {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-2);
+  align-items: flex-end;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-field);
+  padding: var(--space-2) var(--space-2) var(--space-2) 14px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.row:focus-within {
+  border-color: var(--ai);
+  box-shadow: 0 0 0 3px var(--ai-tint);
 }
 
 .textarea {
   flex: 1;
   resize: none;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  padding: 0.5rem;
-  font-size: 0.95rem;
-  font-family: inherit;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 3px 0;
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  color: var(--fg1);
+  line-height: var(--leading-body);
 }
 
-.textarea:focus {
-  outline: none;
-  border-color: #6366f1;
+.textarea::placeholder {
+  color: var(--fg4);
 }
 
 .textarea:disabled {
-  background: #f9fafb;
-  color: #9ca3af;
+  color: var(--fg4);
 }
 
 .sendBtn {
-  padding: 0 1rem;
-  border-radius: 6px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-control);
   border: none;
-  background: #6366f1;
+  background: var(--ai);
   color: #fff;
-  font-size: 0.9rem;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   cursor: pointer;
+  align-self: stretch;
+  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.sendBtn:hover:not(:disabled) {
+  background: #134f8a;
+  box-shadow: 0 4px 12px rgba(24, 95, 165, 0.22);
 }
 
 .sendBtn:disabled {
-  background: #c7d2fe;
+  background: #bcd4ec;
   cursor: not-allowed;
 }
 
 .turnError {
-  font-size: 0.8rem;
-  color: #d97706;
-  margin-bottom: 0.4rem;
+  font-size: var(--text-xs);
+  color: var(--challenge);
+  margin-bottom: var(--space-2);
 }
 
 .appendError {
-  font-size: 0.8rem;
-  color: #dc2626;
-  margin-bottom: 0.4rem;
+  font-size: var(--text-xs);
+  color: var(--reject);
+  margin-bottom: var(--space-2);
 }

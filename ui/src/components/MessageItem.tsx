@@ -1,3 +1,4 @@
+import { IconSparkles } from "@tabler/icons-react";
 import type { Event, EventType } from "../api/client.ts";
 import { authorLabel, eventTypeLabel, toolNameLabel } from "../uiStrings.ts";
 import styles from "./MessageItem.module.css";
@@ -56,26 +57,40 @@ export function MessageItem({ event }: Props) {
   const isDecision = DECISION_CLASS_TYPES.has(event.type);
   const isSystem = SYSTEM_AFFORDANCE_TYPES.has(event.type);
 
-  let itemClass = styles.item;
-  if (isUser) itemClass += ` ${styles.user}`;
-  else if (isDecision) itemClass += ` ${styles.decision}`;
-  else if (isSystem) itemClass += ` ${styles.system}`;
-  else if (isToolActivity) itemClass += ` ${styles.toolActivity}`;
-  else itemClass += ` ${styles.agent}`;
+  let itemVariant = "";
+  if (isUser) itemVariant = styles.user;
+  else if (isDecision) itemVariant = styles.decision;
+  else if (isSystem) itemVariant = styles.system;
+  else if (isToolActivity) itemVariant = styles.toolActivity;
+  else itemVariant = styles.agent;
+
+  const rowVariant = isUser ? styles.user : isSystem ? styles.center : "";
+  const showAvatar = !isUser && !isSystem;
 
   return (
-    <div className={itemClass} data-testid="message-item" data-event-type={event.type}>
-      <div className={styles.header}>
-        {!isSystem && <span className={styles.author}>{author}</span>}
-        <span className={styles.chip}>{typeChip}</span>
-      </div>
-      {isToolActivity ? (
-        <div className={styles.toolDesc} data-testid="tool-activity-desc">
-          {toolActivityDescription(event)}
+    <div
+      className={`${styles.row} ${rowVariant}`}
+      data-testid="message-item"
+      data-event-type={event.type}
+    >
+      {showAvatar && (
+        <div className={styles.avatarWrap}>
+          <IconSparkles size={15} />
         </div>
-      ) : (
-        <div className={styles.content}>{event.content}</div>
       )}
+      <div className={`${styles.item} ${itemVariant}`}>
+        <div className={styles.header}>
+          {!isSystem && <span className={styles.author}>{author}</span>}
+          <span className={styles.chip}>{typeChip}</span>
+        </div>
+        {isToolActivity ? (
+          <div className={styles.toolDesc} data-testid="tool-activity-desc">
+            {toolActivityDescription(event)}
+          </div>
+        ) : (
+          <div className={styles.content}>{event.content}</div>
+        )}
+      </div>
     </div>
   );
 }

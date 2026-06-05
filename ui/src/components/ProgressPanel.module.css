@@ -1,54 +1,59 @@
 .panel {
   width: 280px;
   flex-shrink: 0;
-  border-left: 1px solid var(--border, #e5e7eb);
-  background: var(--surface, #fafafa);
+  border-left: 1px solid var(--hairline);
+  background: #fcfcfd;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
 }
 
 .panel.collapsed {
-  width: 32px;
+  width: 36px;
   align-items: center;
-  padding-top: 8px;
+  padding-top: var(--space-2);
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border, #e5e7eb);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--hairline);
 }
 
 .title {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-secondary, #6b7280);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  color: var(--fg4);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
 }
 
 .toggle {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1rem;
-  color: var(--text-secondary, #6b7280);
-  padding: 0 4px;
+  font-size: 16px;
+  color: var(--fg4);
+  padding: 4px 6px;
+  line-height: 1;
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--ai);
+  outline-offset: 2px;
 }
 
 .blocks {
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
 .block {
-  border-bottom: 1px solid var(--border-light, #f3f4f6);
-  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+  padding: 11px 0;
 }
 
 .block:last-child {
@@ -56,23 +61,24 @@
 }
 
 .blockTitle {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--text-muted, #9ca3af);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  color: var(--fg4);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin: 0 0 4px;
+  margin: 0 0 var(--space-1);
 }
 
 .blockValue {
-  font-size: 0.85rem;
-  color: var(--text-primary, #111827);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--fg2);
   margin: 0;
 }
 
 .pendingList {
   margin: 0;
-  padding-left: 16px;
-  font-size: 0.85rem;
-  color: var(--color-warning, #d97706);
+  padding-left: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--challenge);
 }
