@@ -1,0 +1,7 @@
+task_id: P4.3
+state: awaiting_brief
+cycle: 1
+last_transition_at: '2026-06-05T23:48:20.009713Z'
+cycle_started_at: '2026-06-05T23:48:20.009713Z'
+override_history: []
+requires_cross_family_review: true
