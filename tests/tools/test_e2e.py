@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 from mcp.types import CallToolResult, TextContent, Tool
 
@@ -27,8 +28,17 @@ from orchestrator.agents.dispatch import LLMRouterProtocol
 from orchestrator.api.app import AppContext, _make_test_app
 from orchestrator.api.pubsub import RoomEventBus
 from orchestrator.autonomy.scoring import ToolMeta
-from orchestrator.core.event import EventType
+from orchestrator.core.event import (
+    Event,
+    EventType,
+    ToolCallPendingMeta,
+    build_author,
+    generate_event_id,
+    generate_room_id,
+    now_ms,
+)
 from orchestrator.core.event_store import EventStore
+from orchestrator.core.room import Room, RoomType
 from orchestrator.llm.purposes import LLMPurpose
 from orchestrator.llm.types import (
     AgentAutonomyThresholds,
@@ -44,6 +54,7 @@ from orchestrator.llm.types import (
 from orchestrator.mcp.client import MCPSession
 from orchestrator.mcp.transport import MCPTransport
 from orchestrator.tools.local import build_local_tool_registry
+from orchestrator.tools.mutation_tools import build_mutation_tool_registry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -130,7 +141,10 @@ def _make_ctx(
     reader_exec = ThreadPoolExecutor(max_workers=2, thread_name_prefix="e2e-reader")
 
     root = sandbox_root or Path(".")
-    local_tools = build_local_tool_registry(root)
+    local_tools = {
+        **build_local_tool_registry(root),
+        **build_mutation_tool_registry(root),
+    }
 
     return AppContext(
         writer_store=writer_store,
@@ -297,3 +311,118 @@ def test_app_context_mcp_sessions_default_empty() -> None:
     assert ctx.mcp_sessions == {}
     assert ctx.local_tools == {}
     ctx.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# B5-4: apply_edit confirmed TOOL_CALL actuates (no longer not_implemented)
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_apply_edit_confirm_actuates(tmp_path: Path) -> None:
+    """Confirmed apply_edit TOOL_CALL actually writes the file (no longer not_implemented).
+
+    Integration: TOOL_CALL_PENDING → POST /confirm approve → TOOL_RESULT contains
+    'wrote N bytes'; file exists on disk.  Verifies B5-4 wiring is complete.
+    """
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    target_rel = "output/result.txt"
+    content_to_write = "hello from apply_edit"
+
+    # Minimal AppContext with mutation_tools wired.
+    db = tmp_path / "e2e_apply.db"
+    writer_conn = sqlite3.connect(str(db), check_same_thread=False)
+    writer_store = EventStore(writer_conn)
+    writer_store.init_schema()
+    writer_conn.execute("PRAGMA journal_mode=WAL")
+    writer_conn.commit()
+    reader_conn = sqlite3.connect(str(db), check_same_thread=False)
+    reader_store = EventStore(reader_conn)
+
+    local_tools_map = {
+        **build_local_tool_registry(sandbox),
+        **build_mutation_tool_registry(sandbox),
+    }
+
+    class _NullRouter:
+        def call(self, req: object) -> object:
+            raise RuntimeError("not expected")
+
+    ctx = AppContext(
+        writer_store=writer_store,
+        reader_store=reader_store,
+        writer_executor=ThreadPoolExecutor(max_workers=1, thread_name_prefix="b54-writer"),
+        reader_executor=ThreadPoolExecutor(max_workers=1, thread_name_prefix="b54-reader"),
+        bus=RoomEventBus(),
+        available_agents={},
+        available_skills={},
+        regex_registry={},
+        tools={"apply_edit": ToolMeta(reversibility=2)},
+        llm_router=_NullRouter(),  # type: ignore[arg-type]
+        local_tools=local_tools_map,
+        sandbox_root=sandbox,
+    )
+    app = _make_test_app(ctx)
+
+    rid = generate_room_id()
+    writer_store.append_room(Room(id=rid, type=RoomType.FREE_CHAT, state="open"))
+
+    # Append TOOL_CALL_PENDING for apply_edit.
+    pending = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_CALL_PENDING,
+        author=build_author("operator"),
+        timestamp=now_ms(),
+        content="",
+        metadata=ToolCallPendingMeta(
+            tool_name="apply_edit",
+            call_id="call_apply_b54",
+            params={"path": target_rel, "content": content_to_write},
+            tier="hard_confirm",
+            initiating_agent="operator",
+        ).model_dump(),
+    )
+    writer_store.append(pending)
+
+    with TestClient(app) as client:
+        r = client.post(
+            f"/rooms/{rid}/confirm",
+            json={"pending_event_id": pending.id, "decision": "approve"},
+        )
+
+    ctx.shutdown()
+
+    assert r.status_code == 200, f"confirm failed: {r.json()}"
+    turn_events = r.json().get("turn_events", [])
+    event_types = [e["type"] for e in turn_events]
+    assert "tool_result" in event_types, f"TOOL_RESULT missing after confirm: {event_types}"
+
+    # Verify the result content shows successful write (not "not_implemented").
+    result_events = [e for e in turn_events if e["type"] == "tool_result"]
+    result_content = result_events[0]["content"]
+    assert "wrote" in result_content, (
+        f"apply_edit result should say 'wrote N bytes', got: {result_content!r}"
+    )
+    assert "not_implemented" not in result_content.lower(), (
+        f"apply_edit still not_implemented: {result_content!r}"
+    )
+
+    # File must exist on disk.
+    assert (sandbox / target_rel).exists(), "apply_edit did not create the file on disk"
+    assert (sandbox / target_rel).read_text() == content_to_write
+
+
+def test_e2e_send_email_unconfigured_fail_closed(tmp_path: Path) -> None:
+    """send_email without email.yaml → fail-closed (not a crash/500).
+
+    email.yaml absence → the registry builds with fail-closed send_email;
+    calling it raises LocalToolError "not configured", not a server error.
+    """
+    from orchestrator.tools.local import LocalToolError
+    from orchestrator.tools.network_tools import build_network_tool_registry as _build_net
+
+    # No email_config_path → unconfigured provider.
+    registry = _build_net()
+    with pytest.raises(LocalToolError, match="not configured"):
+        registry["send_email"]({"to": "a@example.com", "subject": "s", "body": "b"})

@@ -239,18 +239,27 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
 
     local_tools = {**local_tools, **build_subprocess_tool_registry(sandbox_root)}
 
-    # Network local tools (ADR-035 D4 / P4.2-B4-4): compose at the api/ root
+    # Network local tools (ADR-035 D4 / P4.2-B4-4 + B5-2): compose at the api/ root
     # so local.py stays in-process-pristine (constitution t6).
     # web_search provider config loaded once at bootstrap; absent → fail-closed (not configured).
+    # send_email provider config loaded similarly; absent → fail-closed (not configured).
     from orchestrator.tools.network_tools import build_network_tool_registry
 
     _web_search_config = config_dir / "web_search.yaml"
+    _email_config = config_dir / "email.yaml"
     local_tools = {
         **local_tools,
         **build_network_tool_registry(
-            web_search_config_path=_web_search_config if _web_search_config.exists() else None
+            web_search_config_path=_web_search_config if _web_search_config.exists() else None,
+            email_config_path=_email_config if _email_config.exists() else None,
         ),
     }
+
+    # Mutation local tools (ADR-036 D4 / P4.2-B5-4): apply_edit in-process, sandboxed.
+    # send_email / git_push auto-registered via network/subprocess registries above.
+    from orchestrator.tools.mutation_tools import build_mutation_tool_registry
+
+    local_tools = {**local_tools, **build_mutation_tool_registry(sandbox_root)}
 
     from orchestrator.api.llm_adapter import RealLLMRouter
 
