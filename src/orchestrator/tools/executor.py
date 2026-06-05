@@ -47,6 +47,7 @@ MAX_MCP_CALLS_PER_TURN: int = 10
 # TOOL_FAILED(turn_subprocess_cap_exceeded). Covers both plugin Posture-B forks AND B3
 # subprocess tools (identified by _is_posture_b_subprocess marker).
 # Posture-A in-process tools are exempt (identified by absence of _is_posture_b_subprocess).
+# Name retained _PER_TURN (ADR-034 D5); resets per pass; true per-turn bound = this x (1+N).
 MAX_SUBPROCESS_CALLS_PER_TURN: int = 10
 
 # Bounded deadline for the advisory MCP interpret call (ADR-028 D5 / R1).
