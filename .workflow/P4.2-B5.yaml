@@ -1,7 +1,17 @@
 task_id: P4.2-B5
-state: awaiting_architect_accept
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-05T22:16:10.314743Z'
+last_transition_at: '2026-06-05T22:43:50.068128Z'
 cycle_started_at: '2026-06-05T21:51:57.660802Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-05T22:43:50.068128Z'
+  actor: architect
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: 'ADR-036 Accepted (mutation local tools: apply_edit/send_email/git_push)
+    by architect after single-lens R0-A-on-plan cleared (0 blocking) and routed push-backs
+    absorbed (SSH_AUTH_SOCK overlay, send_email config-driven HTTP + domain-allowlist,
+    apply_edit O_NOFOLLOW-temp+os.replace recipe). Plan merged to main. Single-lens
+    (requires_cross_family_review=false). Advancing to junior impl (B5-1..6 serial;
+    B5-6 inscribes ADR-028 D3 + cross-refs).'
 requires_cross_family_review: false
