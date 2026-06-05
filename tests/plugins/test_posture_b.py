@@ -5,8 +5,8 @@ Acceptance criteria verified here:
   pb2  — hung plugin tool is killed (bounded timeout) → MCPTimeoutError → TOOL_FAILED.
   pb3  — SIGTERM-ignoring plugin still killed by watchdog SIGKILL → TOOL_FAILED,
          no orphan (the discriminating watchdog test).
-  pb4  — >MAX_POSTURE_B_CALLS_PER_TURN in one turn → excess TOOL_FAILED
-         (turn_posture_b_cap_exceeded).
+  pb4  — >MAX_SUBPROCESS_CALLS_PER_TURN in one turn → excess TOOL_FAILED
+         (turn_subprocess_cap_exceeded).
   pb5  — env-leak probe: orchestrator secrets in os.environ are NOT visible to the
          child subprocess (c2 lesson; HR#10 scoped env).
   pb6  — _execute_local_call decision path unchanged (empty-decision-diff cite).
@@ -35,7 +35,7 @@ from orchestrator.core.room import Room, RoomType
 from orchestrator.mcp._async_bridge import MCPTimeoutError
 from orchestrator.plugins.code import PluginCodeLoadError, _PostureBFn, load_plugin_code
 from orchestrator.tools.executor import (
-    MAX_POSTURE_B_CALLS_PER_TURN,
+    MAX_SUBPROCESS_CALLS_PER_TURN,
     LocalToolOutput,
     execute_pending_tool_calls,
 )
@@ -289,7 +289,7 @@ def test_pb3_sigterm_ignoring_plugin_killed_by_watchdog(tmp_path: Path) -> None:
 
 
 def test_pb4_posture_b_per_turn_cap(tmp_path: Path) -> None:
-    """More than MAX_POSTURE_B_CALLS_PER_TURN Posture-B calls → excess TOOL_FAILED."""
+    """More than MAX_SUBPROCESS_CALLS_PER_TURN Posture-B calls → excess TOOL_FAILED."""
     _make_echo_module(tmp_path)
     tools = load_plugin_code(
         tmp_path, "cap_plugin", {"t": "tools_impl:echo_tool"}, provenance="fetched"
@@ -299,7 +299,7 @@ def test_pb4_posture_b_per_turn_cap(tmp_path: Path) -> None:
     room_id = _make_room(store)
 
     # Build MAX+2 tool call events in the window
-    n = MAX_POSTURE_B_CALLS_PER_TURN + 2
+    n = MAX_SUBPROCESS_CALLS_PER_TURN + 2
     window: list[Event] = []
     for i in range(n):
         tc = _tc_event(room_id, "t", call_id=f"cap_cid_{i}")
@@ -321,10 +321,10 @@ def test_pb4_posture_b_per_turn_cap(tmp_path: Path) -> None:
         e
         for e in events
         if e.type == EventType.TOOL_FAILED
-        and e.metadata.get("error_class") == "turn_posture_b_cap_exceeded"
+        and e.metadata.get("error_class") == "turn_subprocess_cap_exceeded"
     ]
     # Exactly MAX calls succeed, 2 fail
-    assert len(results) == MAX_POSTURE_B_CALLS_PER_TURN
+    assert len(results) == MAX_SUBPROCESS_CALLS_PER_TURN
     assert len(failed) == 2
 
 
@@ -340,7 +340,7 @@ def test_pb4_posture_a_tools_not_capped(tmp_path: Path) -> None:
         call_count["n"] += 1
         return LocalToolOutput(content="posture-a")
 
-    n = MAX_POSTURE_B_CALLS_PER_TURN + 5
+    n = MAX_SUBPROCESS_CALLS_PER_TURN + 5
     window: list[Event] = []
     for i in range(n):
         tc = _tc_event(room_id, "pa_tool", call_id=f"pa_cid_{i}")

@@ -1,13 +1,17 @@
 """Subprocess-only trust machinery (ADR-031 D2-b).
 
 Provides:
-  (a) build_scoped_env    — minimal-scoped subprocess env (c2 env-leak lesson).
+  (a) scoped_env / build_scoped_env — minimal-scoped subprocess env (c2 env-leak lesson).
   (b) subprocess_mcp_stdio — own the subprocess, expose MCP-compatible streams,
       add the orchestrator-level LAYER-1 kill watchdog (ADR-031 D2).
+  (c) run_scoped_command — run a plain argv command, bounded capture of stdout+stderr,
+      reuses kill-no-orphan + scoped-env (ADR-034 D4). Non-MCP plain-exec entrypoint
+      on the one subprocess protocol. [Extended P4.2-B3 → ADR-034]
 
 Reused by:
   mcp/transport.py  — stdio path
   plugins/          — Posture-B executor (P3.7-remote-5)
+  tools/subprocess_tools.py — B3 subprocess local tools (P4.2-B3)
 
 The watchdog: after SDK-equivalent teardown completes, check if the child PID is
 still alive; if so, force SIGKILL + reap.  This is LAYER-1 (orchestrator) vs
@@ -18,12 +22,15 @@ a future SDK bug or SIGKILL-surviving zombie is caught before it orphans.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import os
 import signal
+import subprocess as _subprocess
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -54,29 +61,180 @@ _SAFE_ENV_KEYS: tuple[str, ...] = (
 # Match SDK's PROCESS_TERMINATION_TIMEOUT (seconds before escalating kill).
 _TERMINATION_TIMEOUT: float = 2.0
 
+# Default output cap for run_scoped_command (64 KiB, reused from mcp/execution.py).
+# Bounded read: stops accumulating at this limit as it reads.
+MAX_RESULT_BYTES: int = 64 * 1024
+
 
 # ---------------------------------------------------------------------------
 # (a) Scoped env builder
 # ---------------------------------------------------------------------------
 
 
-def build_scoped_env(server_cfg: MCPServerConfig) -> dict[str, str]:
-    """Construct minimal scoped subprocess env (HR#10 / c2 env-leak lesson).
+def scoped_env(
+    extra_env: dict[str, str] | None = None,
+    api_key_env: str | None = None,
+) -> dict[str, str]:
+    """Core minimal-scoped env builder (HR#10 / c2 env-leak lesson).
 
-    Never passes the orchestrator's full os.environ. Inherits only _SAFE_ENV_KEYS,
-    then overlays server_cfg.env, then the api_key_env secret (if configured).
+    Three-step behaviour:
+      1. Inherit only _SAFE_ENV_KEYS from os.environ.
+      2. Overlay extra_env (if provided).
+      3. Conditionally inject api_key_env secret (if provided and present in os.environ).
     """
     env: dict[str, str] = {}
     for key in _SAFE_ENV_KEYS:
         val = os.environ.get(key)
         if val is not None:
             env[key] = val
-    env.update(server_cfg.env)
-    if server_cfg.api_key_env:
-        secret = os.environ.get(server_cfg.api_key_env)
+    if extra_env:
+        env.update(extra_env)
+    if api_key_env:
+        secret = os.environ.get(api_key_env)
         if secret is not None:
-            env[server_cfg.api_key_env] = secret
+            env[api_key_env] = secret
     return env
+
+
+def build_scoped_env(server_cfg: MCPServerConfig) -> dict[str, str]:
+    """Construct minimal scoped subprocess env (HR#10 / c2 env-leak lesson).
+
+    Thin wrapper around scoped_env() for the MCP server config case.
+    Never passes the orchestrator's full os.environ. Inherits only _SAFE_ENV_KEYS,
+    then overlays server_cfg.env, then the api_key_env secret (if configured).
+    """
+    return scoped_env(server_cfg.env, server_cfg.api_key_env)
+
+
+# ---------------------------------------------------------------------------
+# (c) Plain-command runner — SubprocessResult + SubprocessTimeout + run_scoped_command
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class SubprocessResult:
+    """Result from run_scoped_command."""
+
+    exit_code: int
+    output: str
+    truncated: bool
+
+
+class SubprocessTimeoutError(Exception):
+    """Raised by run_scoped_command when the child exceeds its timeout."""
+
+
+async def _run_scoped_command_async(
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    max_bytes: int,
+) -> SubprocessResult:
+    """Async inner coroutine for run_scoped_command.
+
+    The outer run_sync() supplies the timeout via asyncio.wait_for, which cancels
+    this coro on expiry. The shielded finally ensures the child is killed even
+    after cancellation (N3 / _terminate_subprocess wraps CancelScope(shield=True)).
+
+    Combines stdout+stderr into one stream via subprocess.STDOUT so the bounded
+    read captures all output.
+
+    Same-pass coupling (B3-5 watch-point): both stdout pipe and process.wait() are
+    issued in the same coroutine pass — the TOOL_CALL and its TOOL_RESULT are
+    produced together (excerpt-exclusion keyed on TOOL_CALL call_ids is safe).
+    """
+    pid: int = -1
+    process: anyio.abc.Process | None = None
+    output_bytes = bytearray()
+    truncated = False
+
+    try:
+        try:
+            process = await anyio.open_process(
+                argv,
+                cwd=cwd,
+                env=env,
+                stderr=_subprocess.STDOUT,  # combine stderr into stdout stream
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise OSError(f"spawn failed: {exc}") from exc
+
+        pid = process.pid
+
+        # Bounded read: stop accumulating at max_bytes; don't buffer an unbounded log.
+        if process.stdout is not None:
+            while True:
+                room = max_bytes - len(output_bytes)
+                if room <= 0:
+                    truncated = True
+                    break
+                try:
+                    chunk = await process.stdout.receive(min(4096, room))
+                except anyio.EndOfStream:
+                    break
+                output_bytes.extend(chunk)
+
+        # Wait for natural exit; if truncated, finally kills the process (pipe may be full).
+        if not truncated:
+            await process.wait()
+
+    finally:
+        # Shielded kill: both _terminate_subprocess and _kill_watchdog run inside
+        # CancelScope(shield=True) so they complete on the timeout-cancel path.
+        # _kill_watchdog is synchronous but must be inside the scope — once the scope
+        # exits, any pending CancelledError is re-raised and the watchdog would be skipped.
+        if process is not None and pid > 0:
+            with anyio.CancelScope(shield=True):
+                await _terminate_subprocess(process, pid)
+                _kill_watchdog(pid)
+
+    rc = process.returncode if process is not None else None
+    exit_code = rc if rc is not None else -1
+    return SubprocessResult(
+        exit_code=exit_code,
+        output=output_bytes.decode("utf-8", errors="replace"),
+        truncated=truncated,
+    )
+
+
+def run_scoped_command(
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_s: float = 30.0,
+    max_bytes: int = MAX_RESULT_BYTES,
+) -> SubprocessResult:
+    """Run an argv list, return bounded combined stdout+stderr + exit code.
+
+    argv must be a list — never shell=True, never a shell string (ADR-034 D3-i / carry-forward #6).
+    env is the caller's responsibility (use scoped_env() — never raw os.environ).
+    On timeout: child is killed, SubprocessTimeout raised.
+    On spawn failure: OSError propagated (caller maps to subprocess_spawn_failed).
+
+    Reuses _terminate_subprocess + _kill_watchdog (ADR-031 D2 one-subprocess-protocol).
+    Non-MCP plain-exec entrypoint on the one subprocess protocol. [Extended P4.2-B3 → ADR-034]
+    """
+    from orchestrator.mcp._async_bridge import MCPConnectionError, MCPTimeoutError, run_sync
+
+    try:
+        return run_sync(
+            _run_scoped_command_async(argv, cwd=cwd, env=env, max_bytes=max_bytes),
+            timeout=timeout_s,
+            timeout_msg=f"run_scoped_command: timed out after {timeout_s}s (argv={argv!r})",
+            error_msg_prefix="run_scoped_command failed",
+        )
+    except MCPTimeoutError as exc:
+        raise SubprocessTimeoutError(str(exc)) from exc
+    except MCPConnectionError as exc:
+        # run_sync wraps all non-MCPError exceptions as MCPConnectionError.
+        # Unwrap spawn failures (OSError) so callers can distinguish them.
+        cause = exc.__cause__
+        if isinstance(cause, OSError):
+            raise cause from exc
+        raise OSError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

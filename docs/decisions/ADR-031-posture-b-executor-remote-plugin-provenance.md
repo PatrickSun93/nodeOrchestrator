@@ -48,6 +48,8 @@ Posture B is **NOT a syscall sandbox.** It bounds three things and **only** thre
 
 **Consequence (inscribe):** Posture B's marginal value over "just bundle an MCP server" is thin (ADR-029 D4 observed this) — but `tool_impls` remains the manifest surface for **packaging convenience** (a plugin author writes a Python callable, not a full MCP server); the harness is what bridges it to the one subprocess protocol. The cost (a plugin tool must now be subprocess-safe) is the price of the real isolation boundary the remote/untrusted case requires.
 
+**[Extended P4.2-B3 → ADR-034, Accepted 2026-06-05]** `run_scoped_command` in `mcp/subprocess_trust.py` is the **non-MCP plain-exec entrypoint** on the one subprocess protocol: it reuses `scoped_env`, `_terminate_subprocess`, and `_kill_watchdog` to run plain `argv` commands (B3 subprocess local tools — `run_tests`/`run_lint`/`git_blame`/`git_log`/`git_diff`) with bounded stdout+stderr capture. This lightly extends this D2 contract; the substance is in ADR-034.
+
 ### D3. The provenance model — operator-placed vs fetched; fetched VOIDS curation
 
 The loader gains a **provenance** mark per plugin: `operator-placed` (present in the local `plugins/` dir — the P3.5 case) or `fetched` (obtained via the remote-fetch mechanism, D5). **The provenance determines the required posture:**

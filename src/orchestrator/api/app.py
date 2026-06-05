@@ -233,6 +233,12 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     local_tools = {**local_tools, **plugin_result.local_tools}
     mcp_sessions = {**mcp_sessions, **plugin_result.mcp_sessions}
 
+    # Subprocess local tools (ADR-034 D5 / P4.2-B3-3): compose at the api/ root
+    # so local.py stays in-process-pristine (constitution t6).
+    from orchestrator.tools.subprocess_tools import build_subprocess_tool_registry
+
+    local_tools = {**local_tools, **build_subprocess_tool_registry(sandbox_root)}
+
     from orchestrator.api.llm_adapter import RealLLMRouter
 
     llm_router: LLMRouterProtocol = RealLLMRouter(

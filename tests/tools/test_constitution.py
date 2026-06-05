@@ -48,6 +48,11 @@ t8 — B2 / log_event trusted-not-interpreted: tools/local.py never references
      EventType.OBSERVATION (local tools emit TOOL_RESULT, never OBSERVATION).
      Combined with the executor's behavioral tests in test_local.py §6 +
      test_b2_no_observation_event.
+
+t9 (B3-7) — no shell=True / os.system / shell-string in subprocess builder:
+     subprocess_tools.py + subprocess_trust.run_scoped_command must not use
+     shell=True, shell-string argv, or os.system. ADR-034 D3-i / carry-forward #6.
+     t6 (local.py in-process) still passes — this test covers the NEW subprocess surface.
 """
 
 from __future__ import annotations
@@ -459,4 +464,179 @@ def test_t8_b2_no_observation_in_local_tools() -> None:
         "t8 guard: tools/local.py references OBSERVATION — local tools must emit "
         "TOOL_RESULT only (trusted-not-interpreted; ADR-033 D5 / ADR-028 D2):\n"
         + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# t9 (B3-7): No shell=True / shell-string / os.system in subprocess builder
+# ---------------------------------------------------------------------------
+
+
+def test_t9_no_shell_in_subprocess_surface() -> None:
+    """B3-7: subprocess_tools.py and run_scoped_command must not use shell=True.
+
+    AST check mirrors t6 (local.py in-process) for the B3 subprocess surface.
+    ADR-034 D3-i / carry-forward #6: argv must be a list; shell=True / shell-string
+    / os.system are forbidden. Mirrors the ADR-032 verify=False constitution precedent.
+
+    t6 (local.py) must still pass — local.py is in-process-pristine; this test
+    covers the NEW subprocess surface only.
+    """
+    subprocess_tools_path = _TOOLS_PKG / "subprocess_tools.py"
+    subprocess_trust_path = _SRC / "mcp" / "subprocess_trust.py"
+
+    violations: list[str] = []
+
+    for path, scope in [
+        (subprocess_tools_path, "subprocess_tools.py"),
+        (subprocess_trust_path, "subprocess_trust.py (run_scoped_command context)"),
+    ]:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            # Forbidden: shell=True as keyword argument
+            if (
+                isinstance(node, ast.keyword)
+                and node.arg == "shell"
+                and isinstance(node.value, ast.Constant)
+                and node.value.value is True
+            ):
+                violations.append(
+                    f"  {scope}:{node.value.col_offset}: shell=True found"
+                )
+            # Forbidden: os.system(...)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "system"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "os"
+            ):
+                violations.append(
+                    f"  {scope}:{node.lineno}: os.system() call found"
+                )
+
+    # Verify argv to open_process/run_scoped_command is always a list (not a single string)
+    # in subprocess_tools.py AND subprocess_trust.py — symmetric with the shell=True/os.system
+    # checks above (defense-in-depth; no live gap but asymmetry is fragile).
+    for path, scope in [
+        (subprocess_tools_path, "subprocess_tools.py"),
+        (subprocess_trust_path, "subprocess_trust.py"),
+    ]:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                fname = ""
+                if isinstance(func, ast.Attribute):
+                    fname = func.attr
+                elif isinstance(func, ast.Name):
+                    fname = func.id
+                if fname in ("open_process", "run_scoped_command") and node.args:
+                    first_arg = node.args[0]
+                    if isinstance(first_arg, ast.Constant) and isinstance(
+                        first_arg.value, str
+                    ):
+                        violations.append(
+                            f"  {scope}:{node.lineno}: "
+                            f"{fname}() called with shell-string (not list argv)"
+                        )
+
+    assert not violations, (
+        "t9 guard: shell=True / os.system / shell-string found in subprocess surface "
+        "(ADR-034 D3-i carry-forward #6 — argv must be a list, never shell=True):\n"
+        + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# B3-5 drift sync-test: _SUBPROCESS_TOOL_NAMES == build_subprocess_tool_registry keys
+# ---------------------------------------------------------------------------
+
+
+def test_b35_subprocess_tool_names_drift_guard() -> None:
+    """Drift guard: selection._SUBPROCESS_TOOL_NAMES must equal the registry keys.
+
+    A tool added to build_subprocess_tool_registry without updating
+    _SUBPROCESS_TOOL_NAMES would silently escape the excerpt-exclusion filter.
+    This test fails the build in that case.
+
+    The test crosses the agents→tools layer boundary, but only in test code
+    (never at runtime) — by design per B3-5 acceptance criteria.
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from orchestrator.agents.selection import _SUBPROCESS_TOOL_NAMES
+    from orchestrator.tools.subprocess_tools import build_subprocess_tool_registry
+
+    with tempfile.TemporaryDirectory() as td:
+        registry_keys = set(build_subprocess_tool_registry(_Path(td)).keys())
+
+    assert registry_keys == set(_SUBPROCESS_TOOL_NAMES), (
+        "Drift: build_subprocess_tool_registry keys != selection._SUBPROCESS_TOOL_NAMES.\n"
+        f"Registry has: {sorted(registry_keys)}\n"
+        f"selection has: {sorted(_SUBPROCESS_TOOL_NAMES)}\n"
+        "Update _SUBPROCESS_TOOL_NAMES in agents/selection.py to match."
+    )
+
+
+def test_b35_subprocess_result_excluded_from_excerpt() -> None:
+    """Subprocess TOOL_RESULT is absent from excerpt; reaches agent as current_event (B3-5).
+
+    Two-channel split: injection string in run_tests TOOL_RESULT must NOT appear in
+    snapshot_excerpt (system block), confirming excerpt exclusion works correctly.
+    """
+    from orchestrator.agents.selection import _render_snapshot_excerpt
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        generate_event_id,
+        generate_room_id,
+        now_ms,
+    )
+
+    injection = "INJECTED_SUBPROCESS_CANARY_STRING_DO_NOT_RENDER"
+    rid = generate_room_id()
+
+    # TOOL_CALL for run_tests
+    tc = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_CALL,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content="",
+        metadata={"tool_name": "run_tests", "call_id": "cid_sub_1", "params": {}},
+    )
+    # TOOL_RESULT for run_tests containing injection
+    tr = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_RESULT,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content=injection,
+        metadata={"call_id": "cid_sub_1", "success": True},
+    )
+    # In-process local TOOL_RESULT (trusted — should still appear)
+    safe_tr = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_RESULT,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content="safe_local_result",
+        metadata={"call_id": "cid_safe_1", "success": True},
+    )
+
+    snapshot = [tc, tr, safe_tr]
+    excerpt = _render_snapshot_excerpt(snapshot)
+
+    # Subprocess TOOL_RESULT must be absent from excerpt
+    assert excerpt is None or injection not in excerpt, (
+        f"Subprocess TOOL_RESULT injection string appeared in snapshot_excerpt: {excerpt!r}"
+    )
+    # In-process local TOOL_RESULT must still appear
+    assert excerpt is not None and "safe_local_result" in excerpt, (
+        f"Trusted local TOOL_RESULT missing from snapshot_excerpt: {excerpt!r}"
     )

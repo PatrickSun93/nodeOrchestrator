@@ -88,19 +88,44 @@ _EXCERPT_EVENT_TYPES = frozenset(
     }
 )
 
+# Subprocess tool names to exclude from snapshot_excerpt (ADR-034 D3-iv / B3-5).
+# Must stay in sync with build_subprocess_tool_registry() keys — guarded by the
+# drift sync-test in tests/tools/test_constitution.py (t9_drift_sync_subprocess_names).
+# Not imported from tools/ at runtime (t1 forbids agents→tools); defined here in the consumer.
+_SUBPROCESS_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "run_tests",
+        "run_lint",
+        "git_blame",
+        "git_log",
+        "git_diff",
+    }
+)
 
-def _mcp_tool_result_call_ids(snapshot: list[Event]) -> frozenset[str]:
-    """Return call_ids of TOOL_CALL events whose tool_name starts with 'mcp__'.
 
-    These identify TOOL_RESULT events that carry raw untrusted external bytes —
-    the OBSERVATION (from the interpret step) is the trusted view to render
-    instead (ADR-033 D6 R2-N1).
+def _external_output_tool_result_call_ids(snapshot: list[Event]) -> frozenset[str]:
+    """Return call_ids of TOOL_CALL events whose results carry untrusted external bytes.
+
+    Excludes from snapshot_excerpt:
+      (a) mcp__ tools — raw untrusted external bytes; OBSERVATION is the trusted view.
+      (b) subprocess tools (_SUBPROCESS_TOOL_NAMES) — local-but-untrusted output
+          (ADR-034 D3-iv; the third trust class: local-but-untrusted → raw, framed,
+          excerpt-excluded). Keyed on TOOL_CALL tool_name (not a ToolResultMeta flag)
+          because writing a flag would require editing _execute_local_call (byte-frozen).
+
+    Watch-point (R0-B A2): this builds the call_id set from TOOL_CALL events in the
+    snapshot; if a TOOL_CALL ever aged out of the window while its TOOL_RESULT remained,
+    the exclusion would miss. This is theoretical — both are produced in the same
+    executor pass and enter the snapshot together (same-pass coupling assumption).
     """
     return frozenset(
         str(e.metadata.get("call_id", ""))
         for e in snapshot
         if e.type == EventType.TOOL_CALL
-        and str(e.metadata.get("tool_name", "")).startswith("mcp__")
+        and (
+            str(e.metadata.get("tool_name", "")).startswith("mcp__")
+            or str(e.metadata.get("tool_name", "")) in _SUBPROCESS_TOOL_NAMES
+        )
     )
 
 
@@ -114,18 +139,18 @@ def _render_snapshot_excerpt(snapshot: list[Event]) -> str | None:
     Rendered as: ``[<type>] <author>: <content>``
     Events truncated to fit within the budget.
 
-    Trust framing (ADR-033 D6 R2-N1): raw MCP TOOL_RESULT events (untrusted
-    external bytes) are NOT rendered — use the paired OBSERVATION (interpreted/
-    trusted view) instead.  Local-tool TOOL_RESULT events (trusted, our own
-    code) are rendered.  ADR-033 D2/D6 / ADR-011 amendment.
+    Trust framing (ADR-033 D6 R2-N1 / ADR-034 D3-iv): raw MCP TOOL_RESULT events
+    (untrusted external bytes) and subprocess TOOL_RESULT events (local-but-untrusted)
+    are NOT rendered. In-process local-tool TOOL_RESULT events (trusted, our own code)
+    are rendered. ADR-033 D2/D6 / ADR-011 amendment / ADR-034 D3-iv.
     """
-    mcp_result_ids = _mcp_tool_result_call_ids(snapshot)
+    external_result_ids = _external_output_tool_result_call_ids(snapshot)
     relevant = [
         e for e in snapshot
         if e.type in _EXCERPT_EVENT_TYPES
         and not (
             e.type == EventType.TOOL_RESULT
-            and str(e.metadata.get("call_id", "")) in mcp_result_ids
+            and str(e.metadata.get("call_id", "")) in external_result_ids
         )
     ]
     if not relevant:
