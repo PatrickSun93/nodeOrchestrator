@@ -1,13 +1,28 @@
 ---
 task_id: P4.2-B3
 round: R0-B
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 3
-  green: 3
+  yellow: 0
+  green: 0
 review_date: 2026-06-05
 reviewer: cross-family (DeepSeek V4 Pro via role-rewriting proxy)
+verdict_history:
+  - date: 2026-06-05
+    prior_verdict: needs_architect
+    new_verdict: clean
+    reason: >
+      All three yellow findings (A1/A2/B1/B2) resolved by junior fixes B3-8..B3-11.
+      B2 (watchdog skip on cancel): _kill_watchdog now inside CancelScope(shield=True) at
+      subprocess_trust.py:191; spy test added and passes (a38e283).
+      A1 (error_class homogenized): ADR-034 D5 now inscribes message-level distinction +
+      byte-frozen constraint explicitly (bea5792).
+      B1 (cap name/reality gap): one-line comment linking _PER_TURN to ADR-034 D5 x (1+N)
+      added on executor.py:50 (990fd19).
+      Gates all green: ruff clean, mypy --strict 238 files clean, pytest mcp+tools 182 passed,
+      constitution t1-t9 12/12 passed.
+      RC-10 bump: prior R0-B needs_architect → clean; no unresolved findings remain.
 ---
 
 # R0-B cross-family review — P4.2-B3 (subprocess local tools, impl-stage)
@@ -121,3 +136,17 @@ No 🔴 findings. The three 🟡 findings are clustered around edge-case resilie
 - **B2** (watchdog skip on cancel): the LAYER-1 backstop is structurally skipped in the timeout path — the only case where it would matter.
 
 All three are acknowledged design decisions or subtle placement issues, not missing capability. The core trust boundary (argv-never-shell, scoped env, output-as-untrusted, excerpt exclusion) and the core liveness guarantees (kill-no-orphan, bounded output, per-pass cap) hold under tracing.
+
+---
+
+## Verdict bump (RC-10): needs_architect → clean — 2026-06-05
+
+All three yellow findings resolved by junior fixes:
+
+- **B2** (a38e283): `_kill_watchdog(pid)` moved inside `CancelScope(shield=True)` at `subprocess_trust.py:191` — now executes on the timeout-cancel path, matching `subprocess_mcp_stdio`. Spy test `test_run_scoped_command_timeout_watchdog_called` asserts watchdog is called on timeout; existing no-orphan test `test_run_scoped_command_timeout_kills_no_orphan` still passes.
+- **A1** (bea5792): ADR-034 D5 inscribes the message-level distinction — timeout/spawn-failure classes encoded in TOOL_FAILED message prefix; structured `error_class` stays default `"executor_error"` because `_execute_local_call` is byte-frozen (empty-executor-diff / ADR-031 HR#2). Inscribed, not discovered.
+- **B1** (990fd19): One-line comment on `executor.py:50` links the `_PER_TURN` name to ADR-034 D5 × `(1+N)` — prevents future maintainers from miscomputing the bound.
+
+Gates: ruff clean, mypy --strict `src/ tests/` clean (238 files), pytest `tests/mcp/ tests/tools/` 182 passed, constitution t1-t9 12/12 passed.
+
+No unresolved findings remain. Verdict bumped `needs_architect` → `clean`.
