@@ -102,12 +102,13 @@ def dispatch_turn(
             snapshot=snapshot,
         )
 
-        # ADR-033 D2/D6: feed snapshot_excerpt into system block so a re-dispatched agent
-        # reasons over ALL prior-pass results, not only the latest (current_event trigger).
-        # No new LLMPurpose — still AGENT_RESPONSE (carry-forward #2).
+        # ADR-033 D2/D6 / ADR-034 D3-iv: feed snapshot_excerpt into system block so a
+        # re-dispatched agent reasons over ALL prior-pass results, not only the latest
+        # (current_event trigger). No new LLMPurpose — still AGENT_RESPONSE (carry-forward #2).
         # R2-N1: explicit untrusted-data delimiter so injected text reads as data, not
-        # instructions.  Raw MCP TOOL_RESULT events are excluded from the excerpt (their
-        # OBSERVATION is rendered instead); local TOOL_RESULT events are trusted.
+        # instructions. Raw MCP TOOL_RESULT events and subprocess TOOL_RESULT events
+        # (_SUBPROCESS_TOOL_NAMES) are excluded from the excerpt (untrusted/external output);
+        # in-process local TOOL_RESULT events are trusted and rendered.
         system_parts = [agent.persona, *context.skill_bodies]
         if context.snapshot_excerpt:
             system_parts.append(
