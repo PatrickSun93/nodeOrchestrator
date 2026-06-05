@@ -708,3 +708,93 @@ def test_web_fetch_tool_call_reaches_tool_result() -> None:
     web_fetch_fn = registry["web_fetch"]
     assert isinstance(web_fetch_fn, _NetworkToolFn)
     assert getattr(web_fetch_fn, "_is_network_tool", False) is True
+
+
+# ---------------------------------------------------------------------------
+# §9 Per-turn network cap (B4-5): MAX_NETWORK_CALLS_PER_TURN + independence from subprocess cap
+# ---------------------------------------------------------------------------
+
+
+def test_network_cap_exceeded() -> None:
+    """Network calls beyond MAX_NETWORK_CALLS_PER_TURN → TOOL_FAILED(turn_network_cap_exceeded)."""
+    from orchestrator.tools.executor import MAX_NETWORK_CALLS_PER_TURN
+    from orchestrator.tools.network_tools import _NetworkToolFn
+
+    store = _make_store()
+    room_id = _make_room(store)
+
+    call_count = MAX_NETWORK_CALLS_PER_TURN + 1
+
+    # Build a simple _NetworkToolFn that always succeeds.
+    dummy_fn = _NetworkToolFn(lambda params: LocalToolOutput("net result"))
+    local_tools: LocalToolRegistry = {"web_fetch": dummy_fn}
+
+    tc_events: list[Event] = []
+    for i in range(call_count):
+        tc = _tc_event_params(room_id, "web_fetch", f"net_{i}", {"url": "https://example.com/"})
+        store.append(tc)
+        tc_events.append(tc)
+
+    execute_pending_tool_calls(
+        window_events=tc_events,
+        room_id=room_id,
+        event_store=store,
+        mcp_sessions={},
+        local_tools=local_tools,
+        llm_router=_mock_llm_router(),
+    )
+
+    all_events = store.get_room_events(room_id)
+    results = [e for e in all_events if e.type == EventType.TOOL_RESULT]
+    failures = [e for e in all_events if e.type == EventType.TOOL_FAILED]
+
+    assert len(results) == MAX_NETWORK_CALLS_PER_TURN
+    assert len(failures) == 1
+    assert "turn_network_cap_exceeded" in failures[0].content
+
+
+def test_subprocess_and_network_caps_are_independent() -> None:
+    """10 subprocess + 10 network calls in one pass — both allowed (separate caps)."""
+    from orchestrator.tools.executor import (
+        MAX_NETWORK_CALLS_PER_TURN,
+        MAX_SUBPROCESS_CALLS_PER_TURN,
+    )
+    from orchestrator.tools.network_tools import _NetworkToolFn
+    from orchestrator.tools.subprocess_tools import _SubprocessToolFn
+
+    store = _make_store()
+    room_id = _make_room(store)
+
+    subprocess_fn = _SubprocessToolFn(lambda params: LocalToolOutput("sub result"))
+    network_fn = _NetworkToolFn(lambda params: LocalToolOutput("net result"))
+    local_tools: LocalToolRegistry = {
+        "run_tests": subprocess_fn,
+        "web_fetch": network_fn,
+    }
+
+    tc_events: list[Event] = []
+    for i in range(MAX_SUBPROCESS_CALLS_PER_TURN):
+        tc = _tc_event_params(room_id, "run_tests", f"sub_{i}", {})
+        store.append(tc)
+        tc_events.append(tc)
+    for i in range(MAX_NETWORK_CALLS_PER_TURN):
+        tc = _tc_event_params(room_id, "web_fetch", f"net_{i}", {"url": "https://example.com/"})
+        store.append(tc)
+        tc_events.append(tc)
+
+    execute_pending_tool_calls(
+        window_events=tc_events,
+        room_id=room_id,
+        event_store=store,
+        mcp_sessions={},
+        local_tools=local_tools,
+        llm_router=_mock_llm_router(),
+    )
+
+    all_events = store.get_room_events(room_id)
+    results = [e for e in all_events if e.type == EventType.TOOL_RESULT]
+    failures = [e for e in all_events if e.type == EventType.TOOL_FAILED]
+
+    # All 20 calls succeed (10 sub + 10 net; caps are independent)
+    assert len(failures) == 0, f"Expected 0 failures but got {[f.content for f in failures]}"
+    assert len(results) == MAX_SUBPROCESS_CALLS_PER_TURN + MAX_NETWORK_CALLS_PER_TURN

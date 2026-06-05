@@ -50,6 +50,13 @@ MAX_MCP_CALLS_PER_TURN: int = 10
 # Name retained _PER_TURN (ADR-034 D5); resets per pass; true per-turn bound = this x (1+N).
 MAX_SUBPROCESS_CALLS_PER_TURN: int = 10
 
+# Per-pass network call cap (ADR-035 D4 / P4.2-B4-5).
+# Network LocalToolFn calls (web_fetch, web_search; identified by _is_network_tool marker)
+# beyond this per execute_pending_tool_calls invocation → TOOL_FAILED(turn_network_cap_exceeded).
+# Separate from subprocess cap (network connections vs subprocess forks are distinct resources).
+# Resets per pass; true per-turn bound = this x (1+N) (ADR-033 D4 turn-loop multiplier).
+MAX_NETWORK_CALLS_PER_TURN: int = 10
+
 # Bounded deadline for the advisory MCP interpret call (ADR-028 D5 / R1).
 # On timeout: raw TOOL_RESULT stands; no OBSERVATION appended.
 INTERPRET_TIMEOUT_S: float = 30.0
@@ -113,6 +120,7 @@ def execute_pending_tool_calls(
 
     mcp_calls_this_turn = 0
     subprocess_calls_this_turn = 0
+    network_calls_this_turn = 0
 
     for tc_event in tool_calls:
         meta = tc_event.metadata
@@ -167,6 +175,9 @@ def execute_pending_tool_calls(
                 _is_posture_b: bool = _impl is not None and bool(
                     getattr(_impl, "_is_posture_b_subprocess", False)
                 )
+                _is_network: bool = _impl is not None and bool(
+                    getattr(_impl, "_is_network_tool", False)
+                )
                 if _is_posture_b:
                     if subprocess_calls_this_turn >= MAX_SUBPROCESS_CALLS_PER_TURN:
                         _log.warning(
@@ -186,6 +197,37 @@ def execute_pending_tool_calls(
                         )
                     else:
                         subprocess_calls_this_turn += 1
+                        _execute_local_call(
+                            tc_event=tc_event,
+                            tool_name=tool_name,
+                            call_id=call_id,
+                            agent_id=agent_id,
+                            room_id=room_id,
+                            event_store=event_store,
+                            local_tools=local_tools,
+                        )
+                elif _is_network:
+                    # Network cap: separate from subprocess cap (ADR-035 D4 / B4-5).
+                    # Network connections (latency-bound, in-process) and subprocess forks
+                    # are distinct resource classes — separate caps keep bounds legible.
+                    if network_calls_this_turn >= MAX_NETWORK_CALLS_PER_TURN:
+                        _log.warning(
+                            "executor: per-turn network cap (%d) reached; "
+                            "call_id=%r tool=%r → TOOL_FAILED",
+                            MAX_NETWORK_CALLS_PER_TURN,
+                            call_id,
+                            tool_name,
+                        )
+                        _append_tool_failed(
+                            event_store,
+                            room_id,
+                            call_id,
+                            agent_id,
+                            f"turn_network_cap_exceeded: limit={MAX_NETWORK_CALLS_PER_TURN}",
+                            error_class="turn_network_cap_exceeded",
+                        )
+                    else:
+                        network_calls_this_turn += 1
                         _execute_local_call(
                             tc_event=tc_event,
                             tool_name=tool_name,
