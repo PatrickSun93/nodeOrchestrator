@@ -158,12 +158,18 @@ def _walk_sandbox(resolved_root: Path, scope_str: str | None) -> Path:
 def _collect_hits(
     walk_root: Path,
     match_fn: Callable[[str, str], list[tuple[int, str]]],
+    *,
+    resolved_root: Path,
 ) -> tuple[list[str], int, bool]:
     """Walk walk_root, apply match_fn per file, collect file:line hits.
 
     Returns (hits_lines, files_scanned, truncated_by_cap).
     Stops after MAX_SEARCH_FILES files (ADR-033 D5 bounded traversal).
     Each file is read bounded at _SEARCH_FILE_READ_BYTES.
+
+    Per-file containment (ADR-028 D3 / R0-A Y2): resolves each file path and
+    rejects if it escapes resolved_root — mirrors _check_path for read_file so
+    an in-sandbox symlinked file pointing outside is skipped, not read.
     """
     hits: list[str] = []
     output_bytes = 0
@@ -177,6 +183,11 @@ def _collect_hits(
                 return hits, files_scanned, truncated_by_cap
             files_scanned += 1
             fpath = Path(dirpath) / filename
+            # Symlink-escape guard: reject files whose realpath escapes the sandbox root.
+            try:
+                fpath.resolve().relative_to(resolved_root)
+            except ValueError:
+                continue
             try:
                 raw = fpath.read_bytes()[:_SEARCH_FILE_READ_BYTES]
                 text = raw.decode("utf-8", errors="replace")
@@ -211,7 +222,9 @@ def _make_search_text(sandbox_root: Path) -> LocalToolFn:
                     results.append((i, line))
             return results
 
-        hits, files_scanned, truncated = _collect_hits(walk_root, match_fn)
+        hits, files_scanned, truncated = _collect_hits(
+            walk_root, match_fn, resolved_root=resolved_root
+        )
         content = "\n".join(hits) if hits else "(no matches)"
         truncated_at = MAX_RESULT_BYTES if truncated else None
         _log.debug("search_text: %d files %d hits trunc=%s", files_scanned, len(hits), truncated)
@@ -242,7 +255,9 @@ def _make_search_code(sandbox_root: Path) -> LocalToolFn:
                     results.append((i, line))
             return results
 
-        hits, files_scanned, truncated = _collect_hits(walk_root, match_fn)
+        hits, files_scanned, truncated = _collect_hits(
+            walk_root, match_fn, resolved_root=resolved_root
+        )
         content = "\n".join(hits) if hits else "(no matches)"
         truncated_at = MAX_RESULT_BYTES if truncated else None
         _log.debug("search_code: %d files %d hits trunc=%s", files_scanned, len(hits), truncated)
@@ -270,7 +285,9 @@ def _make_find_references(sandbox_root: Path) -> LocalToolFn:
                     results.append((i, line))
             return results
 
-        hits, files_scanned, truncated = _collect_hits(walk_root, match_fn)
+        hits, files_scanned, truncated = _collect_hits(
+            walk_root, match_fn, resolved_root=resolved_root
+        )
         content = "\n".join(hits) if hits else "(no matches)"
         truncated_at = MAX_RESULT_BYTES if truncated else None
         _log.debug("find_references: %d files %d hits trunc=%s", files_scanned, len(hits), truncated)  # noqa: E501
@@ -303,7 +320,9 @@ def _make_find_definition(sandbox_root: Path) -> LocalToolFn:
                     results.append((i, line))
             return results
 
-        hits, files_scanned, truncated = _collect_hits(walk_root, match_fn)
+        hits, files_scanned, truncated = _collect_hits(
+            walk_root, match_fn, resolved_root=resolved_root
+        )
         content = "\n".join(hits) if hits else "(no matches)"
         truncated_at = MAX_RESULT_BYTES if truncated else None
         _log.debug("find_definition: %d files %d hits trunc=%s", files_scanned, len(hits), truncated)  # noqa: E501

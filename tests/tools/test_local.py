@@ -621,3 +621,50 @@ def test_log_event_output_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     results = [e for e in events if e.type == EventType.TOOL_RESULT]
     assert len(results) == 1
     assert results[0].metadata.get("output_truncated_at") == 20
+
+
+# ---------------------------------------------------------------------------
+# Fix 3 (R0-A Y2): B2 search symlink-escape containment (ADR-028 D3 / R0-A Y2)
+# ---------------------------------------------------------------------------
+
+
+def test_search_text_sandbox_internal_symlink_to_outside_not_in_hits(tmp_path: Path) -> None:
+    """search_text: in-sandbox symlinked FILE pointing outside is skipped (ADR-028 D3 / R0-A Y2).
+
+    Mirrors test_read_file_symlink_escape_rejected but for the B2 search tools.
+    The sandbox contains a real file with a match and a symlink to an external
+    file that also matches. The external file must NOT appear in hits.
+    """
+    # Set up sandbox with one real file and one symlink pointing outside.
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    outside = tmp_path / "outside_secret.txt"
+    outside.write_text("SECRET_OUTSIDE_CONTENT search_me\n", encoding="utf-8")
+    (sandbox / "real.txt").write_text("search_me found_here\n", encoding="utf-8")
+    (sandbox / "escape_link.txt").symlink_to(outside)
+
+    store = _make_store()
+    room_id = _make_room(store)
+    tc = _tc_event_params(room_id, "search_text", "tc_sym_search", {"query": "search_me"})
+    store.append(tc)
+    execute_pending_tool_calls(
+        window_events=[tc],
+        room_id=room_id,
+        event_store=store,
+        mcp_sessions={},
+        local_tools=build_local_tool_registry(sandbox),
+        llm_router=_noop_llm_router(),
+    )
+    events = store.get_room_events(room_id)
+    results = [e for e in events if e.type == EventType.TOOL_RESULT]
+    assert len(results) == 1
+    content = results[0].content
+    # Real in-sandbox file should be found.
+    assert "found_here" in content, f"Real file hit missing. Got: {content}"
+    # External symlink target must NOT appear in hits.
+    assert "SECRET_OUTSIDE_CONTENT" not in content, (
+        f"Symlink-escaped content must not appear in search hits. Got: {content}"
+    )
+    assert "outside_secret.txt" not in content, (
+        f"Path to external file must not appear in search hits. Got: {content}"
+    )
