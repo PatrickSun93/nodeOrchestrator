@@ -181,12 +181,14 @@ async def _run_scoped_command_async(
             await process.wait()
 
     finally:
-        # Shielded kill (N3): _terminate_subprocess has its own CancelScope(shield=True),
-        # so the kill completes even when asyncio.wait_for has cancelled this coroutine.
+        # Shielded kill: both _terminate_subprocess and _kill_watchdog run inside
+        # CancelScope(shield=True) so they complete on the timeout-cancel path.
+        # _kill_watchdog is synchronous but must be inside the scope — once the scope
+        # exits, any pending CancelledError is re-raised and the watchdog would be skipped.
         if process is not None and pid > 0:
             with anyio.CancelScope(shield=True):
                 await _terminate_subprocess(process, pid)
-            _kill_watchdog(pid)
+                _kill_watchdog(pid)
 
     rc = process.returncode if process is not None else None
     exit_code = rc if rc is not None else -1

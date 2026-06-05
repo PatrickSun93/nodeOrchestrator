@@ -314,3 +314,36 @@ def test_run_scoped_command_timeout_kills_no_orphan(tmp_path: Path) -> None:
             )
         except ProcessLookupError:
             pass  # Expected: killed by _terminate_subprocess + _kill_watchdog
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM signal semantics are Unix-only")
+def test_run_scoped_command_timeout_watchdog_called(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_kill_watchdog is called on the timeout-cancel path (B2 fix: inside shielded scope).
+
+    Verifies the fix: _kill_watchdog must execute even when asyncio.wait_for cancels the
+    coroutine on timeout.  Prior to the fix it was placed after the CancelScope block and
+    was skipped when cancellation was pending at scope exit.
+    """
+    import orchestrator.mcp.subprocess_trust as trust_mod
+
+    watchdog_calls: list[int] = []
+    original = trust_mod._kill_watchdog
+
+    def _spy(pid: int) -> None:
+        watchdog_calls.append(pid)
+        original(pid)
+
+    monkeypatch.setattr(trust_mod, "_kill_watchdog", _spy)
+    env = scoped_env()
+
+    with pytest.raises(SubprocessTimeoutError):
+        run_scoped_command(
+            [sys.executable, "-c", "import time; time.sleep(9999)"],
+            cwd=tmp_path,
+            env=env,
+            timeout_s=1.0,
+        )
+
+    assert watchdog_calls, "_kill_watchdog was not called on the timeout-cancel path (B2 fix)"
