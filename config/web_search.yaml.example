@@ -1,0 +1,6 @@
+# web_search provider config (copy to web_search.yaml and set env var — do NOT commit web_search.yaml).
+# Provider: Brave Search API (Y1 ratified, ADR-035 D1).
+# api_key_env: name of the environment variable holding the Brave API key.
+#              The key value is NEVER committed here; set it in your shell or .env.
+provider: brave
+api_key_env: BRAVE_API_KEY

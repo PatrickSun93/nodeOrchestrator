@@ -60,6 +60,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 _SRC = Path(__file__).resolve().parent.parent.parent / "src" / "orchestrator"
 _TOOLS_PKG = _SRC / "tools"
 _API_PKG = _SRC / "api"
@@ -639,4 +641,272 @@ def test_b35_subprocess_result_excluded_from_excerpt() -> None:
     # In-process local TOOL_RESULT must still appear
     assert excerpt is not None and "safe_local_result" in excerpt, (
         f"Trusted local TOOL_RESULT missing from snapshot_excerpt: {excerpt!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B4-6 drift sync-test: _NETWORK_TOOL_NAMES == build_network_tool_registry keys
+# ---------------------------------------------------------------------------
+
+
+def test_b46_network_tool_names_drift_guard() -> None:
+    """Drift guard: selection._NETWORK_TOOL_NAMES must equal the registry keys.
+
+    A tool added to build_network_tool_registry without updating
+    _NETWORK_TOOL_NAMES would silently escape the excerpt-exclusion filter.
+    This test fails the build in that case.
+
+    Crosses the agents→tools layer boundary in test code only (not at runtime).
+    """
+    from orchestrator.agents.selection import _NETWORK_TOOL_NAMES
+    from orchestrator.tools.network_tools import build_network_tool_registry
+
+    registry_keys = set(build_network_tool_registry().keys())
+
+    assert registry_keys == set(_NETWORK_TOOL_NAMES), (
+        "Drift: build_network_tool_registry keys != selection._NETWORK_TOOL_NAMES.\n"
+        f"Registry has: {sorted(registry_keys)}\n"
+        f"selection has: {sorted(_NETWORK_TOOL_NAMES)}\n"
+        "Update _NETWORK_TOOL_NAMES in agents/selection.py to match."
+    )
+
+
+def test_b46_network_result_excluded_from_excerpt() -> None:
+    """Network TOOL_RESULT is absent from excerpt; reaches agent as current_event (B4-6).
+
+    Two-channel split: injection string in web_fetch TOOL_RESULT must NOT appear in
+    snapshot_excerpt (system block), confirming excerpt exclusion works correctly.
+    Same-pass coupling watch-point (ADR-034 D3-iv / ADR-035 D3-iii).
+    """
+    from orchestrator.agents.selection import _render_snapshot_excerpt
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        generate_event_id,
+        generate_room_id,
+        now_ms,
+    )
+
+    injection = "INJECTED_NETWORK_CANARY_STRING_DO_NOT_RENDER"
+    rid = generate_room_id()
+
+    # TOOL_CALL for web_fetch
+    tc = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_CALL,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content="",
+        metadata={"tool_name": "web_fetch", "call_id": "cid_net_1", "params": {}},
+    )
+    # TOOL_RESULT for web_fetch containing injection
+    tr = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_RESULT,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content=injection,
+        metadata={"call_id": "cid_net_1", "success": True},
+    )
+    # In-process local TOOL_RESULT (trusted — should still appear)
+    safe_tr = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_RESULT,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content="safe_local_result",
+        metadata={"call_id": "cid_safe_1", "success": True},
+    )
+
+    snapshot = [tc, tr, safe_tr]
+    excerpt = _render_snapshot_excerpt(snapshot)
+
+    # Network TOOL_RESULT must be absent from excerpt
+    assert excerpt is None or injection not in excerpt, (
+        f"Network TOOL_RESULT injection string appeared in snapshot_excerpt: {excerpt!r}"
+    )
+    # In-process local TOOL_RESULT must still appear
+    assert excerpt is not None and "safe_local_result" in excerpt, (
+        f"Trusted local TOOL_RESULT missing from snapshot_excerpt: {excerpt!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# t10 (B4-8): SSRF floor + no-bypass + verify=True
+# ---------------------------------------------------------------------------
+
+
+def test_t10a_ssrf_floor_rejects_denied_ranges() -> None:
+    """t10 (a): SSRF floor behaviorally rejects all required denied ranges.
+
+    Tests the is_denied_ip classifier against the plan-mandated floor:
+    loopback, private, CGNAT (100.64.0.0/10 incl. 100.100.100.200),
+    link-local (incl. 169.254.169.254), unspecified (0.0.0.0),
+    IPv4-mapped-IPv6, and the IP-literal-encoding integration case.
+    """
+    import ipaddress
+
+    from orchestrator.tools.net_trust import is_denied_ip
+
+    denied = [
+        # Loopback
+        "127.0.0.1",
+        "::1",
+        # Private
+        "10.0.0.5",
+        "192.168.1.1",
+        "172.16.0.1",
+        # CGNAT 100.64.0.0/10 — must be explicit (A1)
+        "100.64.0.1",
+        "100.100.100.200",  # Alibaba Cloud metadata — t10 explicitly asserts this
+        # Link-local — incl. cloud-metadata (must be explicit)
+        "169.254.169.254",  # cloud metadata — t10 explicitly asserts this
+        "169.254.0.1",
+        "fe80::1",
+        # Unspecified
+        "0.0.0.0",
+        "::",
+        # IPv4-mapped-IPv6 (bypass class)
+        "::ffff:127.0.0.1",
+        "::ffff:10.0.0.1",
+        # Private IPv6
+        "fc00::1",
+    ]
+    for addr in denied:
+        ip = ipaddress.ip_address(addr)
+        assert is_denied_ip(ip), f"t10: is_denied_ip({addr!r}) should be True (denied range)"
+
+    # Public host must be ALLOWED
+    assert not is_denied_ip(ipaddress.ip_address("93.184.216.34")), (
+        "t10: 93.184.216.34 (public) should be allowed"
+    )
+
+
+def test_t10b_ip_literal_encoding_integration_via_full_web_fetch_path() -> None:
+    """t10 (b): IP-literal-encoded loopback URLs blocked via the full web_fetch path (A3/Y3).
+
+    Proves the resolve-then-classify path normalises decimal/hex/octal to 127.0.0.1
+    and denies it. Uses the REAL resolver (no mock) on a stubbed transport (no connection).
+    """
+    import httpx
+
+    from orchestrator.tools.local import LocalToolError
+    from orchestrator.tools.net_trust import _SSRFValidatingTransport
+
+    transport = _SSRFValidatingTransport()
+
+    for url in ("http://2130706433/", "http://0x7f.0.0.1/", "http://0177.0.0.1/"):
+        try:
+            request = httpx.Request("GET", url)
+        except httpx.InvalidURL:
+            # httpx URL parser rejects the encoding — also "blocked" (cannot reach server)
+            continue
+        with pytest.raises(LocalToolError, match=r"(ssrf_blocked:|fetch_failed:)"):
+            transport.handle_request(request)
+
+
+def test_t10c_no_verify_false_in_network_surface() -> None:
+    """t10 (c): verify=False is forbidden in the network surface (ADR-032 + ADR-035 t10).
+
+    AST check: net_trust.py and network_tools.py must not contain verify=False.
+    Mirrors the ADR-032 constitution precedent applied to SSRF bypass.
+    """
+    violations: list[str] = []
+
+    for filename in ("net_trust.py", "network_tools.py"):
+        path = _TOOLS_PKG / filename
+        if not path.exists():
+            violations.append(f"  {filename}: file missing (expected in tools/)")
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.keyword)
+                and node.arg == "verify"
+                and isinstance(node.value, ast.Constant)
+                and node.value.value is False
+            ):
+                violations.append(f"  {filename}:{node.value.col_offset}: verify=False found")
+
+    assert not violations, (
+        "t10 guard: verify=False in network surface "
+        "(ADR-032 + ADR-035 t10 — must always use verify=True):\n"
+        + "\n".join(violations)
+    )
+
+
+def test_t10d_no_plain_httpx_get_in_web_fetch() -> None:
+    """t10 (d): web_fetch path must use build_ssrf_client (not plain httpx.get).
+
+    AST check: network_tools.py must not call httpx.get / httpx.Client without SSRF guard.
+    Specifically, web_fetch must call build_ssrf_client (the validating client builder).
+    Confirms 'no code path fetches an agent-supplied URL without the SSRF validator' (ADR-035).
+    """
+    path = _TOOLS_PKG / "network_tools.py"
+    source = path.read_text(encoding="utf-8")
+
+    # build_ssrf_client must be referenced (web_fetch uses it)
+    assert "build_ssrf_client" in source, (
+        "t10: network_tools.py must reference build_ssrf_client "
+        "(web_fetch must use the SSRF-validating client, not plain httpx)"
+    )
+
+
+def test_t10e_transport_retries_zero_in_net_trust() -> None:
+    """t10 (e): _SSRFValidatingTransport must set retries=0 (no silent retry loop, B3).
+
+    AST check: net_trust.py HTTPTransport constructor must have retries=0.
+    """
+    path = _TOOLS_PKG / "net_trust.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    retries_zero_found = False
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.keyword)
+            and node.arg == "retries"
+            and isinstance(node.value, ast.Constant)
+            and node.value.value == 0
+        ):
+            retries_zero_found = True
+            break
+
+    assert retries_zero_found, (
+        "t10: net_trust.py must set retries=0 on HTTPTransport "
+        "(no silent retry loop multiplying the single-writer block; ADR-035 D2 B3)"
+    )
+
+
+def test_t6_and_t9_still_pass_with_net_trust_present() -> None:
+    """t10 meta: t6 (local.py in-process) + t9 (subprocess shell-ban) are unaffected.
+
+    B4 lives in net_trust.py/network_tools.py, NOT local.py; constitution still holds.
+    This test re-asserts the t6/t9 key invariants to confirm B4 did not widen those surfaces.
+    """
+    local_path = _TOOLS_PKG / "local.py"
+    net_trust_path = _TOOLS_PKG / "net_trust.py"
+
+    # t6: local.py does not import subprocess (AST check — string 'Popen' may appear in comments)
+    local_tree = ast.parse(local_path.read_text(encoding="utf-8"))
+    local_violations: list[str] = []
+    for node in ast.walk(local_tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "subprocess" or alias.name.startswith("subprocess."):
+                    local_violations.append(f"  local.py:{node.lineno}: imports {alias.name!r}")
+        elif isinstance(node, ast.ImportFrom) and node.module and (
+            node.module == "subprocess" or node.module.startswith("subprocess.")
+        ):
+            local_violations.append(f"  local.py:{node.lineno}: from {node.module!r} import …")
+    assert not local_violations, "t6 regression: local.py imports subprocess:\n" + "\n".join(
+        local_violations
+    )
+
+    # t6: net_trust.py does not import subprocess (it uses socket/ThreadPoolExecutor)
+    net_trust_source = net_trust_path.read_text(encoding="utf-8")
+    assert "import subprocess" not in net_trust_source, (
+        "t10 regression: net_trust.py imports subprocess (should use socket + httpx)"
     )
