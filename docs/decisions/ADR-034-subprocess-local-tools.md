@@ -1,6 +1,6 @@
 # ADR-034: Subprocess local tools — execution posture, threat model, honest residual
 
-**Status:** Proposed — 2026-06-05
+**Status:** Accepted — 2026-06-05 (architect Peidong, after plan-stage dual-lens R0-A-on-plan + R0-B-on-plan cleared 0-red and the routed findings were absorbed; senior-drafted for P4.2-B3). The ADR-028 D3 amendment + the ADR-031 D2 cross-ref are inscribed at impl (plan task B3-6), matching this Accepted status. Impl-stage dual-lens R0-B (`requires_cross_family_review: true`) re-probes the subprocess trust boundary + liveness on the implementation.
 
 **Scope:** The execution posture, four-sub-surface threat model, honest FS/network residual, and executor placement for the five deferred **subprocess** local tools (`run_tests` / `run_lint` / `git_blame` / `git_log` / `git_diff`) — shipped **before** the P4.3 syscall sandbox, reusing the ADR-031 D2 subprocess-trust seam. Amends ADR-028 D3 (these five no-longer-deferred).
 
