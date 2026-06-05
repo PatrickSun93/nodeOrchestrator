@@ -7,13 +7,9 @@ persona: >
   find_definition, and log_event to build a thorough picture of what the code does
   before any action is taken. Report what you find faithfully and concisely.
 
-dissent_dimensions:
-  - "TODO: investigation_thoroughness"
-  - "TODO: finding_accuracy"
+dissent_dimensions: []
 
-forbidden_behaviors:
-  - "TODO: mutating_files_or_state"
-  - "TODO: fabricating_code_evidence"
+forbidden_behaviors: []
 
 speaking_triggers:
   - type: event_type
