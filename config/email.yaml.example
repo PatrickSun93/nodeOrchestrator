@@ -1,0 +1,28 @@
+# send_email provider config (copy to email.yaml and set env var — do NOT commit email.yaml).
+# Config-driven generic HTTP: adapts to Resend / Mailgun / SendGrid-style HTTP email APIs.
+# (ADR-036 D3-ii — push-back 2 ratified: NOT smtplib, NOT a hardcoded provider)
+#
+# endpoint:     The operator-configured provider HTTP endpoint.
+#               NOT in the agent param allowlist — agent cannot redirect it (SSRF N/A).
+# api_key_env:  Name of the env var holding the provider API key.
+#               The key value is NEVER committed here; set it in your shell or .env.
+#               The key is sent ONLY in the Authorization header (never logged/echoed).
+# from_addr:    The sender address (operator-configured; not agent-controlled).
+# allowed_domains: Mandatory recipient domain allowlist.
+#               An agent attempting to send outside these domains gets TOOL_FAILED.
+#               Unconfigured allowlist -> fail-closed (no send to unbounded recipient set).
+# recipients:   (Optional) Explicit recipient allowlist. If set, also checked against to: addr.
+#               Within allowed_domains exfil is still possible (honest residual — ADR-036 D3-ii);
+#               this list further restricts the surface to specific known addresses.
+
+# Example: Resend API
+endpoint: https://api.resend.com/emails
+api_key_env: EMAIL_API_KEY
+from_addr: noreply@yourdomain.com
+allowed_domains:
+  - yourdomain.com
+  - partner.com
+# Optional: restrict to specific recipients
+# recipients:
+#   - admin@yourdomain.com
+#   - oncall@yourdomain.com

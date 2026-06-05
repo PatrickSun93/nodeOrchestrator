@@ -51,6 +51,9 @@ _WEB_SEARCH_MAX_RESULTS_MIN = 1
 _WEB_SEARCH_MAX_RESULTS_MAX = 20
 _WEB_SEARCH_MAX_RESULTS_DEFAULT = 10
 
+# send_email: timeout mirrors web_search (fixed endpoint, no SSRF overhead).
+_SEND_EMAIL_TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
+
 
 # ---------------------------------------------------------------------------
 # _NetworkToolFn: callable class with _is_network_tool marker
@@ -254,6 +257,138 @@ def _make_web_search(provider_config: dict[str, Any] | None) -> _NetworkToolFn:
 
 
 # ---------------------------------------------------------------------------
+# B5-2: send_email closure + provider config
+# ---------------------------------------------------------------------------
+
+
+def _load_email_config(config_path: Path | None) -> dict[str, Any] | None:
+    """Load send_email provider config from YAML; return None if absent or missing.
+
+    Mirrors _load_web_search_config. Required keys: endpoint, api_key_env,
+    from_addr, allowed_domains. absent/malformed -> fail-closed (not configured).
+    """
+    if config_path is None or not config_path.exists():
+        return None
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def _make_send_email(provider_config: dict[str, Any] | None) -> _NetworkToolFn:
+    """Build a send_email impl using config-driven HTTP (ADR-036 D3-ii).
+
+    Reads endpoint + api_key_env + from_addr + allowed_domains from provider_config.
+    Fail-closed when unconfigured. Key only in provider auth header (never logged/echoed).
+    Domain-allowlist (primary) + optional explicit recipient list.
+    Unconfigured allowlist -> fail-closed (cannot send to unbounded recipient set).
+    SSRF N/A: endpoint is operator-trusted config, NOT in the param allowlist.
+    """
+    allowed: frozenset[str] = frozenset({"to", "subject", "body"})
+
+    # Extract config values once at closure build time (mirrors web_search).
+    if provider_config is None:
+        endpoint: str | None = None
+        api_key: str | None = None
+        from_addr: str | None = None
+        allowed_domains: list[str] = []
+        explicit_recipients: list[str] = []
+    else:
+        endpoint = str(provider_config.get("endpoint", "")) or None
+        key_env = str(provider_config.get("api_key_env", ""))
+        api_key = (os.environ.get(key_env) or None) if key_env else None
+        from_addr = str(provider_config.get("from_addr", "")) or None
+        raw_domains = provider_config.get("allowed_domains") or []
+        allowed_domains = [str(d) for d in raw_domains] if isinstance(raw_domains, list) else []
+        raw_recipients = provider_config.get("recipients") or []
+        explicit_recipients = (
+            [str(r) for r in raw_recipients] if isinstance(raw_recipients, list) else []
+        )
+
+    def _impl(params: dict[str, Any]) -> LocalToolOutput:
+        _check_disallowed(params, allowed, "send_email")
+
+        to_addr = str(params.get("to", ""))
+        subject = str(params.get("subject", ""))
+        body = str(params.get("body", ""))
+
+        if not to_addr:
+            raise LocalToolError("send_email: 'to' is required")
+
+        # Fail-closed: unconfigured provider
+        if endpoint is None or api_key is None or from_addr is None:
+            raise LocalToolError(
+                "send_email not configured: endpoint/api_key_env/from_addr missing in email.yaml"
+            )
+
+        # Fail-closed: unconfigured allowlist (no send to unbounded recipient set).
+        if not allowed_domains and not explicit_recipients:
+            raise LocalToolError(
+                "send_email not configured: allowed_domains not set in email.yaml "
+                "(recipient allowlist is mandatory)"
+            )
+
+        # Recipient allowlist check (ADR-036 D3-ii).
+        # First check explicit list (if configured), then domain allowlist.
+        recipient_ok = False
+        if explicit_recipients and to_addr in explicit_recipients:
+            recipient_ok = True
+        if not recipient_ok and allowed_domains:
+            to_domain = to_addr.split("@", 1)[-1].lower() if "@" in to_addr else ""
+            if to_domain and any(
+                to_domain == d.lower() or to_domain.endswith("." + d.lower())
+                for d in allowed_domains
+            ):
+                recipient_ok = True
+
+        if not recipient_ok:
+            raise LocalToolError(
+                f"send_email: recipient {to_addr!r} not in operator allowlist "
+                f"(allowed domains: {allowed_domains!r})"
+            )
+
+        # Plain httpx POST to operator-configured endpoint (SSRF N/A — operator-trusted).
+        # API key ONLY in the Authorization header; never in logs, body, or result.
+        payload: dict[str, str] = {
+            "from": from_addr,
+            "to": to_addr,
+            "subject": subject,
+            "text": body,
+        }
+        headers: dict[str, str] = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            with httpx.Client(timeout=_SEND_EMAIL_TIMEOUT) as client:
+                response = client.post(endpoint, json=payload, headers=headers)
+        except httpx.TimeoutException as exc:
+            raise LocalToolError(f"network_timeout: send_email timed out: {exc}") from exc
+        except httpx.RequestError as exc:
+            raise LocalToolError(f"send_failed: {exc}") from exc
+
+        if response.status_code >= 500:
+            raise LocalToolError(
+                f"send_failed: provider returned HTTP {response.status_code}"
+            )
+
+        # Return provider send-status as raw output (untrusted; framed by caller).
+        status_text = f"status={response.status_code}\n{response.text}"
+        truncated_at: int | None = None
+        if len(status_text.encode()) > MAX_RESULT_BYTES:
+            raw = status_text.encode()[:MAX_RESULT_BYTES]
+            status_text = raw.decode("utf-8", errors="replace")
+            truncated_at = MAX_RESULT_BYTES
+
+        return LocalToolOutput(content=status_text, output_truncated_at=truncated_at)
+
+    return _NetworkToolFn(_impl)
+
+
+# ---------------------------------------------------------------------------
 # Registry builder
 # ---------------------------------------------------------------------------
 
@@ -261,6 +396,7 @@ def _make_web_search(provider_config: dict[str, Any] | None) -> _NetworkToolFn:
 def build_network_tool_registry(
     *,
     web_search_config_path: Path | None = None,
+    email_config_path: Path | None = None,
 ) -> dict[str, LocalToolFn]:
     """Build the network local tools registry.
 
@@ -269,9 +405,12 @@ def build_network_tool_registry(
 
     web_fetch: SSRF-validating HTTPS/HTTP fetch; no auth/cookies; raw TOOL_RESULT.
     web_search: Brave Search API query; api_key from env (fail-closed if absent).
+    send_email: config-driven HTTP email send (ADR-036 D3-ii); fail-closed if unconfigured.
     """
     provider_config = _load_web_search_config(web_search_config_path)
+    email_config = _load_email_config(email_config_path)
     return {
         "web_fetch": _make_web_fetch(),
         "web_search": _make_web_search(provider_config),
+        "send_email": _make_send_email(email_config),
     }

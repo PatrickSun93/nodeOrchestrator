@@ -112,6 +112,7 @@ _NETWORK_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "web_fetch",
         "web_search",
+        "send_email",
     }
 )
 

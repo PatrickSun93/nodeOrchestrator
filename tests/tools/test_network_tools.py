@@ -393,3 +393,201 @@ def test_web_search_missing_config_file_fail_closed(tmp_path: Path) -> None:
         registry = build_network_tool_registry(web_search_config_path=absent)
     with pytest.raises(LocalToolError, match="not configured"):
         registry["web_search"]({"query": "test"})
+
+
+# ---------------------------------------------------------------------------
+# Section 7 (B5-2): send_email — config-driven HTTP, domain-allowlist, key discipline
+# ---------------------------------------------------------------------------
+
+
+def _make_email_config_file(tmp_path: Path, **overrides: object) -> Path:
+    """Write a minimal email.yaml to tmp_path; return path."""
+    import yaml
+
+    config: dict[str, object] = {
+        "endpoint": "https://api.example.com/emails",
+        "api_key_env": "TEST_EMAIL_API_KEY",
+        "from_addr": "noreply@example.com",
+        "allowed_domains": ["example.com", "partner.org"],
+    }
+    config.update(overrides)
+    cfg_path = tmp_path / "email.yaml"
+    cfg_path.write_text(yaml.dump(config), encoding="utf-8")
+    return cfg_path
+
+
+def test_send_email_is_network_tool_fn(tmp_path: Path) -> None:
+    """send_email is a _NetworkToolFn (carries _is_network_tool = True)."""
+    from orchestrator.tools.network_tools import _make_send_email
+
+    fn = _make_send_email(None)
+    assert getattr(fn, "_is_network_tool", False) is True
+
+
+def test_send_email_in_registry(tmp_path: Path) -> None:
+    """send_email appears in build_network_tool_registry keys."""
+    registry = build_network_tool_registry()
+    assert "send_email" in registry
+
+
+def test_send_email_unconfigured_fail_closed() -> None:
+    """send_email with no config → fail-closed LocalToolError."""
+    registry = build_network_tool_registry()
+    with pytest.raises(LocalToolError, match="not configured"):
+        registry["send_email"]({"to": "a@example.com", "subject": "hi", "body": "test"})
+
+
+def test_send_email_unconfigured_allowlist_fail_closed(tmp_path: Path) -> None:
+    """send_email with allowed_domains: [] → fail-closed (mandatory allowlist)."""
+    cfg_path = _make_email_config_file(tmp_path, allowed_domains=[])
+    with patch.dict("os.environ", {"TEST_EMAIL_API_KEY": "secret123"}):
+        registry = build_network_tool_registry(email_config_path=cfg_path)
+    with pytest.raises(LocalToolError, match="allowed_domains not set"):
+        registry["send_email"]({"to": "a@example.com", "subject": "hi", "body": "test"})
+
+
+def test_send_email_recipient_outside_domain_refused(tmp_path: Path) -> None:
+    """Recipient outside allowed_domains → TOOL_FAILED before send."""
+    cfg_path = _make_email_config_file(tmp_path)
+    with patch.dict("os.environ", {"TEST_EMAIL_API_KEY": "secret123"}):
+        registry = build_network_tool_registry(email_config_path=cfg_path)
+    with pytest.raises(LocalToolError, match="not in operator allowlist"):
+        registry["send_email"]({"to": "evil@attacker.com", "subject": "x", "body": "y"})
+
+
+def test_send_email_happy_path_stubbed(tmp_path: Path) -> None:
+    """Happy send: stubbed POST returns 200; result contains status."""
+    cfg_path = _make_email_config_file(tmp_path)
+    with patch.dict("os.environ", {"TEST_EMAIL_API_KEY": "secret123"}):
+        registry = build_network_tool_registry(email_config_path=cfg_path)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = '{"id":"msg_123"}'
+
+    with patch("httpx.Client") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_resp
+        mock_cls.return_value = mock_client
+
+        result = registry["send_email"](
+            {"to": "user@example.com", "subject": "Hello", "body": "World"}
+        )
+
+    assert "200" in result.content
+
+
+def test_send_email_key_in_header_only(tmp_path: Path) -> None:
+    """API key is sent only in Authorization header; never in result or body payload."""
+    cfg_path = _make_email_config_file(tmp_path)
+    api_key_value = "SUPER_SECRET_KEY_12345"
+    with patch.dict("os.environ", {"TEST_EMAIL_API_KEY": api_key_value}):
+        registry = build_network_tool_registry(email_config_path=cfg_path)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "sent"
+
+    with patch("httpx.Client") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_resp
+        mock_cls.return_value = mock_client
+
+        result = registry["send_email"](
+            {"to": "user@example.com", "subject": "test", "body": "hello"}
+        )
+
+        post_kwargs = mock_client.post.call_args[1]
+        # Key MUST be in Authorization header
+        assert api_key_value in post_kwargs["headers"]["Authorization"]
+        # Key must NOT be in the JSON payload body
+        payload = post_kwargs["json"]
+        for v in payload.values():
+            assert api_key_value not in str(v), "API key leaked into payload body"
+
+    # Key must NOT appear in the result content
+    assert api_key_value not in result.content, "API key leaked into result"
+
+
+def test_send_email_explicit_recipient_list_allowed(tmp_path: Path) -> None:
+    """send_email allows a recipient that is in the explicit recipients list."""
+    cfg_path = _make_email_config_file(
+        tmp_path,
+        allowed_domains=[],
+        recipients=["specific@otherdomain.com"],
+    )
+    with patch.dict("os.environ", {"TEST_EMAIL_API_KEY": "key123"}):
+        registry = build_network_tool_registry(email_config_path=cfg_path)
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "ok"
+
+    with patch("httpx.Client") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_resp
+        mock_cls.return_value = mock_client
+
+        result = registry["send_email"](
+            {"to": "specific@otherdomain.com", "subject": "s", "body": "b"}
+        )
+
+    assert "200" in result.content
+
+
+def test_send_email_disallowed_param_refused(tmp_path: Path) -> None:
+    """send_email raises LocalToolError for params outside {to, subject, body}."""
+    cfg_path = _make_email_config_file(tmp_path)
+    with patch.dict("os.environ", {"TEST_EMAIL_API_KEY": "key"}):
+        registry = build_network_tool_registry(email_config_path=cfg_path)
+    with pytest.raises(LocalToolError, match="disallowed param"):
+        registry["send_email"]({"to": "a@example.com", "subject": "s", "body": "b", "cc": "x"})
+
+
+def test_send_email_excerpt_excluded_from_snapshot(tmp_path: Path) -> None:
+    """send_email TOOL_RESULT is excluded from snapshot_excerpt (b46 behavioral extension).
+
+    send_email joins _NETWORK_TOOL_NAMES; its raw provider bytes should not appear
+    in the steering excerpt (attacker-authorable server response).
+    """
+    from orchestrator.agents.selection import _render_snapshot_excerpt
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        generate_event_id,
+        generate_room_id,
+        now_ms,
+    )
+
+    injection = "SEND_EMAIL_CANARY_INJECTION_DO_NOT_RENDER"
+    rid = generate_room_id()
+
+    tc = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_CALL,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content="",
+        metadata={"tool_name": "send_email", "call_id": "cid_mail_1", "params": {}},
+    )
+    tr = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_RESULT,
+        author="agent:tester",
+        timestamp=now_ms(),
+        content=injection,
+        metadata={"call_id": "cid_mail_1", "success": True},
+    )
+    snapshot = [tc, tr]
+    excerpt = _render_snapshot_excerpt(snapshot)
+    assert excerpt is None or injection not in excerpt, (
+        f"send_email TOOL_RESULT appeared in snapshot_excerpt: {excerpt!r}"
+    )
