@@ -4,14 +4,14 @@ round: R0-A
 reviewer_role: architect-partner
 stage: impl
 impl_branch: claude/P4.4-impl
-impl_head: 329b490
+impl_head: f6bd908
 reviews_acked:
   - decisions/ADR-038-plugin-registry-lifecycle.md
   - reviews/P4.4/R0-A-on-plan.md
   - reviews/P4.4/R0-B-on-plan.md
   - senior-plans/P4.4.md
-verdict: blocking
-findings_count: { red: 1, yellow: 0, green: 2 }
+verdict: clean
+findings_count: { red: 0, yellow: 0, green: 2 }
 verdict_history:
   - round: 1
     impl_head: db564db
@@ -21,6 +21,10 @@ verdict_history:
     impl_head: 329b490
     verdict: blocking
     summary: "R1 RESOLVED (RW1 0ed7877 refuse-all sentinel + RW2 07d7606 yaml.YAMLError broaden); Y1 RESOLVED (RW3 329b490 ADR-038 D4 deferred-residual inscription + F2 coexistence test). NEW 1🔴 R2: mypy --strict red (7 errors, test-only, runtime-green) — RW1's union return-type not narrowed in rw3/rw4 valid-registry test paths; mechanical β-fix. Gates: ruff ✅ / mypy ❌ / pytest tests/plugins ✅ 156."
+  - round: 3
+    impl_head: f6bd908
+    verdict: clean
+    summary: "R2 CLEARED by RW4 f6bd908 — 3× `assert isinstance(result, dict)` narrows the union in the valid-registry tests (rw3 / rw3-disabled / rw4). All three CANONICAL gates independently re-run GREEN: `ruff check src tests` ✅ / `uv run mypy` (files=src,tests) ✅ 'Success: no issues found in 264 source files' / `pytest tests/plugins` ✅ 156 passed. R1+Y1 remain resolved (RW4 is test-only, production code untouched). Verdict → clean."
 ---
 
 # R0-A — P4.4 impl (plugin registry + lifecycle + admission + namespacing)
@@ -170,3 +174,32 @@ RW1 widened `_resolve_plugin_registry`'s return to `PluginRegistry | _RegistryRe
 | `pytest tests/plugins` | ✅ **156 passed** (incl. all RW1/RW2/RW3 tests) |
 
 **Round-2 verdict: `blocking`** — R1 + Y1 substantively resolved; one new mechanical blocker (R2, `mypy --strict` red) stands between the rework and clean. A narrow β-fix dispatch (3 one-line asserts) clears it — no design question, no re-routing. I route nothing.
+
+---
+
+# Round 3 — RC-10 verdict-bump re-review (impl_head `f6bd908`) → **clean**
+
+RW4 `f6bd908` applies the prescribed R2 fix and nothing else.
+
+## ✅ R2 — RESOLVED (RW4 `f6bd908`)
+
+The three valid-registry tests each gain `assert isinstance(result, dict)` immediately after the `_resolve_plugin_registry()` call — exactly the prescribed narrowing:
+- `test_rw3_valid_plugins_yaml_entries_applied` (`test_wired_whole_registry.py:100`)
+- `test_rw3_disabled_entry_present` (`:113`)
+- `test_rw4_load_plugins_receives_real_registry` (`:164`, narrowing the `registry` binding)
+
+`isinstance(_, dict)` narrows `PluginRegistry | _RegistryRefuseAll` to the dict arm (`_RegistryRefuseAll` is not a dict subclass) and also strengthens each test's invariant (valid config → real registry, never the refuse-all sentinel). **Test-only diff** — no production code touched, so R1 + Y1 are unaffected and remain resolved.
+
+## CANONICAL gates (impl_head `f6bd908`, independently re-run)
+
+| Gate | Result |
+|---|---|
+| `ruff check src tests` | ✅ All checks passed |
+| `uv run mypy` (`files=src,tests`) | ✅ **Success: no issues found in 264 source files** (R2 cleared, 7 → 0) |
+| `pytest tests/plugins` | ✅ **156 passed** |
+
+I re-ran the canonical mypy scope myself — last round the rework's "mypy clean" claim did not hold under it, so this independent confirmation matters: it is now genuinely **0 errors**.
+
+## Verdict — **`clean`**
+
+All three rounds reconcile: **R1 ✅ resolved** (refuse-all sentinel — malformed registry refuses every candidate, op-placed incl. operator-disabled, before any load/merge), **Y1 ✅ resolved** (ADR-038 D4 deferred-residual inscription + F2 coexistence test), **R2 ✅ resolved** (union narrowed in the valid-registry tests). Three canonical gates green; no open findings; the two 🟢 lens-passes still hold. **R0-A is `clean`.** I route nothing.
