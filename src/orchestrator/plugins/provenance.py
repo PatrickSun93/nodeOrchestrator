@@ -1,4 +1,7 @@
-"""Plugin provenance tracking and activation allowlist (ADR-031 D3/D4).
+"""Plugin provenance tracking, activation allowlist, and unified registry.
+
+ADR-031 D3/D4 + ADR-038 D1.
+
 
 Provenance-by-origin: a plugin's trust level is determined by WHICH discovery root
 it was found in — not by anything the plugin itself claims.
@@ -21,10 +24,16 @@ bundle can never be re-discovered as operator-placed (provenance-laundering prev
 ADR-031 D3 un-launderable property).  Enforced at bootstrap by loader.py's
 disjoint-root guard (ValueError on overlap).
 
-Activation allowlist (ADR-031 D4):
-  A fetched plugin loads ONLY if the operator has an explicit activation entry that
+Activation allowlist (ADR-031 D4, generalised to unified registry by ADR-038 D1):
+  A fetched plugin loads ONLY if the operator has an explicit registry entry that
   pins source_url + digest.  The entry is operator-authored (not plugin-authored):
   the fetched plugin cannot self-request env keys or api_key_env.
+
+Unified registry (ADR-038 D1):
+  config/plugins.yaml — a list of RegistryEntry covering both roots.
+  Operator-placed entries are optional (presence=opt-in preserved, ADR-029 D5).
+  Fetched entries require source_url+digest (fail-closed, ADR-031 D4 unchanged).
+  Provenance is NEVER a registry field — it stays host-derived by root.
 """
 
 from __future__ import annotations
@@ -38,6 +47,12 @@ import yaml
 from orchestrator.llm.exceptions import ConfigError
 
 PluginProvenance = Literal["operator_placed", "fetched"]
+
+
+# ---------------------------------------------------------------------------
+# ActivationEntry — legacy fetched-only proto-registry (ADR-031 D4).
+# Kept for backward-compat; unified path uses RegistryEntry + load_plugin_registry.
+# ---------------------------------------------------------------------------
 
 
 @dataclasses.dataclass(frozen=True)
@@ -147,3 +162,187 @@ def check_fetched_activation(
     The caller is responsible for the refusal; this function only does the lookup.
     """
     return registry.get(plugin_id)
+
+
+# ---------------------------------------------------------------------------
+# RegistryEntry — unified registry schema (ADR-038 D1).
+# Covers both roots: operator-placed entries optional; fetched entries require
+# source_url+digest.  Provenance is NEVER a field here — stays host-derived.
+# ---------------------------------------------------------------------------
+
+# Allowed keys in a registry entry — anything else is rejected (extra="forbid" equivalent).
+# ADR-038 D1: provenance/posture are NOT allowed fields (un-spoofable invariant).
+_KNOWN_REGISTRY_ENTRY_KEYS: frozenset[str] = frozenset(
+    {"plugin_id", "enabled", "version", "source_url", "digest", "plugin_subprocess_env"}
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class RegistryEntry:
+    """Unified registry entry for one declared plugin (ADR-038 D1).
+
+    Covers both operator-placed and fetched roots.
+
+    plugin_id:            identity = the plugin subdir name.
+    enabled:              bool, default True.  False = declared-but-disabled.
+                          MUST be a real bool — YAML `enabled: "false"` (string)
+                          is truthy and would silently enable a disabled plugin.
+                          isinstance(enabled, bool) is enforced at parse time.
+    version:              operator-pinned version label (str or None).
+                          For fetched plugins coherence-checked against
+                          manifest.version at boot (ADR-038 D2).
+    source_url:           fetched-only.  None for operator-placed entries.
+    digest:               fetched-only.  None for operator-placed entries.
+                          source_url and digest must come as a pair.
+    plugin_subprocess_env: fetched-only.  Operator-authored non-secret env.
+    """
+
+    plugin_id: str
+    enabled: bool = True
+    version: str | None = None
+    source_url: str | None = None
+    digest: str | None = None
+    plugin_subprocess_env: dict[str, str] = dataclasses.field(default_factory=dict)
+
+
+# Registry mapping plugin_id → RegistryEntry (operator-authored, both roots).
+PluginRegistry = dict[str, RegistryEntry]
+
+
+def load_plugin_registry(path: Path | None) -> PluginRegistry:
+    """Load the unified plugin registry from config/plugins.yaml.
+
+    Returns an empty registry if path is None or the file is absent.
+    Raises ConfigError on malformed YAML or schema violation (fail-closed).
+
+    Schema (example):
+      plugins:
+        - plugin_id: "my_plugin"
+          enabled: true
+          version: "1.0.0"
+          source_url: "https://example.com/my_plugin.zip"
+          digest: "sha256:abc123..."
+          plugin_subprocess_env:
+            KEY: "value"
+        - plugin_id: "local_plugin"
+          enabled: false
+
+    Validation rules (ADR-038 D1 absorbed findings):
+      - Unknown entry keys raise ConfigError (extra="forbid" equivalent).
+      - `enabled` MUST be a real bool — isinstance(enabled, bool) enforced.
+        YAML `enabled: "false"` parses to a non-empty string (truthy), which
+        would silently fail-open; this is caught and rejected.
+      - `version` must be str or None.
+      - `source_url` and `digest` must come as a pair (or both absent).
+      - Duplicate plugin_id raises ConfigError (list format prevents silent overwrite).
+      - `provenance` / `posture` fields are NOT accepted (un-spoofable invariant).
+    """
+    if path is None or not path.exists():
+        return {}
+
+    raw_text = path.read_text(encoding="utf-8")
+    raw = yaml.safe_load(raw_text)
+    if raw is None:
+        return {}
+
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path.name}: expected a mapping at root, got {type(raw).__name__}")
+
+    entries_raw = raw.get("plugins")
+    if entries_raw is None:
+        return {}
+
+    if not isinstance(entries_raw, list):
+        raise ConfigError(f"{path.name}: 'plugins' must be a list")
+
+    registry: PluginRegistry = {}
+    for i, entry in enumerate(entries_raw):
+        if not isinstance(entry, dict):
+            raise ConfigError(f"{path.name}: plugins[{i}] must be a mapping")
+
+        # Reject unknown keys (extra="forbid" equivalent; catches provenance/posture attempts).
+        unknown_keys = set(entry.keys()) - _KNOWN_REGISTRY_ENTRY_KEYS
+        if unknown_keys:
+            raise ConfigError(
+                f"{path.name}: plugins[{i}]: unknown keys {sorted(unknown_keys)!r}"
+            )
+
+        # plugin_id: non-empty str
+        plugin_id = entry.get("plugin_id")
+        if not isinstance(plugin_id, str) or not plugin_id:
+            raise ConfigError(f"{path.name}: plugins[{i}]: 'plugin_id' must be a non-empty str")
+
+        # Duplicate plugin_id — list format lets us catch this; mapping format cannot.
+        if plugin_id in registry:
+            raise ConfigError(
+                f"{path.name}: plugins[{i}]: duplicate plugin_id {plugin_id!r}"
+            )
+
+        # enabled: MUST be isinstance bool.  YAML `enabled: "false"` (quoted string) is
+        # truthy — it would silently enable a plugin the operator intended to disable.
+        enabled_raw = entry.get("enabled", True)
+        if not isinstance(enabled_raw, bool):
+            raise ConfigError(
+                f"{path.name}: plugins[{i}] ({plugin_id!r}): "
+                f"'enabled' must be a bool (true/false), got {type(enabled_raw).__name__!r} "
+                f"— quoted string values like \"false\" are not bools in YAML"
+            )
+
+        # version: str or None
+        version = entry.get("version", None)
+        if version is not None and not isinstance(version, str):
+            raise ConfigError(
+                f"{path.name}: plugins[{i}] ({plugin_id!r}): "
+                f"'version' must be a str or null, got {type(version).__name__!r}"
+            )
+
+        # source_url: non-empty str or absent
+        source_url: str | None = entry.get("source_url", None)
+        if source_url is not None and (not isinstance(source_url, str) or not source_url):
+            raise ConfigError(
+                f"{path.name}: plugins[{i}] ({plugin_id!r}): "
+                "'source_url' must be a non-empty str"
+            )
+
+        # digest: non-empty str or absent
+        digest: str | None = entry.get("digest", None)
+        if digest is not None and (not isinstance(digest, str) or not digest):
+            raise ConfigError(
+                f"{path.name}: plugins[{i}] ({plugin_id!r}): "
+                "'digest' must be a non-empty str"
+            )
+
+        # source_url + digest must come as a pair (both or neither).
+        if (source_url is None) != (digest is None):
+            raise ConfigError(
+                f"{path.name}: plugins[{i}] ({plugin_id!r}): "
+                "'source_url' and 'digest' must both be present or both absent "
+                "(a fetched entry requires both; an operator-placed entry requires neither)"
+            )
+
+        # plugin_subprocess_env: strings-only dict
+        env = entry.get("plugin_subprocess_env", {})
+        if not isinstance(env, dict):
+            raise ConfigError(
+                f"{path.name}: plugins[{i}] ({plugin_id!r}): "
+                "'plugin_subprocess_env' must be a mapping"
+            )
+        env_str: dict[str, str] = {}
+        for k, v in env.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                raise ConfigError(
+                    f"{path.name}: plugins[{i}] ({plugin_id!r}): "
+                    "plugin_subprocess_env keys and values must be strings"
+                )
+            env_str[k] = v
+
+        registry[plugin_id] = RegistryEntry(
+            plugin_id=plugin_id,
+            enabled=enabled_raw,
+            version=version,
+            source_url=source_url,
+            digest=digest,
+            plugin_subprocess_env=env_str,
+        )
+
+    return registry
