@@ -7,8 +7,8 @@ reviews_acked:
   - architect-briefs/P4.5.md
   - senior-plans/P4.5.md
   - decisions/ADR-039-auth-identity-model.md
-verdict: needs_architect
-findings_count: { red: 0, yellow: 2, green: 2 }
+verdict: clean
+findings_count: { red: 0, yellow: 0, green: 2 }
 ---
 
 # R0-B cross-family review — P4.5 impl (dual-lens: Lens A identity trust boundary + Lens B spine preservation)
@@ -258,3 +258,37 @@ Constitution test (`test_constitution.py:550-559`): `validate_session` on reader
 ---
 
 **Routing:** Route nothing (per the external-r0b-prompt — the architect routes). 2🟡 → verdict `needs_architect`. Both 🟡 are small, non-exploitable posture concerns (not identity-forge, not fail-open-auth, not session-defect, not gate-identity-leak, not appender-guard-pierce, not confirm-idempotency-break, not fail-open-bind). No 🔴. The architect may absorb (α) or defer (δ) either or both.
+
+---
+
+## Verdict history
+
+### Round 1 — `needs_architect` (2🟡, 0🔴)
+
+| # | Lens | Severity | Finding |
+|---|------|----------|---------|
+| Y1 | A | 🟡 | Bearer token has no expiry — `user_tokens` lacks `expires_at`; perpetual until revoked. |
+| Y2 | A | 🟡 | `_is_public` uses `startswith("/health")` prefix match, weakening the explicit-allowlist fail-closed design. |
+| G1 | B | 🟢 | WS auth rejection not E2E-tested (code-verified, coverage nit). |
+| G2 | Both | 🟢 | `Secure` cookie + localhost dev UX awareness nit. |
+
+### Round 2 — `clean` (0🟡, 0🔴)
+
+**Re-reviewed:** rework commits `5add58b` (RW5) and `adf7053` (RW3) on `claude/P4.5-impl`.
+
+**Y1 trace (RW5, `5add58b`):**
+- `docs/decisions/ADR-039-auth-identity-model.md` D10 now names two honest residuals:
+  - **Bearer-token-no-expiry** — per-user static bearer tokens have no expiry date, only revoke-on-request. Expiry additive via token schema column. Architect-ratified not-built-this-cycle.
+  - **Session-no-idle-expiry** — sessions carry 24h absolute TTL only, no sliding-window idle expiry. Additive, same class as reset/rotation/MFA.
+- Both residuals are explicitly named and architect-ratified. The Y1 concern (D10 residual should name "tokens have no expiry" if intentional) is addressed.
+- ✅ **Y1 resolved.** The honest-residual inscription is complete.
+
+**Y2 trace (RW3, `adf7053`):**
+- `src/orchestrator/api/auth/middleware.py:43` — `_is_public` now returns `path in PUBLIC_PATHS` only. The `or path.startswith("/health")` prefix match is **removed**.
+- `PUBLIC_PATHS` narrowed from `{/login, /logout, /health}` to `{/login, /health}`. `/logout` is now a protected route (requires auth).
+- Comment updated: "A new route is protected unless explicitly added here." — explicit-allowlist, fail-closed-by-default restored.
+- `app.py:_logout` now uses `request.state.principal` (middleware-set, not cookie-read) → calls `revoke_sessions_for_user`.
+- `test_constitution.py` adds `("POST", "/logout")` to `PROTECTED_ROUTES` — logout 401 now tested.
+- ✅ **Y2 resolved.** Prefix match removed; allowlist is pure exact-match frozenset. Fail-closed-by-default restored.
+
+**Verdict bump:** Both 🟡 findings resolved by rework. 0🔴 0🟡 2🟢 → **verdict `clean`**.
