@@ -1,7 +1,7 @@
 task_id: P4.3
-state: awaiting_junior_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-06-06T01:11:23.179135Z'
+last_transition_at: '2026-06-06T05:30:33.458545Z'
 cycle_started_at: '2026-06-05T23:48:20.009713Z'
 override_history:
 - timestamp: '2026-06-06T01:11:23.179135Z'
@@ -14,4 +14,18 @@ override_history:
     + cross-platform-honest fail-closed; all 5 yellows resolved). Plan merged to main.
     requires_cross_family_review=true (impl-stage dual-lens). Container sandbox retires
     R1-R9. Advancing to junior impl (P4.3-0..13 serial).
+- timestamp: '2026-06-06T05:30:33.458545Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: closed
+  reason: 'P4.3 merged to main (PR #58, cb57019). Container syscall/egress sandbox
+    (Posture-B): sandbox/ package (runtime-abstraction, isolation profile, host-side
+    filtering CONNECT proxy egress pinned to SSRF-validated IP, one sandboxed-spawn
+    seam, fail-closed posture); retires R1-R9 (subprocess/plugin/egress/apply_edit-TOCTOU/DNS-HoL/NAT64).
+    empty-executor-diff 5th. ADR-037 Accepted + Amendment 1 + ADR-031/034/035/036
+    retirement annotations. Lifecycle: plan-stage R0-B BLOCKING (egress mechanism)
+    -> re-engineered CONNECT proxy -> impl-stage all-3 BLOCKING (5 convergent red:
+    built-but-not-enforcing, tests mocked runtime) -> rework RW1-RW9 (wired-whole
+    tests close the test-gap) -> all reviews clean. Gates green (mypy 260, stubbed
+    no-daemon). P4 Wave-2 trust-hardening core complete.'
 requires_cross_family_review: true
