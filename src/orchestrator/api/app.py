@@ -206,9 +206,35 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     sandbox_root = config_dir.parent
     local_tools = build_local_tool_registry(sandbox_root)
 
+    # Sandbox posture resolver (ADR-037 D4 / A1-3; P4.3-5 / RW4): load config + detect runtime.
+    # ALWAYS constructs a resolver — absence or parse-failure → PostureResolver.fail_closed()
+    # (D4 / A1-3: config-absence and config-parse-failure are FAIL_CLOSED, never fail-open).
+    # This is the sole composition-root injection point for sandbox config (constitution t6).
+    from orchestrator.sandbox.posture import (
+        PostureResolver,
+        SandboxConfigError,
+        load_sandbox_config,
+    )
+
+    _sandbox_config_path = config_dir / "sandbox.yaml"
+    if _sandbox_config_path.exists():
+        try:
+            _sandbox_cfg = load_sandbox_config(_sandbox_config_path)
+            _sandbox_posture_resolver: PostureResolver = PostureResolver.from_config(_sandbox_cfg)
+        except SandboxConfigError as _sbx_exc:
+            import logging as _logging
+
+            _logging.getLogger("orchestrator.api.app").warning(
+                "sandbox config parse failed → fail-closed (no subprocess sandbox): %s", _sbx_exc
+            )
+            _sandbox_posture_resolver = PostureResolver.fail_closed()
+    else:
+        _sandbox_posture_resolver = PostureResolver.fail_closed()
+
     # Plugin aggregation pass (ADR-029 D2 / P3.5-5): discover + validate + merge
     # all valid plugins from plugins/ (repo-root sibling of config/).
     # Absent plugins/ → no-op. Any-stage plugin failure refuses only that plugin.
+    # Resolver built before this block (RW5 will thread it into load_plugins).
     from orchestrator.core.room import RoomType as _RoomType
     from orchestrator.plugins.loader import load_plugins
     from orchestrator.plugins.schema import PLUGIN_HOST_CONTRACT_VERSION
@@ -232,28 +258,6 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     tools = {**tools, **plugin_result.tools}
     local_tools = {**local_tools, **plugin_result.local_tools}
     mcp_sessions = {**mcp_sessions, **plugin_result.mcp_sessions}
-
-    # Sandbox posture resolver (ADR-037 D4; P4.3-5): load config + detect runtime once.
-    # config-parse failure → resolver=None → posture_resolver not injected → app-level fallback.
-    # This is the sole composition-root injection point for sandbox config (constitution t6).
-    from orchestrator.sandbox.posture import (
-        PostureResolver,
-        SandboxConfigError,
-        load_sandbox_config,
-    )
-
-    _sandbox_config_path = config_dir / "sandbox.yaml"
-    _sandbox_posture_resolver: PostureResolver | None = None
-    if _sandbox_config_path.exists():
-        try:
-            _sandbox_cfg = load_sandbox_config(_sandbox_config_path)
-            _sandbox_posture_resolver = PostureResolver.from_config(_sandbox_cfg)
-        except SandboxConfigError as _sbx_exc:
-            import logging as _logging
-
-            _logging.getLogger("orchestrator.api.app").warning(
-                "sandbox config parse failed → fail-closed (no subprocess sandbox): %s", _sbx_exc
-            )
 
     # Subprocess local tools (ADR-034 D5 / P4.2-B3-3; ADR-037 D2/D3 P4.3-6): compose at
     # the api/ root so local.py stays in-process-pristine (constitution t6).

@@ -78,6 +78,15 @@ class PostureResolver:
         runtime = _detect_runtime(config)
         return cls(config=config, runtime=runtime)
 
+    @classmethod
+    def fail_closed(cls) -> PostureResolver:
+        """Build a FAIL_CLOSED resolver (no runtime, no opt-in).
+
+        Used by the composition root when config is absent or unparseable.
+        Resolves FAIL_CLOSED on every call — no subprocess/egress executes.
+        """
+        return cls(config=SandboxConfig(degraded_app_level=False), runtime=None)
+
     def resolve(self) -> SandboxPosture:
         """Return the current posture (cached; re-probes after TTL expiry).
 

@@ -1,0 +1,8 @@
+# Sandbox config for this repo's dev/test loop (RW-S3 / ADR-037 A1-3).
+# No live Docker daemon on the dev box → degraded_app_level: true = conscious
+# operator opt-in to the app-level posture (loudly warned per call; D4).
+# Replace runtime/image/degraded_app_level for a real sandbox deployment.
+runtime: auto
+image: sandbox:latest
+egress_allowlist: []
+degraded_app_level: true
