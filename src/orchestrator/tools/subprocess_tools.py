@@ -3,7 +3,9 @@
 Each closure is a LocalToolFn that:
   - Validates its param allowlist (no flag passthrough).
   - Resolves path via _check_path → absolute path into argv (never the raw LLM string).
-  - Calls run_scoped_command with scoped_env() and a per-tool timeout.
+  - Routes through sandboxed_run (ADR-037 D2/D3; P4.3-6) when a PostureResolver is
+    injected and the sandbox runtime is available; falls back to run_scoped_command on
+    DEGRADED opt-in; raises LocalToolError(sandbox_unavailable:…) on FAIL_CLOSED.
   - Returns LocalToolOutput at any exit code (non-zero = TOOL_RESULT, not TOOL_FAILED).
   - Carries _is_posture_b_subprocess = True for the per-turn cap.
 
@@ -19,7 +21,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from orchestrator.mcp.execution import MAX_RESULT_BYTES
 from orchestrator.mcp.subprocess_trust import (
@@ -29,6 +31,9 @@ from orchestrator.mcp.subprocess_trust import (
 )
 from orchestrator.tools.executor import LocalToolFn, LocalToolOutput
 from orchestrator.tools.local import LocalToolError, _check_path
+
+if TYPE_CHECKING:
+    from orchestrator.sandbox.posture import PostureResolver
 
 # Per-tool timeouts (R0-B B1 — closes the unbound term in the single-writer bound).
 _SUBPROCESS_TIMEOUTS: dict[str, float] = {
@@ -128,14 +133,102 @@ def _dispatch(
     return LocalToolOutput(content=content, output_truncated_at=truncated_at)
 
 
+def _sandbox_dispatch(
+    tool_name: str,
+    argv: list[str],
+    cwd: Path,
+    timeout_s: float,
+    posture_resolver: PostureResolver,
+    image: str,
+    extra_env: dict[str, str] | None = None,
+    needs_egress: bool = False,
+    egress_hostname: str | None = None,
+    egress_port: int = 443,
+) -> LocalToolOutput:
+    """Sandbox-aware dispatch (ADR-037 D2/D3; P4.3-6).
+
+    SANDBOXED  → sandboxed_run with deny-default (or pinned-IP for egress tools).
+    DEGRADED   → fall through to app-level run_scoped_command (warning already emitted).
+    FAIL_CLOSED → LocalToolError(sandbox_unavailable:…).
+
+    The wrap lives below _execute_local_call (executor byte-frozen; ADR-037 constitutional).
+    """
+    from orchestrator.sandbox.egress import (
+        EgressDenied,
+        build_deny_default_spec,
+        build_egress_spec,
+    )
+    from orchestrator.sandbox.profile import SandboxProfile
+    from orchestrator.sandbox.runtime import SandboxUnavailableError
+    from orchestrator.sandbox.spawn import sandboxed_run
+
+    env = scoped_env(extra_env=extra_env or {})
+
+    try:
+        runtime = posture_resolver.assert_sandboxed_or_raise(tool_name)
+    except SandboxUnavailableError as exc:
+        if posture_resolver.is_degraded_opted_in():
+            # DEGRADED: fall back to app-level run_scoped_command (warning already logged).
+            return _dispatch(tool_name, argv, cwd, timeout_s, extra_env)
+        raise LocalToolError(f"sandbox_unavailable: {tool_name}: {exc}") from exc
+
+    # Build egress spec.
+    if needs_egress and egress_hostname is not None:
+        try:
+            from orchestrator.tools.net_trust import _resolve_and_validate
+
+            pinned_ip = _resolve_and_validate(egress_hostname, egress_port)
+            egress_spec = build_egress_spec(
+                pinned_ip,
+                egress_port,
+                runtime_kind=runtime.kind,
+                tool_kind="subprocess",
+                call_id=tool_name,
+            )
+        except (EgressDenied, LocalToolError) as exc:
+            raise LocalToolError(
+                f"sandbox_egress_denied: {tool_name}: {exc}"
+            ) from exc
+    else:
+        egress_spec = build_deny_default_spec()
+
+    profile = SandboxProfile(sandbox_root=cwd, image=image)
+
+    try:
+        result = sandboxed_run(
+            argv,
+            cwd=cwd,
+            env=env,
+            timeout_s=timeout_s,
+            max_bytes=MAX_RESULT_BYTES,
+            profile=profile,
+            egress_spec=egress_spec,
+            runtime=runtime,
+        )
+    except SandboxUnavailableError as exc:
+        raise LocalToolError(f"sandbox_unavailable: {tool_name}: {exc}") from exc
+    except SubprocessTimeoutError as exc:
+        raise LocalToolError(
+            f"subprocess_timeout: {tool_name} exceeded timeout ({timeout_s}s): {exc}"
+        ) from exc
+
+    content = f"exit_code={result.exit_code}\n{result.output}"
+    truncated_at = MAX_RESULT_BYTES if result.truncated else None
+    return LocalToolOutput(content=content, output_truncated_at=truncated_at)
+
+
 # ---------------------------------------------------------------------------
 # Individual tool factories
 # ---------------------------------------------------------------------------
 
 
-def _make_run_tests(sandbox_root: Path) -> _SubprocessToolFn:
+def _make_run_tests(
+    sandbox_root: Path,
+    posture_resolver: PostureResolver | None = None,
+) -> _SubprocessToolFn:
     resolved_root = sandbox_root.resolve()
     allowed: frozenset[str] = frozenset({"path"})
+    image = posture_resolver._config.image if posture_resolver is not None else ""
 
     def _impl(params: dict[str, Any]) -> LocalToolOutput:
         _check_disallowed(params, allowed, "run_tests")
@@ -144,28 +237,46 @@ def _make_run_tests(sandbox_root: Path) -> _SubprocessToolFn:
         if path_str:
             abs_path = _check_path(path_str, resolved_root)
             argv.append(str(abs_path))
+        if posture_resolver is not None:
+            return _sandbox_dispatch(
+                "run_tests", argv, resolved_root, _SUBPROCESS_TIMEOUTS["run_tests"],
+                posture_resolver, image,
+            )
         return _dispatch("run_tests", argv, resolved_root, _SUBPROCESS_TIMEOUTS["run_tests"])
 
     return _SubprocessToolFn(_impl)
 
 
-def _make_run_lint(sandbox_root: Path) -> _SubprocessToolFn:
+def _make_run_lint(
+    sandbox_root: Path,
+    posture_resolver: PostureResolver | None = None,
+) -> _SubprocessToolFn:
     resolved_root = sandbox_root.resolve()
     allowed: frozenset[str] = frozenset({"path"})
+    image = posture_resolver._config.image if posture_resolver is not None else ""
 
     def _impl(params: dict[str, Any]) -> LocalToolOutput:
         _check_disallowed(params, allowed, "run_lint")
         path_str: str | None = params.get("path") or None
         abs_path = _check_path(path_str, resolved_root) if path_str else resolved_root
         argv: list[str] = ["ruff", "check", "--", str(abs_path)]
+        if posture_resolver is not None:
+            return _sandbox_dispatch(
+                "run_lint", argv, resolved_root, _SUBPROCESS_TIMEOUTS["run_lint"],
+                posture_resolver, image,
+            )
         return _dispatch("run_lint", argv, resolved_root, _SUBPROCESS_TIMEOUTS["run_lint"])
 
     return _SubprocessToolFn(_impl)
 
 
-def _make_git_blame(sandbox_root: Path) -> _SubprocessToolFn:
+def _make_git_blame(
+    sandbox_root: Path,
+    posture_resolver: PostureResolver | None = None,
+) -> _SubprocessToolFn:
     resolved_root = sandbox_root.resolve()
     allowed: frozenset[str] = frozenset({"path"})
+    image = posture_resolver._config.image if posture_resolver is not None else ""
 
     def _impl(params: dict[str, Any]) -> LocalToolOutput:
         _check_disallowed(params, allowed, "git_blame")
@@ -174,14 +285,23 @@ def _make_git_blame(sandbox_root: Path) -> _SubprocessToolFn:
             raise LocalToolError("git_blame: 'path' is required")
         abs_path = _check_path(path_str, resolved_root)
         argv: list[str] = ["git", "blame", "--", str(abs_path)]
+        if posture_resolver is not None:
+            return _sandbox_dispatch(
+                "git_blame", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_blame"],
+                posture_resolver, image,
+            )
         return _dispatch("git_blame", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_blame"])
 
     return _SubprocessToolFn(_impl)
 
 
-def _make_git_log(sandbox_root: Path) -> _SubprocessToolFn:
+def _make_git_log(
+    sandbox_root: Path,
+    posture_resolver: PostureResolver | None = None,
+) -> _SubprocessToolFn:
     resolved_root = sandbox_root.resolve()
     allowed: frozenset[str] = frozenset({"path", "max_count"})
+    image = posture_resolver._config.image if posture_resolver is not None else ""
 
     def _impl(params: dict[str, Any]) -> LocalToolOutput:
         _check_disallowed(params, allowed, "git_log")
@@ -203,14 +323,23 @@ def _make_git_log(sandbox_root: Path) -> _SubprocessToolFn:
         if path_str:
             abs_path = _check_path(path_str, resolved_root)
             argv.append(str(abs_path))
+        if posture_resolver is not None:
+            return _sandbox_dispatch(
+                "git_log", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_log"],
+                posture_resolver, image,
+            )
         return _dispatch("git_log", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_log"])
 
     return _SubprocessToolFn(_impl)
 
 
-def _make_git_diff(sandbox_root: Path) -> _SubprocessToolFn:
+def _make_git_diff(
+    sandbox_root: Path,
+    posture_resolver: PostureResolver | None = None,
+) -> _SubprocessToolFn:
     resolved_root = sandbox_root.resolve()
     allowed: frozenset[str] = frozenset({"path"})
+    image = posture_resolver._config.image if posture_resolver is not None else ""
 
     def _impl(params: dict[str, Any]) -> LocalToolOutput:
         _check_disallowed(params, allowed, "git_diff")
@@ -219,13 +348,21 @@ def _make_git_diff(sandbox_root: Path) -> _SubprocessToolFn:
         if path_str:
             abs_path = _check_path(path_str, resolved_root)
             argv.append(str(abs_path))
+        if posture_resolver is not None:
+            return _sandbox_dispatch(
+                "git_diff", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_diff"],
+                posture_resolver, image,
+            )
         return _dispatch("git_diff", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_diff"])
 
     return _SubprocessToolFn(_impl)
 
 
-def _make_git_push(sandbox_root: Path) -> _SubprocessToolFn:
-    """Build a git_push impl for the sandbox root (ADR-036 D3-iii).
+def _make_git_push(
+    sandbox_root: Path,
+    posture_resolver: PostureResolver | None = None,
+) -> _SubprocessToolFn:
+    """Build a git_push impl for the sandbox root (ADR-036 D3-iii; P4.3-6).
 
     argv: fixed ["git", "push", <remote>, <branch>] — never shell-string (t9 covers this).
     env: scoped_env with SSH_AUTH_SOCK overlay for ssh-agent (named non-secret passthrough).
@@ -233,9 +370,12 @@ def _make_git_push(sandbox_root: Path) -> _SubprocessToolFn:
          No api_key_env -> no secret value injected.
     Output: remote push status as raw TOOL_RESULT (remote text = attacker-authorable).
     Destructive flags banned: --force/--force-with-lease/-f/--mirror/--delete (t12 guards).
+    Sandbox: when posture_resolver available, routes through sandboxed_run with pinned-IP
+    egress for the resolved remote host (ADR-037 D2; deny-default for non-egress tools).
     """
     resolved_root = sandbox_root.resolve()
     allowed: frozenset[str] = frozenset({"remote", "branch"})
+    image = posture_resolver._config.image if posture_resolver is not None else ""
 
     def _impl(params: dict[str, Any]) -> LocalToolOutput:
         _check_disallowed(params, allowed, "git_push")
@@ -288,6 +428,17 @@ def _make_git_push(sandbox_root: Path) -> _SubprocessToolFn:
             k: os.environ[k] for k in _GIT_PUSH_ENV_PASSTHROUGH if k in os.environ
         }
 
+        if posture_resolver is not None:
+            # Sandbox path: pinned-IP egress for git_push (ADR-037 D2; P4.3-6).
+            # The egress hostname is resolved from the remote name via git.
+            egress_hostname, egress_port = _resolve_git_remote_host(remote, resolved_root)
+            return _sandbox_dispatch(
+                "git_push", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_push"],
+                posture_resolver, image, extra_env=extra_env,
+                needs_egress=egress_hostname is not None,
+                egress_hostname=egress_hostname,
+                egress_port=egress_port,
+            )
         return _dispatch(
             "git_push", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_push"], extra_env=extra_env
         )
@@ -295,22 +446,73 @@ def _make_git_push(sandbox_root: Path) -> _SubprocessToolFn:
     return _SubprocessToolFn(_impl)
 
 
+def _resolve_git_remote_host(remote: str, cwd: Path) -> tuple[str | None, int]:
+    """Resolve a git remote name to (hostname, port) for egress pinning.
+
+    Returns (None, 22) if resolution fails (caller uses deny-default).
+    Supports https:// and git@host:path SSH remotes.
+    """
+    try:
+        result = run_scoped_command(
+            ["git", "remote", "get-url", remote],
+            cwd=cwd,
+            env=scoped_env(),
+            timeout_s=5.0,
+            max_bytes=512,
+        )
+        url = result.output.strip()
+    except (SubprocessTimeoutError, OSError):
+        return None, 22
+
+    if not url:
+        return None, 22
+
+    # https:// or http:// remote
+    if url.startswith("https://") or url.startswith("http://"):
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        hostname = parsed.hostname or None
+        port = parsed.port or (443 if url.startswith("https://") else 80)
+        return hostname, port
+
+    # git@host:path or ssh://user@host/path
+    if url.startswith("ssh://"):
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        return parsed.hostname or None, parsed.port or 22
+
+    if "@" in url and ":" in url:
+        # git@github.com:user/repo.git format
+        host_part = url.split("@", 1)[1].split(":")[0]
+        return host_part or None, 22
+
+    return None, 22
+
+
 # ---------------------------------------------------------------------------
 # Registry builder
 # ---------------------------------------------------------------------------
 
 
-def build_subprocess_tool_registry(sandbox_root: Path) -> dict[str, LocalToolFn]:
+def build_subprocess_tool_registry(
+    sandbox_root: Path,
+    posture_resolver: PostureResolver | None = None,
+) -> dict[str, LocalToolFn]:
     """Build the subprocess local tools for the given sandbox root.
 
     Returns a dict keyed by tool name (matching tools.yaml classifications).
     Each value is a _SubprocessToolFn carrying _is_posture_b_subprocess = True.
+
+    posture_resolver: if provided, each tool routes through sandboxed_run (ADR-037 D2/D3;
+    P4.3-6). None = today's app-level posture (no sandbox wiring; degraded path).
     """
     return {
-        "run_tests": _make_run_tests(sandbox_root),
-        "run_lint": _make_run_lint(sandbox_root),
-        "git_blame": _make_git_blame(sandbox_root),
-        "git_log": _make_git_log(sandbox_root),
-        "git_diff": _make_git_diff(sandbox_root),
-        "git_push": _make_git_push(sandbox_root),
+        "run_tests": _make_run_tests(sandbox_root, posture_resolver),
+        "run_lint": _make_run_lint(sandbox_root, posture_resolver),
+        "git_blame": _make_git_blame(sandbox_root, posture_resolver),
+        "git_log": _make_git_log(sandbox_root, posture_resolver),
+        "git_diff": _make_git_diff(sandbox_root, posture_resolver),
+        "git_push": _make_git_push(sandbox_root, posture_resolver),
     }

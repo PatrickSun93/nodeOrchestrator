@@ -233,11 +233,36 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     local_tools = {**local_tools, **plugin_result.local_tools}
     mcp_sessions = {**mcp_sessions, **plugin_result.mcp_sessions}
 
-    # Subprocess local tools (ADR-034 D5 / P4.2-B3-3): compose at the api/ root
-    # so local.py stays in-process-pristine (constitution t6).
+    # Sandbox posture resolver (ADR-037 D4; P4.3-5): load config + detect runtime once.
+    # config-parse failure → resolver=None → posture_resolver not injected → app-level fallback.
+    # This is the sole composition-root injection point for sandbox config (constitution t6).
+    from orchestrator.sandbox.posture import (
+        PostureResolver,
+        SandboxConfigError,
+        load_sandbox_config,
+    )
+
+    _sandbox_config_path = config_dir / "sandbox.yaml"
+    _sandbox_posture_resolver: PostureResolver | None = None
+    if _sandbox_config_path.exists():
+        try:
+            _sandbox_cfg = load_sandbox_config(_sandbox_config_path)
+            _sandbox_posture_resolver = PostureResolver.from_config(_sandbox_cfg)
+        except SandboxConfigError as _sbx_exc:
+            import logging as _logging
+
+            _logging.getLogger("orchestrator.api.app").warning(
+                "sandbox config parse failed → fail-closed (no subprocess sandbox): %s", _sbx_exc
+            )
+
+    # Subprocess local tools (ADR-034 D5 / P4.2-B3-3; ADR-037 D2/D3 P4.3-6): compose at
+    # the api/ root so local.py stays in-process-pristine (constitution t6).
     from orchestrator.tools.subprocess_tools import build_subprocess_tool_registry
 
-    local_tools = {**local_tools, **build_subprocess_tool_registry(sandbox_root)}
+    local_tools = {
+        **local_tools,
+        **build_subprocess_tool_registry(sandbox_root, posture_resolver=_sandbox_posture_resolver),
+    }
 
     # Network local tools (ADR-035 D4 / P4.2-B4-4 + B5-2): compose at the api/ root
     # so local.py stays in-process-pristine (constitution t6).
