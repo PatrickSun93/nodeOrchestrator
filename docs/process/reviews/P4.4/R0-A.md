@@ -4,14 +4,23 @@ round: R0-A
 reviewer_role: architect-partner
 stage: impl
 impl_branch: claude/P4.4-impl
-impl_head: db564db
+impl_head: 329b490
 reviews_acked:
   - decisions/ADR-038-plugin-registry-lifecycle.md
   - reviews/P4.4/R0-A-on-plan.md
   - reviews/P4.4/R0-B-on-plan.md
   - senior-plans/P4.4.md
 verdict: blocking
-findings_count: { red: 1, yellow: 1, green: 2 }
+findings_count: { red: 1, yellow: 0, green: 2 }
+verdict_history:
+  - round: 1
+    impl_head: db564db
+    verdict: blocking
+    summary: "1🔴 R1 (malformed registry graceful-but-NOT-refuse-all → op-placed incl. operator-disabled silently load) + 1🟡 Y1 (role/agent namespacing dict-key-only)."
+  - round: 2
+    impl_head: 329b490
+    verdict: blocking
+    summary: "R1 RESOLVED (RW1 0ed7877 refuse-all sentinel + RW2 07d7606 yaml.YAMLError broaden); Y1 RESOLVED (RW3 329b490 ADR-038 D4 deferred-residual inscription + F2 coexistence test). NEW 1🔴 R2: mypy --strict red (7 errors, test-only, runtime-green) — RW1's union return-type not narrowed in rw3/rw4 valid-registry test paths; mechanical β-fix. Gates: ruff ✅ / mypy ❌ / pytest tests/plugins ✅ 156."
 ---
 
 # R0-A — P4.4 impl (plugin registry + lifecycle + admission + namespacing)
@@ -112,3 +121,52 @@ So two plugins each declaring a role `echo`: both survive the dict (keys `A__ech
 ---
 
 **Routing:** none — surfaced for architect synthesis alongside senior plan-vs-impl + R0-B. Verdict **blocking** on R1.
+
+---
+
+# Round 2 — RC-10 verdict-bump re-review (impl_head `329b490`)
+
+Re-reviewed the junior rework (RW1 `0ed7877`, RW2 `07d7606`, RW3 `329b490`) against the round-1 🔴 R1 + 🟡 Y1. **Both original findings are resolved at the code level.** The R1 fix, however, introduced a **new mandatory-gate regression (R2)**, so the verdict **stays `blocking`** — not bumped to clean. I route nothing.
+
+## ✅ R1 — RESOLVED (RW1 `0ed7877`, reinforced by RW2 `07d7606`)
+
+The β-fix matches the routed option exactly:
+- `provenance.py:212-227` adds a true `_RegistryRefuseAll` sentinel (`REGISTRY_REFUSE_ALL`), structurally distinct from both `None` and `{}`.
+- `_resolve_plugin_registry` (`app.py:204-238`) returns the sentinel on parse-fail; absent still returns `PluginRegistry()` — the `absent ≠ malformed` line D2 demands. RW2 broadened the catch to `(ConfigError, yaml.YAMLError)` so syntax-broken YAML reaches the same sentinel instead of crashing `_build_context` (R0-B Y2) — additive reinforcement of refuse-all.
+- `load_plugins` (`loader.py:630-639`) refuses every candidate on the sentinel via an `isinstance` guard placed **after** discover/validate but **before** Steps 3-7 (`_load_plugin` + merge — the only stage that spawns MCP subprocesses / mutates host registries). Malformed registry ⇒ empty `PluginLoadResult()`, **zero** op-placed or fetched admission, **zero** host mutation — the genuine `fail_closed()` analog. The enabled-gate presence-resurrection path (`loader.py:651-659`) is never reached.
+- Tests fixed: the misleading `test_g2_empty_plugin_registry_refuses_all_op_placed` (name said "refuses", body proved "loads") renamed to `test_g2_empty_registry_absent_loads_op_placed` (body now matches: `{}` = absent ⇒ op-placed loads); new `test_g2_refuse_all_sentinel_refuses_all_op_placed` (`local_tools == {}`) and `test_g2_refuse_all_disabled_op_placed_stays_down` (the exact disabled-op-placed-stays-down case R1 flagged); wired `rw2` updated to `assert result is REGISTRY_REFUSE_ALL`. Targeted set 5/5 green.
+
+The round-1 mechanism→intent gap ("return empty" could not deliver "load zero" under ADR-029 D5 presence=opt-in) is closed: malformed now yields a sentinel structurally incapable of presence-resurrection.
+
+## ✅ Y1 — RESOLVED (RW3 `329b490`, α-absorb+inscribe)
+
+- ADR-038 D4 gains a **"Deferred residual — role/skill identity-level namespacing"** paragraph that faithfully records the finding: dict-key prefix only (`<plugin_id>__<name>`); `Agent.id`/`Skill.id`/`applies_to`/`regex_registry` keys stay bare; the cross-plugin routing-collision consequence; the honest bound (*"current real-world impact is zero — all shipping plugin ids are globally unique"*); and the deferral rationale (needs a coordinated dispatch/speaking rewrite). This is exactly the inscribed-residual option offered for Y1.
+- `test_f2_cross_plugin_same_name_tool_impl_coexist` added and green: two plugins each declaring `tool_impl: echo` coexist as `pluginA__echo` + `pluginB__echo`, bare `echo` absent — pins D4's always-prefix coexistence for the *tool_impl* contribution (the case round-1 noted already works; the role-identity case is the inscribed deferral, correctly **not** built this slice).
+
+## 🔴 R2 — NEW: `mypy --strict` red (7 errors) — RW1's union return-type not narrowed in the valid-registry test paths
+
+`uv run mypy` (canonical `files=["src","tests"]`) → **7 errors, all in `tests/plugins/test_wired_whole_registry.py`**:
+
+```
+:100 / :114 / :164      Unsupported right operand type for in ("dict[str, RegistryEntry] | _RegistryRefuseAll")
+:101 / :102 / :115 / :165   Value of type "dict[str, RegistryEntry] | _RegistryRefuseAll" is not indexable
+```
+
+RW1 widened `_resolve_plugin_registry`'s return to `PluginRegistry | _RegistryRefuseAll` and updated the *malformed* test (rw2 → `is REGISTRY_REFUSE_ALL`), but the **sibling valid-registry tests** rw3/rw4 (`test_rw3_valid_plugins_yaml_entries_applied`, `test_rw3_disabled_entry_present`, `test_rw4_load_plugins_receives_real_registry`) still do `"x" in result` / `result["x"]` on the now-union value without narrowing the sentinel away → mypy-strict rejects `in` / indexing.
+
+- **Nature:** mechanical, **test-only**, **runtime-green** (`pytest tests/plugins` → 156 passed; the valid paths *do* return a dict at runtime). Not a trust / admission / gate-logic breach — distinct in character from round-1 R1. But `mypy --strict` is a **mandatory merge gate** (CLAUDE.md) and it is red, so it blocks merge → verdict cannot reach clean.
+- **Fix (junior; I describe, do not apply — reviewer/impl separation):** insert one narrowing assert before the dict ops in each of the 3 valid-registry tests, after `result = _resolve_plugin_registry(config_dir)`:
+  ```python
+  assert isinstance(result, dict)  # valid config → real registry, not the refuse-all sentinel
+  ```
+  This narrows the union for mypy *and* strengthens the test (asserts the valid path is a real registry, not the sentinel). Three insertion points (`test_wired_whole_registry.py` ~L99, ~L113, ~L163); covers all 7 errors.
+
+## Gate results (impl_head `329b490`)
+
+| Gate | Result |
+|---|---|
+| `ruff check src tests` | ✅ All checks passed |
+| `mypy` (`files=src,tests`) | ❌ **7 errors** in `tests/plugins/test_wired_whole_registry.py` (R2) |
+| `pytest tests/plugins` | ✅ **156 passed** (incl. all RW1/RW2/RW3 tests) |
+
+**Round-2 verdict: `blocking`** — R1 + Y1 substantively resolved; one new mechanical blocker (R2, `mypy --strict` red) stands between the rework and clean. A narrow β-fix dispatch (3 one-line asserts) clears it — no design question, no re-routing. I route nothing.
