@@ -33,6 +33,8 @@ from orchestrator.plugins.provenance import (
     ActivationEntry,
     ActivationRegistry,
     PluginProvenance,
+    PluginRegistry,
+    RegistryEntry,
     check_fetched_activation,
     load_activation_registry,
 )
@@ -338,6 +340,7 @@ def _load_plugin(
     seen_tool_impl_names: set[str],
     seen_server_names: set[str],
     activation_entry: ActivationEntry | None = None,
+    registry_entry: RegistryEntry | None = None,
     posture_resolver: PostureResolver | None = None,
     sandbox_root: Path | None = None,
 ) -> PluginLoadResult | None:
@@ -350,11 +353,48 @@ def _load_plugin(
     For fetched plugins: activation_entry must be present (fail-closed if absent).
     The plugin_subprocess_env from the activation entry is operator-authored and
     passed to load_plugin_code — the fetched manifest cannot override it (ADR-031 D4).
+
+    registry_entry: the unified RegistryEntry for this plugin (ADR-038 D1/D2).
+    Used for shape-coherence and version-coherence checks.
     """
     pid = candidate.plugin_id
     plugin_dir = candidate.plugin_dir
     manifest = candidate.manifest
     provenance = candidate.provenance
+
+    # Shape-coherence guard (ADR-038 D1): entry's admission-proof shape must match
+    # the plugin's host-derived root. A fetched-shape entry (source_url+digest present)
+    # for an operator-placed plugin is an authoring error — refuse loudly.
+    if (
+        registry_entry is not None
+        and registry_entry.source_url is not None
+        and provenance == "operator_placed"
+    ):
+        _log.warning(
+            "plugin %r: registry entry has fetched-shape (source_url+digest) but "
+            "plugin is operator-placed — shape/root mismatch, refusing",
+            pid,
+        )
+        return None
+
+    # Version-coherence check (ADR-038 D2, A3): operator-intent / update-consistency.
+    # registry.version (if set) must equal manifest.version for fetched plugins.
+    # This catches the operator pinning the wrong version label for a digest.
+    # version absent → no check (fail-safe; digest is the integrity anchor).
+    if (
+        provenance == "fetched"
+        and registry_entry is not None
+        and registry_entry.version is not None
+        and registry_entry.version != manifest.version
+    ):
+        _log.warning(
+            "plugin %r (fetched): version mismatch: registry has %r, manifest has %r "
+            "— refusing (ADR-038 D2)",
+            pid,
+            registry_entry.version,
+            manifest.version,
+        )
+        return None
 
     # Fetched provenance guard: activation required, fail-closed if absent (ADR-031 D4).
     if provenance == "fetched":
@@ -504,10 +544,11 @@ def load_plugins(
     host_mcp_server_names: frozenset[str],
     fetched_plugins_dir: Path | None = None,
     activation_registry_path: Path | None = None,
+    plugin_registry: PluginRegistry | None = None,
     posture_resolver: PostureResolver | None = None,
     sandbox_root: Path | None = None,
 ) -> PluginLoadResult:
-    """Discover, validate, and merge plugin contributions (ADR-029 D2, ADR-031 D3/D4).
+    """Discover, validate, and merge plugin contributions (ADR-029 D2, ADR-031 D3/D4; ADR-038 D2).
 
     Absent plugins/ dir → no-op (clean boot). Per-plugin load isolation:
     a failure at ANY stage refuses that plugin without crashing bootstrap
@@ -521,6 +562,10 @@ def load_plugins(
 
     activation_registry_path: path to the operator's activation allowlist YAML.
       Absent / None → no fetched plugins activated (fail-closed default).
+
+    plugin_registry: the unified RegistryEntry registry (ADR-038 D1/D2).
+      None → absent registry → today's shipped defaults (operator-placed by
+      presence; fetched none). Used for enabled-gate + version-coherence.
     """
     fetched_empty = fetched_plugins_dir is None or not fetched_plugins_dir.exists()
     if not plugins_dir.exists() and fetched_empty:
@@ -586,6 +631,20 @@ def load_plugins(
     seen_server_names: set[str] = set()
 
     for candidate in candidates:
+        # enabled-gate: short-circuit disabled plugins BEFORE _load_plugin (ADR-038 D2,
+        # absorbed R0-A Y1). _load_plugin builds MCP sessions (live stdio subprocesses);
+        # a disabled plugin must never enter _load_plugin — no subprocess spawned.
+        # Operator-placed with no registry entry → still loads (presence=opt-in, ADR-029 D5).
+        r_entry: RegistryEntry | None = (
+            plugin_registry.get(candidate.plugin_id) if plugin_registry is not None else None
+        )
+        if r_entry is not None and not r_entry.enabled:
+            _log.info(
+                "plugin %r: disabled in registry (enabled: false) — skipping",
+                candidate.plugin_id,
+            )
+            continue
+
         activation = (
             check_fetched_activation(candidate.plugin_id, activation_registry)
             if candidate.provenance == "fetched"
@@ -605,6 +664,7 @@ def load_plugins(
             seen_tool_impl_names=seen_tool_impl_names,
             seen_server_names=seen_server_names,
             activation_entry=activation,
+            registry_entry=r_entry,
             posture_resolver=posture_resolver,
             sandbox_root=sandbox_root,
         )
