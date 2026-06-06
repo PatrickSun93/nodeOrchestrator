@@ -15,6 +15,10 @@ verdict_history:
     impl_head: ca8ca1c
     verdict: needs_architect
     summary: "All 4 round-1🟡 RESOLVED (architect-routed α; junior RW2–RW5b): Y1-impl→RW3 adf7053, Y2→RW4 f114522, Y3→RW2 1cf34f9, Y4→RW5 5add58b — verified by diff + code read; product code fail-closed; spine intact (scoring.py byte-frozen, core/event.py untouched in rework). Gates re-run by me: ruff ✅ / mypy ✅ (275 files) / pytest ❌ NOT clean. NEW 🟡 Y5: RW5(d)'s flaky-test 'stabilisation' is INEFFECTIVE — tests/api/test_concurrency.py two_concurrent_subscribers_both_see_replay still flakes (assert 0==3, replays 0/3 events) AND hangs (reproduced >6 min); the bounded loop caps iteration count but ws.receive_json() has no timeout, the two threads share one reader_store.conn, and the worker threads are non-daemon → a stuck thread deadlocks the pytest process → CI hang (the recurring multi-day stale-pytest zombies are this). Pre-existing P2.x WS-replay raciness, NOT a P4.5 regression, but a CI-deadlocking hang R0-A must not pass. Architect-routed α (junior truly fixes the hang, no revert) → RW6. Two below-bar residuals noted (noting-not-blocking): (a) verify_password disabled-branch returns pre-scrypt — weaker oracle than the fixed not-found path; (b) authenticated-/logout success path / revoke_sessions_for_user has no positive test. Verdict stays needs_architect — cannot clean until the hang is fixed and the full suite is stably green (round-3)."
+  - round: 3
+    impl_head: bb8f47a
+    verdict: needs_architect
+    summary: "RW6 (bb8f47a) ELIMINATED the Y5 CI-deadlock hang — verified by me: target test 15/15 PASS no hang, targeted scope exit 0, full pytest exit 0 (0 failed; lone warning = unrelated test_net_trust hung-DNS daemon thread), ruff+mypy(275) green. RW6 = (a) conftest reader_exec max_workers 2→1, (b) _room_stream auth try/except→close(1011) before accept, (c) test threads daemon=True. BUT it fixed the SYMPTOM not the true root cause → NEW 🟡 Y6: production app.py:276 reader_executor=ThreadPoolExecutor(max_workers=4) shares ONE reader_conn (app.py:272) — the exact concurrent-single-SQLite-connection race junior diagnosed; RW6 changed only the TEST fixture (a) + a WS-auth-only close-guard (b, doesn't cover replay app.py:947 / GET reader paths), so production still races on concurrent reads. P4.5's multi-user seam (DP1=b) makes concurrent reads the NORMAL condition (2 users ⇒ correctness, not F-scale). RW6 commit's '(a) no SQLite race (root cause)' overstates (test-only); test-green fidelity dropped (max_workers=1 serialises the very concurrency it tests while prod=4); writer is correctly max_workers=1 (ADR-025 D6) — reader=4 on a shared conn is the asymmetry bug. Architect ruled concurrent-reader on the multi-user path is P4.5 IN-SCOPE → routed α-RW7 (per-thread/thread-local reader conn, keep writer single-conn, make test truly concurrent, fix wording). Y1-Y4 still resolved (untouched by RW6); L3 reject-before-accept + Y3 1008 test still hold (new 1011 path also pre-accept). 2 below-bar residuals persist. Verdict needs_architect — not clean until true root cause (Y6) fixed + suite stably green (round-4)."
 reviewer: architect-partner
 date: 2026-06-06
 reviewed_artifacts:
@@ -28,7 +32,7 @@ contract:
   - docs/decisions/ADR-039-auth-identity-model.md (Accepted 2026-06-06)
   - docs/process/senior-plans/P4.5.md
 against: claude/P4.5-impl @ 7924b36 (8 atomic commits over origin/main)
-gates: ruff ✅ (exit 0) · mypy ✅ (no issues, 275 files) · pytest — R1 tests/api+tests/core ✅ (373 passed); R2 NOT clean — tests/api concurrency test flakes+hangs (Y5; see verdict_history R2 + Round 2 §)
+gates: ruff ✅ · mypy ✅ (275 files) · pytest — R3 GREEN (target test 15/15 no hang · targeted scope exit 0 · full suite exit 0); verdict still needs_architect on Y6 (prod reader-conn race — a code-correctness finding, not a gate-red — see verdict_history R3 + Round 3 §). [history — R1 373✅; R2 Y5 hang-red, fixed by RW6]
 ---
 
 # R0-A on impl — P4.5: the first human-identity trust boundary (ADR-039 D1–D10)
@@ -173,3 +177,43 @@ RW5(d)'s commit claims the bounded drain (`range(len(pre)+10)`) "prevent[s] infi
 - **ruff** ✅ exit 0
 - **mypy** ✅ "no issues found in 275 source files" (`files=src,tests`)
 - **pytest** ❌ **not clean** — `tests/api + tests/core + tests/tools/test_e2e.py`: all green **except** Y5's concurrency test (flake/hang). The full-suite-green (2220 passed) reported by the junior + senior runs reflects the test's *flaky* nature (it usually passes), not stability.
+
+---
+
+## Round 3 — verdict-bump re-review (RC-10): Y5 hang eliminated, deeper root cause Y6 found → architect-routed α-RW7
+
+**Dispatch.** Junior pushed RW6 (`bb8f47a`) to truly fix the Y5 hang. RC-10 re-verification: confirm the hang is gone + suite stably green + Y1–Y4 still resolved, and trace whether the fix addresses the real cause. **Route nothing** — the deeper finding (Y6) was architect-routed α in-chat; recorded below.
+
+**Verdict: `needs_architect` (still cannot clean).** The Y5 CI-deadlock **hang is genuinely eliminated**, but tracing RW6 shows it fixed the *symptom* (the test no longer hangs) without fixing the *true root cause* — a production concurrent-reader SQLite-connection race (**Y6**). The architect ruled this is P4.5 in-scope (the multi-user path) → α-RW7, not an F-scale inscribe-defer.
+
+### Verification (re-run by me, round 3) — all green
+
+- **target test** `test_two_concurrent_subscribers_both_see_replay` — **15/15 PASS, zero hangs** (each run `timeout 60`-guarded)
+- **targeted scope** `tests/api + tests/core + tests/tools/test_e2e.py` — exit 0
+- **full pytest** — exit 0, 0 failed (the lone `PytestUnhandledThreadExceptionWarning` is `tests/tools/test_net_trust.py`'s `hung.example.invalid` daemon thread — unrelated to P4.5 / the reader path)
+- **ruff** exit 0 · **mypy** "no issues, 275 files"
+- **Y1–Y4** untouched by RW6 → still resolved. The new `_room_stream` exception path `close(1011)` is also **before** `accept()` (`app.py:923-927` vs `:937`), so L3 reject-before-accept and the Y3 `1008` unauth test still hold.
+
+### RW6 (`bb8f47a`) — what it fixed, and what it didn't
+
+| Part | Change | Effect |
+|---|---|---|
+| (a) | `conftest.py` reader_exec `max_workers 2→1` | Serialises the **test** reader → no race **in tests**. Root-cause-shaped, but **test-fixture only**. |
+| (b) | `_room_stream` auth wrapped in try/except → `close(1011)` before accept | **WS-auth** path fails-closed instead of hanging. Does **not** cover replay (`app.py:947`) or the GET reader endpoints. |
+| (c) | `test_concurrency.py` threads `daemon=True` | Test can't deadlock CI even if a thread stalls. Safety-belt. |
+
+### 🟡 Y6 (round-3, NEW — the true root cause) — production reader executor shares one SQLite connection → **architect-routed α-RW7**
+
+The hang's real cause is a **production** concurrency bug, not a test artefact:
+- `app.py:272` opens a **single** `reader_conn`; `app.py:276` runs `reader_executor = ThreadPoolExecutor(max_workers=4)`. So up to 4 executor threads use the **same** SQLite connection concurrently — `check_same_thread=False` only suppresses the guard, it adds no thread-safety. This is the exact race the junior diagnosed (concurrent cursor ops corrupt connection state → `validate_*` raises → uncaught-before-accept → client blocks).
+- RW6 fixed this only in the **test** fixture (a) and band-aided the **WS-auth** hang (b). Production still races on every concurrent read: replay (`app.py:947`), `GET /rooms`/events/thread, `/login` verify. Under concurrency these raise → `500` (replay/GET, unguarded) or a spurious `1011` (WS-auth, via (b)). All fail-closed (no hang, no security hole), but a real degradation.
+- **Why P4.5-in-scope (architect ruling):** P4.5's purpose is the real multi-user seam (DP1=b). **Concurrent reads are the *normal* multi-user condition** — two simultaneous users trigger this. Two-user correctness ≠ F/scale; the architect ruled it in-scope rather than an inscribe-and-defer F-residual.
+- **Honesty (HR#5):** RW6's commit "(a) … no SQLite race (root cause)" **overstates** — the race is fixed only in tests; prod is untouched. And the test's green fidelity dropped: `max_workers=1` serialises away the very concurrency the test is named for, while prod runs `4`.
+- **Asymmetry:** the writer is correctly `max_workers=1` (single conn, serialised — ADR-025 D6). The reader being `max_workers=4` on a shared conn is the bug.
+
+**Architect routing (in-chat): α — junior RW7** truly fixes it (per-thread / thread-local reader connection to remove the shared-connection race, keep the writer single-conn serialisation per ADR-025 D6, make the test *genuinely* concurrent to restore fidelity, and correct the RW6 wording). Clean awaits round-4: true root cause fixed + suite stably green.
+
+### Below-bar residuals (still noting, not blocking)
+
+- **`verify_password` disabled-user branch** (`users.py:201-202`) returns before scrypt — a weaker oracle than the not-found path Y4 fixed; out of Y4's scope.
+- **Authenticated-`/logout` success path** (`_logout` + `revoke_sessions_for_user`) — only the unauthenticated-401 case is tested; the success path is an untested minor coverage gap (the function mirrors `revoke_session`).
