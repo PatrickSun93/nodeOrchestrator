@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sqlite3
+import threading
 import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -113,13 +114,39 @@ class AppContext:
     mcp_sessions: dict[str, MCPSession] = field(default_factory=dict)
     local_tools: LocalToolRegistry = field(default_factory=dict)
     sandbox_root: Path = field(default_factory=lambda: Path.cwd())
+    # Per-thread reader connections (ADR-025 D6 RW7): each reader_executor worker owns
+    # its own SQLite connection. reader_store is the fallback for tests/single-thread use.
+    reader_local: threading.local = field(default_factory=threading.local)
+    reader_conns: list[sqlite3.Connection] = field(default_factory=list)
+
+    def get_reader_store(self) -> EventStore:
+        """Return the per-thread EventStore for the calling reader_executor worker.
+
+        Falls back to reader_store when called from a thread that has no initialised
+        thread-local store (e.g. test fixtures that omit the initializer).
+        """
+        store: EventStore | None = getattr(self.reader_local, "store", None)
+        return store if store is not None else self.reader_store
+
+    def get_reader_conn(self) -> sqlite3.Connection:
+        """Return the per-thread SQLite connection for the calling reader_executor worker.
+
+        Falls back to reader_store.conn when no thread-local connection is available.
+        """
+        conn: sqlite3.Connection | None = getattr(self.reader_local, "conn", None)
+        return conn if conn is not None else self.reader_store.conn
 
     def shutdown(self) -> None:
         """Tear down executors and DB connections on server stop."""
         self.writer_executor.shutdown(wait=True)
         self.reader_executor.shutdown(wait=True)
         self.writer_store.conn.close()
-        self.reader_store.conn.close()
+        # Per-thread reader connections (production path: non-empty after RW7 fix)
+        for conn in self.reader_conns:
+            conn.close()
+        # Legacy single reader connection (test path / fallback; always present)
+        if not self.reader_conns:
+            self.reader_store.conn.close()
 
 
 class _CreateRoomBody(BaseModel):
@@ -268,12 +295,30 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
 
     _init_auth_schema(writer_conn)
 
-    # Reader: check_same_thread=False for concurrent reads on the read executor
+    # Reader: per-thread connections eliminate the concurrent-read SQLite race.
+    # WAL mode allows multiple simultaneous readers; each reader_executor worker
+    # gets its own connection via the initializer — no shared-connection contention.
+    # reader_store below is retained as a fallback (unused by routes in production).
     reader_conn = sqlite3.connect(str(db_path), check_same_thread=False)
     reader_store = EventStore(reader_conn)
 
+    _reader_local: threading.local = threading.local()
+    _reader_conns: list[sqlite3.Connection] = []
+    _reader_conns_lock = threading.Lock()
+
+    def _init_reader_worker() -> None:
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        _reader_local.conn = conn
+        _reader_local.store = EventStore(conn)
+        with _reader_conns_lock:
+            _reader_conns.append(conn)
+
     writer_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="api-writer")
-    reader_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="api-reader")
+    reader_executor = ThreadPoolExecutor(
+        max_workers=4,
+        thread_name_prefix="api-reader",
+        initializer=_init_reader_worker,
+    )
     bus = RoomEventBus()
 
     llm_layer = load_and_validate_llm_layer(config_dir)
@@ -389,6 +434,8 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         mcp_sessions=mcp_sessions,
         local_tools=local_tools,
         sandbox_root=sandbox_root,
+        reader_local=_reader_local,
+        reader_conns=_reader_conns,
     )
 
 
@@ -417,7 +464,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         # Verify on reader connection (read-only, non-blocking)
         ok = await loop.run_in_executor(
             ctx.reader_executor,
-            lambda: verify_password(ctx.reader_store.conn, body.user_id, body.password),
+            lambda: verify_password(ctx.get_reader_conn(), body.user_id, body.password),
         )
         if not ok:
             raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -467,7 +514,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             ctx.reader_executor,
-            lambda: ctx.reader_store.get_room(RoomId(room_id)),
+            lambda: ctx.get_reader_store().get_room(RoomId(room_id)),
         )
         if result is None:
             raise HTTPException(status_code=404, detail=f"room {room_id!r} not found")
@@ -478,7 +525,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             ctx.reader_executor,
-            lambda: ctx.reader_store.get_room_events(RoomId(room_id)),
+            lambda: ctx.get_reader_store().get_room_events(RoomId(room_id)),
         )
 
     @app.get("/rooms/{room_id}/snapshot", response_model=Snapshot)
@@ -487,11 +534,11 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         room, events = await asyncio.gather(
             loop.run_in_executor(
                 ctx.reader_executor,
-                lambda: ctx.reader_store.get_room(RoomId(room_id)),
+                lambda: ctx.get_reader_store().get_room(RoomId(room_id)),
             ),
             loop.run_in_executor(
                 ctx.reader_executor,
-                lambda: ctx.reader_store.get_room_events(RoomId(room_id)),
+                lambda: ctx.get_reader_store().get_room_events(RoomId(room_id)),
             ),
         )
         if room is None:
@@ -504,7 +551,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         try:
             return await loop.run_in_executor(
                 ctx.reader_executor,
-                lambda: ctx.reader_store.get_thread(EventId(event_id)),
+                lambda: ctx.get_reader_store().get_thread(EventId(event_id)),
             )
         except EventNotFoundError as exc:
             raise HTTPException(status_code=404, detail=f"event {event_id!r} not found") from exc
@@ -889,8 +936,10 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         from orchestrator.api.wire import StreamEventMessage, StreamReplayCompleteMessage
 
         # --- WS auth: resolve principal before accept() (ADR-039 D4) ---
+        # Each lambda runs on a reader_executor worker thread and calls
+        # ctx.get_reader_conn() to get that thread's own SQLite connection,
+        # eliminating the shared-connection race fixed in RW7.
         loop = asyncio.get_running_loop()
-        reader_conn = ctx.reader_store.conn
         principal = None
 
         # Try session cookie (browsers send cookies on WS upgrade)
@@ -899,7 +948,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             if ws_session_id:
                 principal = await loop.run_in_executor(
                     ctx.reader_executor,
-                    lambda: validate_session(reader_conn, ws_session_id),
+                    lambda: validate_session(ctx.get_reader_conn(), ws_session_id),
                 )
 
             # Try Bearer token in query param (programmatic clients)
@@ -908,7 +957,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 if ws_token:
                     principal = await loop.run_in_executor(
                         ctx.reader_executor,
-                        lambda: validate_token(reader_conn, ws_token),
+                        lambda: validate_token(ctx.get_reader_conn(), ws_token),
                     )
 
             # Try Authorization: Bearer header (programmatic clients via header)
@@ -918,7 +967,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     raw_token = auth_hdr[7:]
                     principal = await loop.run_in_executor(
                         ctx.reader_executor,
-                        lambda: validate_token(reader_conn, raw_token),
+                        lambda: validate_token(ctx.get_reader_conn(), raw_token),
                     )
         except Exception:
             # Auth executor raised — close cleanly so client is never left hanging.
@@ -946,7 +995,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             # (2) Replay current events from the read-only reader connection.
             replay_events = await loop.run_in_executor(
                 ctx.reader_executor,
-                lambda: ctx.reader_store.get_room_events(rid),
+                lambda: ctx.get_reader_store().get_room_events(rid),
             )
             for event in replay_events:
                 await websocket.send_text(StreamEventMessage(event=event).model_dump_json())

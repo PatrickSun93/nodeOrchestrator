@@ -130,10 +130,8 @@ class TestMultipleConnections:
                 with TestClient(app, headers=auth_hdrs).websocket_connect(
                     f"/rooms/{room_id_str}/stream"
                 ) as ws:
-                    # Bounded drain: at most len(pre)+10 messages to avoid
-                    # an infinite hang if replay_complete is delayed.
                     collected: list[dict[str, Any]] = []
-                    for _ in range(len(pre) + 10):
+                    for _ in range(len(pre) + 5):
                         msg = ws.receive_json()
                         if msg["kind"] == "replay_complete":
                             break
@@ -143,12 +141,15 @@ class TestMultipleConnections:
             except Exception as exc:
                 errors.append(exc)
 
+        # daemon=True: CI safety net only — with per-thread reader connections
+        # (RW7) replay_complete arrives promptly; threads should never hit timeout.
         threads = [threading.Thread(target=_collect, args=(i,), daemon=True) for i in range(2)]
         for t in threads:
             t.start()
         for t in threads:
             t.join(timeout=10)
 
+        assert not any(t.is_alive() for t in threads), "Subscriber threads timed out — reader hang?"
         assert not errors, f"WS errors: {errors}"
         for i in range(2):
             assert len(results[i]) == 3

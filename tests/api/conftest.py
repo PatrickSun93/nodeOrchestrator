@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -90,12 +91,26 @@ def ctx(db_path: Path) -> Generator[AppContext, None, None]:
     reader_conn = sqlite3.connect(str(db_path), check_same_thread=False)
     reader_store = EventStore(reader_conn)
 
+    # Per-thread reader connections mirror production (RW7 fix).
+    # Each worker thread gets its own SQLite connection via the initializer;
+    # WAL mode lets all of them read concurrently without contention.
+    _reader_local: threading.local = threading.local()
+    _reader_conns: list[sqlite3.Connection] = []
+    _reader_conns_lock = threading.Lock()
+
+    def _init_reader_worker() -> None:
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        _reader_local.conn = conn
+        _reader_local.store = EventStore(conn)
+        with _reader_conns_lock:
+            _reader_conns.append(conn)
+
     writer_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-writer")
-    # max_workers=1: reader_conn is a single SQLite connection; concurrent
-    # executor threads sharing it cause undefined behaviour (check_same_thread=False
-    # suppresses the guard but does NOT add thread safety).  Serialising reads
-    # via a single worker is correct for tests and fixes the concurrent-WS hang.
-    reader_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-reader")
+    reader_exec = ThreadPoolExecutor(
+        max_workers=4,
+        thread_name_prefix="test-reader",
+        initializer=_init_reader_worker,
+    )
     bus = RoomEventBus()
 
     context = AppContext(
@@ -109,6 +124,8 @@ def ctx(db_path: Path) -> Generator[AppContext, None, None]:
         regex_registry={},
         tools={},
         llm_router=_mock_router(),
+        reader_local=_reader_local,
+        reader_conns=_reader_conns,
     )
     yield context
     context.shutdown()
