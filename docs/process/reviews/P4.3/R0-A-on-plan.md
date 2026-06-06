@@ -3,16 +3,66 @@ task_id: P4.3
 round: R0-A-on-plan
 lens: in-family (Claude; cross-family R0-B-on-plan runs in parallel in r0b)
 reviewer: architect-partner
-dispatch: manual (no state change; plan-stage)
+dispatch: manual (no state change; plan-stage) — round 2 = absorption re-verify (architect-routed; senior absorbed in commit 3263726)
 reviews_acked:
   - architect-briefs/P4.3.md
   - senior-plans/P4.3.md
   - decisions/ADR-037-syscall-egress-sandbox.md
   - reviews/P4.3/external-r0b-prompt.md
-verdict: needs_architect
-findings_count: { red: 0, yellow: 2, green: 3 }
-verify_cite_base: origin/main (working tree == origin/main for src/; diff is docs-only, impl not started)
+  - reviews/P4.3/R0-B-on-plan.md (cross-family blocker — absorption verified against it)
+verdict: clean (round 2; was needs_architect round 1 — all routed items absorbed)
+verdict_history:
+  - round: 1
+    verdict: needs_architect
+    findings: { red: 0, yellow: 2, green: 3 }
+    summary: spine + 5 DPs faithful; routed F2/R5 + F1 + 4 of 5 senior push-backs.
+  - round: 2
+    verdict: clean
+    summary: absorption (commit 3263726) re-verified — every routed item (🔴 R1 + Y1/Y2/Y3/Y5 + R5 + §5.2/§5.3 + F1/F3/F4/F5) resolved; ADR-037 stays Proposed (RC-23); 2 non-blocking impl-stage R0-B watch-items.
+findings_count: { red: 0, yellow: 2, green: 3 }  # round 1 counts; round 2 opens no new finding
+verify_cite_base: round 1 = origin/main; round 2 = claude/P4.3-plan @ 3263726 (absorption is docs-only — ADR-037 + senior-plan, +150/-120, no src/ change → round-1 substrate ledger holds verbatim, spine not re-derived per dispatch)
 ---
+
+# Round 2 — absorption re-verification (2026-06-05) — verdict `clean`
+
+**Dispatch:** architect manual re-run. The round-1 plan-stage dual-lens — this R0-A-on-plan (`0🔴/2🟡`) ∥ the cross-family `R0-B-on-plan.md` (`1🔴/5🟡` **blocking**) — was architect-routed; the senior **absorbed** the routing into the plan + ADR-037 in **commit `3263726`** (`claude/P4.3-plan`). This round **re-verifies the absorption item-by-item against the committed artifacts**; it does **not** re-derive the round-1-cleared spine (5 DPs, empty-executor-diff, fail-closed posture — confirmed faithful in round 1 below, untouched by the absorption).
+
+**Base:** `git fetch`; branch tip `3263726`. The absorption diff is **docs-only** (`ADR-037` + `senior-plans/P4.3.md`, +150/−120, **no `src/` change**) → the round-1 substrate verify-cite ledger (§5 below) **holds verbatim**. The two new atomics P4.3-3 (egress) / P4.3-11 (R5) describe not-yet-written code (nothing to cite-check at plan stage).
+
+## Routed-item resolution ledger (every routed item → resolved? → verified locus)
+
+| Routed item (round-1 id) | ✓ | Verified locus |
+|---|---|---|
+| **🔴 R1 — egress MECHANISM**, ratified (a) parent-pinned-IP per-call egress | ✅ | New atomic **P4.3-3** (plan:55–60) + **ADR-037 D2 Network** (:53) + **D3** (:61). Pins all four R0-B sub-asks: **(a)** egress → exactly the `_resolve_and_validate` pinned IP:port via per-call ephemeral net + daemon-side nftables/iptables rule; **(b) single-family pin** (other family blocked — no dual-stack escape); **(c) container DNS disabled** (`--dns 0.0.0.0`; the IP:port pin itself also blocks reaching any `:53`); **(d) cross-platform-honest** — native-Linux host firewall / Docker-Desktop web_fetch via host-side pinned proxy / non-viable combo (git_push-ssh-on-DD) → **deny-default fail-closed** (loud). Acceptance is buildable (pinned-IP rule shape; DNS-disabled; v6-blocked-when-v4-pinned; DD-ssh→fail-closed). **Retires R4/R8 on the sandboxed surface, bounded by allowlist breadth** (honestly inscribed ADR-037 D5 R8-if-broad-allowlist:77). |
+| **R5 — DNS head-of-line** (R0-B Y4 / R0-A F2), ratified (a) FOLD IN | ✅ | New atomic **P4.3-11** (plan:111–116): *"This RESOLVES R5 (not a deferral) — R5 leaves the deferred-residual set entirely."* Honors ADR-035 impl-degradation ¶ ("folds into P4.3") → **no deferral re-annotation**. **Confirmed out of every deferred list:** ADR-037 D5 (:72–82) names only **R8/R9** as R-residuals — R5 absent; line 3 + :115 frame R5 *resolved*; P4.3-13 (:126) marks it resolved alongside R6. |
+| **§5.2 — operator image + fail-closed** | ✅ | ADR-037 D5 (:82) + P4.3-5 config `image` (:70) + §5 (:186): operator-provided image; incomplete toolchain → fail-closed (loud), no silent gap. |
+| **§5.3 — R7 cross-platform** | ✅ | ADR-037 D5 (:82) + P4.3-9 (:98) + §5 (:188): openat2 (Linux 5.6+) / dir-fd `O_NOFOLLOW` walk (macOS) / final-component residual (Windows, accepted posture). |
+| **Y1 — seccomp PINNED + enumerated** | ✅ | ADR-037 D2 Syscall (:54) + P4.3-2 (:49): strategy **pinned = runtime-default blocklist AUGMENTED** (full default-deny allowlist rejected as brittle for first-party pytest/ruff/git → deferred tail D5:79). 11 enumerated denials (`unshare`, `clone[CLONE_NEW{USER,NET,NS}]`, `bpf`, `io_uring_setup`, `add_key`, `request_key`, `keyctl`, `ptrace`, `mount`, raw `socket`/`AF_PACKET`) — **identical across D2 / P4.3-2 / §5(:176)**; shipped as a concrete `seccomp.json` asset. |
+| **Y2 — docker.sock + /proc + /sys** | ✅ | ADR-037 D2 FS (:52) + P4.3-2 (:49): **`/var/run/docker.sock` NEVER mounted = new constitutional invariant**, test-enforced **P4.3-12 s6** (:119); `/sys` ro; private PID-ns + sensitive-`/proc` masking. Elevated to §1 invariants (:28) + forcing functions (:162). |
+| **Y3 — latency + probe race** | ✅ | ADR-037 D3 (:63) + P4.3-4 (:63): **≤3s-p95 setup target = plan-vs-impl gate**; probe once-at-bootstrap + **cached per turn (~30s TTL)** with own **~2s timeout** (P4.3-1:42, P4.3-5:70); **daemon-dies-at-spawn → `SandboxUnavailableError`** on the posture path; teardown **shielded** (no leaked container on cancel). |
+| **Y5 — config-parse + repeated-probe** | ✅ | ADR-037 D4 (:69) + P4.3-5 (:70): **config-parse failure → fail-closed**; `available()` cached per turn so a wedged daemon fails fast. Mechanized by **P4.3-12 s2** (:119). |
+| **F1 — stale task-refs** | ✅ | Resolved by **renumber to 14 atomics (P4.3-0…13)** — the two new atomics restore constitution=**12** / annotations=**13**. Verified: **every `P4.3-NN` ref in the plan ∈ [0,13]**, the §2 canonical header list is exactly 0–13 (no gap), the three ADR refs (P4.3-4/12/13) all resolve. The round-1 dangling `P4.3-12/13` refs are now *valid* targets. |
+| **F3 / F4 / F5** (round-1 greens) | ✅ | **F3:** D3-ii added to frontmatter `annotates` (:6) + ADR list "D3-i,**ii**,iii" (:3). **F4:** net_trust shared-module sequencing restated for the new numbering — **P4.3-8/10/11** disjoint functions, **P4.3-9** genuinely independent (§3:155). **F5:** cites tightened (`:344`; `_dispatch:114`/`_make_git_push:251`; `_make_web_fetch:124`) (§1:22–26). |
+
+## RC-23 + atomic-graph coherence
+
+- **RC-23-safe ✅** — ADR-037 has **exactly one** `**Status:**` header (line 3) = `Proposed`; the W-006-2-fixed parser (`_parse_adr_status`) reads only that line; the body "Accepted" mentions are prose ("matching the eventual Accepted status"). The Accept is yours, post impl-stage dual-lens.
+- **Atomic graph coherent ✅** — §3 spine P4.3-0→1→2→**3**→4→5, parallel {6,7,8}, app-level {9,10,11}, then 12→13: all 14 tasks present, the new egress atomic correctly inserted **before** spawn (P4.3-3 feeds P4.3-4 which consumes it), the new R5 atomic in the app-level `net_trust` cluster. No orphan, no cycle.
+
+## Still-off / watch-items (NON-blocking — for the impl-stage R0-B, not plan gaps; I surface, you route if you disagree)
+
+Both are inherent to **reversing in-process egress into a container** (P4.3-8) and sit **below** the plan-stage bar the R0-B 🔴 set (which asked only for the four mechanism sub-asks — all now answered). Flagging so the **impl-stage** cross-family lens (`requires_cross_family_review: true`) carries them:
+
+1. **In-process httpx → container netns routing (native Linux).** P4.3-3/8 pin *what* the constraint is (pinned-IP:port rule, DNS off); *how* an in-process `httpx` socket is placed behind that per-call netns on native Linux (relay/proxy container vs netns-join) is scoped out (P4.3-8 out-of-scope: "the proxy implementation detail beyond the allowlist contract"). The HTTPS forward-proxy path must enforce the pin **without re-resolving** the `CONNECT` host (else DNS re-enters) — the parent already pins the IP, so the proxy should allow only the pinned IP:port. Impl-stage R0-B escape lens.
+2. **`--dns 0.0.0.0` vs the embedded resolver on user-defined networks.** A per-call *user-defined* Docker network ships Docker's embedded DNS at `127.0.0.11`; confirm at impl that `--dns 0.0.0.0` actually suppresses it (belt — the IP:port pin already blocks reaching any `:53` resolver). Impl-stage R0-B.
+
+## Verdict — `clean` (round 2)
+
+The absorption is **faithful and complete**: every architect-routed item (🔴 R1 + Y1/Y2/Y3/Y5 + R5 + §5.2/§5.3 + F1/F3/F4/F5) is banked into the atomics + ADR-037 with a verified locus; no routed item was softened, dropped, or silently re-interpreted; the plan opens **no new finding**. The plan is **junior-dispatchable**. The only remaining gate is **yours**: Accept ADR-037 (stays `Proposed`, RC-23) — then junior dispatch / the mandatory impl-stage dual-lens. The two impl-stage watch-items above are handed to the cross-family lens.
+
+---
+
+*(Round-1 review verbatim below — the audit record; not re-derived this round.)*
 
 # R0-A-on-plan — P4.3 container syscall/egress sandbox (the RB-FS/NET retirement)
 
