@@ -200,6 +200,7 @@ class TestLensAFailClosed:
         ("GET", "/events/nonexistent-event/thread"),
         ("POST", "/rooms/nonexistent-room/intent"),
         ("POST", "/rooms/nonexistent-room/confirm"),
+        ("POST", "/logout"),
     ]
 
     @pytest.mark.parametrize("method,path", PROTECTED_ROUTES)

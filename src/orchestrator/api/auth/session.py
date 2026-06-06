@@ -103,6 +103,20 @@ def revoke_session(conn: sqlite3.Connection, session_id: str) -> None:
     conn.commit()
 
 
+def revoke_sessions_for_user(conn: sqlite3.Connection, user_id: str) -> None:
+    """Revoke all active sessions for a user (logout-all-sessions).
+
+    MUST run on the writer connection.
+    Used by /logout (protected route) so the authenticated principal's
+    user_id drives revocation rather than a cookie value.
+    """
+    conn.execute(
+        "UPDATE sessions SET revoked = 1 WHERE user_id = ?",
+        (user_id,),
+    )
+    conn.commit()
+
+
 def validate_session(conn: sqlite3.Connection, session_id: str) -> Principal | None:
     """Validate session_id and return Principal if valid, else None.
 

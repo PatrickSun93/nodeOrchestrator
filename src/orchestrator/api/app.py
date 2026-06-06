@@ -442,15 +442,15 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/logout")
     async def _logout(request: Request) -> JSONResponse:
-        from orchestrator.api.auth.session import revoke_session
+        from orchestrator.api.auth.session import revoke_sessions_for_user
 
-        session_id = request.cookies.get("session_id")
-        if session_id:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                ctx.writer_executor,
-                lambda: revoke_session(ctx.writer_store.conn, session_id),
-            )
+        # principal guaranteed non-None by auth middleware (not in PUBLIC_PATHS)
+        principal = request.state.principal
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            ctx.writer_executor,
+            lambda: revoke_sessions_for_user(ctx.writer_store.conn, principal.user_id),
+        )
         resp = JSONResponse({"status": "ok"})
         resp.delete_cookie("session_id")
         return resp
