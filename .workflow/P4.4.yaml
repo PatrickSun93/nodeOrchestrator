@@ -1,7 +1,19 @@
 task_id: P4.4
-state: awaiting_architect_accept
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-06T05:57:03.175149Z'
+last_transition_at: '2026-06-06T06:31:23.233532Z'
 cycle_started_at: '2026-06-06T05:31:00.557163Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-06T06:31:23.233532Z'
+  actor: architect
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: 'ADR-038 Accepted (plugin registry/lifecycle/admission/namespacing) by architect
+    after plan-stage dual-lens cleared 0 red (R0-A-on-plan 0R/5Y/4G + R0-B-on-plan
+    cross-family 0R/5Y/1G, both needs_architect). Architect routed all 9 de-duplicated
+    yellows as alpha-absorb; senior absorbed A-I into ADR-038 D1/D2/D4 + Constitutional
+    carry-forward (ddf9f88). Five section-5 sub-decisions confirmed: option-A presence=opt-in
+    / refuse-all-graceful / always-prefix / version-coherence-as-operator-check /
+    endpoints-contract-only. Plan merged to main (ff a8428d2). requires_cross_family_review=true
+    (impl-stage mandatory dual-lens). Advancing to junior impl (P4.4-1..6 serial).'
 requires_cross_family_review: true
