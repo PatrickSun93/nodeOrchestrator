@@ -56,12 +56,14 @@ _KDF_PARAMS: dict[str, object] = {
 
 
 def init_auth_schema(conn: sqlite3.Connection) -> None:
-    """Create users (and later sessions/tokens) tables if not present.
+    """Create users, sessions, and user_tokens tables if not present.
 
     Safe to call on both writer and reader connections — IF NOT EXISTS is
     idempotent. Called by _build_context alongside EventStore.init_schema().
     """
-    conn.executescript(AUTH_USER_SCHEMA)
+    from orchestrator.api.auth.session import AUTH_SESSION_SCHEMA
+
+    conn.executescript(AUTH_USER_SCHEMA + AUTH_SESSION_SCHEMA)
     conn.commit()
 
 
