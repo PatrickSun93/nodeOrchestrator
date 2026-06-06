@@ -397,14 +397,19 @@ def _load_plugin(
         return None
 
     # Fetched provenance guard: activation required, fail-closed if absent (ADR-031 D4).
+    # Activation can come from (a) unified registry_entry with fetched-shape (source_url present)
+    # or (b) legacy activation_entry. (a) is the ADR-038 D1 unified path; (b) is legacy.
     if provenance == "fetched":
-        if activation_entry is None:
+        _has_registry_activation = (
+            registry_entry is not None and registry_entry.source_url is not None
+        )
+        if not _has_registry_activation and activation_entry is None:
             _log.warning(
                 "plugin %r (fetched): no activation entry — refusing (ADR-031 D4)",
                 pid,
             )
             return None
-        _log.debug("plugin %r (fetched): activation entry present, continuing load", pid)
+        _log.debug("plugin %r (fetched): activation proof present, continuing load", pid)
 
     # Step 3: Host-collision + within-plugin-dup check BEFORE any import (ADR-029 D2 step 3).
     # Cross-plugin collision is resolved by namespacing (ADR-038 D4).
@@ -481,9 +486,12 @@ def _load_plugin(
     if manifest.contributions.tool_impls:
         from orchestrator.plugins.code import PluginCodeLoadError, load_plugin_code
 
-        subprocess_env: dict[str, str] = (
-            activation_entry.plugin_subprocess_env if activation_entry is not None else {}
-        )
+        # subprocess_env: prefer unified registry_entry, fall back to legacy activation_entry.
+        subprocess_env: dict[str, str] = {}
+        if activation_entry is not None:
+            subprocess_env = activation_entry.plugin_subprocess_env
+        elif registry_entry is not None:
+            subprocess_env = registry_entry.plugin_subprocess_env
         try:
             plugin_local_tools = load_plugin_code(
                 plugin_dir,
