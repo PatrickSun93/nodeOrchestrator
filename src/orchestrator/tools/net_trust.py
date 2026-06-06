@@ -36,10 +36,14 @@ _NAT64_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
 
 _ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
-# Single-thread pool for bounded DNS resolution.
-# Keeps getaddrinfo off the main writer thread so the writer can impose a deadline
-# (ThreadPoolExecutor.submit(...).result(timeout=DNS_RESOLVE_TIMEOUT_S)).
-_DNS_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="net-dns")
+# Bounded-growth DNS pool — R5 head-of-line fix (ADR-035 impl-degradation ¶; P4.3-11).
+# Replaced the former max_workers=1 pool (which queued subsequent resolves behind a hung
+# getaddrinfo): each submit gets its own slot; on timeout the future is abandoned
+# independently and the thread left to die without blocking the next caller.
+# max_workers=8: handles bursts; the 5s per-call deadline still bounds each individual
+# resolve (DNS_RESOLVE_TIMEOUT_S). A hung resolve consumes one slot but does not
+# head-of-line-block a concurrent resolve in a different slot.
+_DNS_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="net-dns")
 
 
 def is_denied_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:

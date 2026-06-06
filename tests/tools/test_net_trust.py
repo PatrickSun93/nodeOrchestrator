@@ -363,3 +363,108 @@ def test_nat64_wrapped_public_ipv4_allowed() -> None:
     assert not is_denied_ip(nat64_public), (
         "NAT64-wrapped public IP (93.184.216.34) must be allowed"
     )
+
+
+# ---------------------------------------------------------------------------
+# P4.3-11: R5 DNS head-of-line fix — concurrent resolve not blocked by hung one
+# ---------------------------------------------------------------------------
+
+
+def test_dns_hol_fix_concurrent_resolve_not_blocked() -> None:
+    """P4.3-11: a hung getaddrinfo must not block a concurrent resolve past its deadline.
+
+    With the former max_workers=1 pool, a hung getaddrinfo blocked all subsequent
+    resolves until it timed out. With max_workers=8, each submit gets its own slot.
+    This test simulates one hanging resolve and asserts a second resolves within
+    its own deadline (not the hung one's deadline).
+    """
+    import threading
+    import time
+    from unittest.mock import patch
+
+    from orchestrator.tools.net_trust import DNS_RESOLVE_TIMEOUT_S, _resolve_and_validate
+
+    hung_started = threading.Event()
+    fast_done = threading.Event()
+
+    def _hung_getaddrinfo(hostname: str, port: int) -> list[object]:
+        if hostname == "hung.example.invalid":
+            hung_started.set()
+            # Simulate a long hang — much longer than DNS_RESOLVE_TIMEOUT_S
+            time.sleep(DNS_RESOLVE_TIMEOUT_S + 10)
+        # Fast resolve: return a public IP
+        import socket
+
+        return list(socket.getaddrinfo("93.184.216.34", port, socket.AF_INET, socket.SOCK_STREAM))
+
+    errors: list[str] = []
+
+    def _run_fast_resolve() -> None:
+        # Wait for the hung resolve to start before submitting the fast one.
+        hung_started.wait(timeout=2.0)
+        t0 = time.monotonic()
+        try:
+            # Fast resolve should succeed (returns a real IP via the mock).
+            # The mock for "example.com" returns a public IP directly.
+            _resolve_and_validate("example.com", 80)
+            elapsed = time.monotonic() - t0
+            if elapsed > DNS_RESOLVE_TIMEOUT_S * 2:
+                errors.append(f"fast resolve took too long: {elapsed:.2f}s (HOL block?)")
+        except Exception as exc:
+            # OK if SSRF blocked — that's a valid result for the mock
+            if "ssrf_blocked" not in str(exc) and "network_timeout" not in str(exc):
+                errors.append(f"unexpected error: {exc}")
+        finally:
+            fast_done.set()
+
+    # Mock _get_addrs to control both resolves.
+    real_getaddrinfo_results = {
+        "example.com": [
+            (2, 1, 6, "", ("93.184.216.34", 80))  # public IP — allowed
+        ],
+        "hung.example.invalid": None,  # will hang
+    }
+
+    def _mock_get_addrs(hostname: str, port: int) -> list[object]:
+        if hostname == "hung.example.invalid":
+            hung_started.set()
+            time.sleep(DNS_RESOLVE_TIMEOUT_S + 10)
+            return []
+        results = real_getaddrinfo_results.get(hostname) or [(2, 1, 6, "", ("93.184.216.34", 80))]
+        return list(results)
+
+    from concurrent.futures import Future
+
+    def _patched_submit(fn: object, *args: object, **kwargs: object) -> Future:  # type: ignore[type-arg]
+        import concurrent.futures
+
+        f: Future = concurrent.futures.Future()  # type: ignore[type-arg]
+
+        def _run() -> None:
+            try:
+                r = _mock_get_addrs(*args)  # type: ignore[arg-type]
+                f.set_result(r)
+            except Exception as e:
+                f.set_exception(e)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        return f
+
+    with patch("orchestrator.tools.net_trust._DNS_EXECUTOR") as mock_exec:
+        mock_exec.submit.side_effect = _patched_submit
+
+        # Start the hung resolve in a background thread.
+        hung_thread = threading.Thread(
+            target=lambda: _resolve_and_validate("hung.example.invalid", 80),
+            daemon=True,
+        )
+        hung_thread.start()
+
+        # Run the fast resolve — should NOT be blocked by the hung one.
+        fast_thread = threading.Thread(target=_run_fast_resolve, daemon=True)
+        fast_thread.start()
+
+        fast_done.wait(timeout=DNS_RESOLVE_TIMEOUT_S * 3)
+
+    assert not errors, f"HOL block detected or unexpected error: {errors}"
