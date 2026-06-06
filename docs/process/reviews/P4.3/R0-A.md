@@ -1,11 +1,40 @@
 ---
 task_id: P4.3
 round: R0-A
-verdict: blocking
+verdict: needs_architect
+verdict_history:
+  - round: 1
+    date: 2026-06-05
+    verdict: blocking
+    red: 4
+    yellow: 1
+    summary: >-
+      4🔴 — Y1 egress pin a dead string (+ sandboxed web_fetch DNS-broken),
+      Y2 plugin sandbox dead code (resolver never injected), Y3 config fails
+      OPEN on absence+parse-fail, Y4 seccomp default-deny brick. Suite green
+      only because it mocked sandboxed_run / hand-injected resolvers.
+  - round: 2
+    date: 2026-06-06
+    verdict: needs_architect
+    red: 0
+    yellow: 2
+    summary: >-
+      All 4 round-1 🔴 RESOLVED and re-verified end-to-end against RW1–RW8
+      (host-side CONNECT proxy actually installed + wired into the spawn
+      lifecycle; resolver injected through the full loader chain; composition
+      root fail-CLOSED on absence+parse-fail; seccomp defaultAction=ALLOW +
+      denylist). Y5 latency-gate fixed; RW7 inscriptions now honest; RW8
+      wired-whole tests mock at the CLI boundary and close the test-gap.
+      Two NEW non-blocking 🟡 — (a) ruff I001 in tests/sandbox/test_egress.py
+      (one blank line, auto-fixable; the ONLY non-green gate, must-fix before
+      merge); (b) CONNECT-only proxy → sandboxed plain-http web_fetch 407/405s
+      (fails-closed, https unaffected). Dual-lens convergence: R0-B round 2
+      (1abd9d4) also cleared all 4🔴. needs_architect = dispatch the 1-line
+      ruff micro-fix (RW9) before merge; NOT a 🔴/design re-route.
 findings_count:
-  red: 4
-  yellow: 1
-  green: 11
+  red: 0
+  yellow: 2
+  green: 16
 ---
 
 # P4.3 R0-A review (architect-partner lens) — impl-stage, dual-lens
@@ -96,3 +125,81 @@ P4.3's own thesis is *"honest-residual inscription — Accept the real surface, 
 | Structural spine sound (frozen/nonroot/cap-drop/read-only/sock-never/NAT64/R5/R7/probe/teardown) | 🟢 ×11 | 🟢 ×10 | converge |
 
 Both lenses independently land **blocking** on the same cluster: the container, as wired, does not enforce the isolation ADR-037 claims (egress pin, plugin route, fail-closed posture) and the seccomp asset would brick it on first live run. **Architect: route the 🔴 cluster** (the natural shape is plan + ADR-037/inscription revision → junior re-dispatch), and call whether config-presence-gating (Y3) is an acceptable staged-rollout posture or must fail-closed per D4 — that routing/scope decision is yours.
+
+---
+
+# Round 2 re-verification — rework RW1–RW8 (architect-partner lens)
+
+| Field | Value |
+|---|---|
+| Round | R0-A **round 2** (impl-stage rework re-verify; dual-lens — R0-B cross-family re-ran in parallel, `1abd9d4`) |
+| Reviewer | architect-partner (Claude Opus 4.8, 1M context), primary session |
+| Date | 2026-06-06 |
+| Against | the round-1 4🔴 + the architect-ratified rework design (ADR-037 Amendment 1 — host-side CONNECT proxy **A1-1**; config fail-CLOSED per **D4**; seccomp **ALLOW-default + denylist**) |
+| Reviewed at | `f248a69` (RW7 HEAD of the impl) on `claude/P4.3-impl`. Rework commits: `0e6b09d`(RW4) `381e1d4`(RW3) `dfe7640`(RW6) `d063fb3`(RW1/RW2) `29d6edc`(RW5) `c2dd860`(RW8) `f248a69`(RW7), atop design `ce692e3`/`898ea36`. |
+| Gates | mypy --strict **clean** (262 files); pytest **green** across every rework-touched surface — `tests/sandbox`+`tests/integration` (149) and `tests/plugins`+`tests/tools` (exit 0); **ruff = 1 error** (I001, `tests/sandbox/test_egress.py:18`, auto-fixable — the only non-green gate). Full-suite not separately re-confirmed this round (parallel-session workspace contention); unchanged areas carry round-1's green + mypy. No live Docker daemon (stubbed at the CLI boundary). |
+
+**Round-2 verdict: all 4 round-1 🔴 are RESOLVED and re-verified end-to-end.** The rework did not paper over the findings — it replaced each dead mechanism with a working, wired, enforcing one, and the new wired-whole tests exercise them at the **CLI / loader boundary** (not the `sandboxed_run` mock + hand-injected resolvers that let round 1 pass CI). The only thing standing between this branch and merge is a **one-blank-line ruff auto-fix** (a new, post-rework gate regression — not one of the 4🔴). **I surface; the architect dispatches the 1-line fix → merge.** This is `needs_architect` only in the mechanical sense (a junior micro-dispatch), **not** a 🔴 or a design re-route.
+
+## The 4 🔴 — each re-verified RESOLVED
+
+### ✅ Y1 (egress pin a dead string + sandboxed web_fetch DNS-broken) → RESOLVED
+- Dead `_build_firewall_rule` / `firewall_rule` / iptables string **deleted** (grep: only a docstring noting the *withdrawn* nftables approach remains — honest).
+- A real host-side filtering CONNECT proxy (`sandbox/egress_proxy.py`) is **installed and wired into the spawn lifecycle**: `spawn.py:110-118` starts `EgressProxy` **before** `docker run`; `spawn.py:158-159` stops it in the **shielded `finally`** — re-verified by `test_spawn.py::test_rw8_proxy_stop_fires_on_timeout_cancel` (stop fires even when the run raises `TimeoutExpired`). `proxy_port` flows to `container_network_args` (`spawn.py:130`); net args merged before the image (`:132-136`).
+- Container pointed at the proxy: `HTTP(S)_PROXY=http://host.docker.internal:<port>` + `--add-host host.docker.internal:host-gateway` + `--dns 0.0.0.0` (`egress.py:155-176`).
+- Proxy **dials the SSRF-pinned IP, not the hostname** (`egress_proxy.py:170-174`) and **refuses every non-pinned CONNECT — incl. redirect-hosts and wrong-port — with 407** (`egress_proxy.py:159-168`). SSRF pin preserved end-to-end; redirect/literal-IP exfil blocked at the proxy.
+- Functional break fixed: the in-container urllib fetcher receives the **hostname** URL (`network_tools.py:209-215`) and honors `HTTPS_PROXY` → CONNECTs via the proxy → no in-container DNS needed (resolve happens on the host, in the proxy's `create_connection(pinned_ip)`).
+- ssh `git_push`: `GIT_SSH_COMMAND` with `ProxyCommand nc -X connect` routes ssh through the same proxy (`egress.py:170-176`; `subprocess_tools.py:432-442` resolves the remote host + builds the PROXY spec). Architect-ratified (supported via ProxyCommand, not disabled).
+- Fail-closed when the posture is FAIL_CLOSED (`network_tools.py:191`, `subprocess_tools.py:173`).
+- **R4/R8 genuinely retired on the sandboxed surface** for the **fixed cooperative clients** (urllib fetcher, git) the sandbox actually runs.
+- *Honest residual, inherent to the ratified A1-1 (not a regression):* the PROXY-mechanism network is a NAT'd bridge, **not** `--internal`; enforcement relies on the in-container client honoring the proxy env. This holds because the only PROXY surfaces run **fixed** clients; the **untrusted** plugin container uses `--network none` (Y2). The `egress_proxy.py` docstring inscribes this D5 tail. **R0-B round 2 surfaces the same as a new non-blocking 🟡 ("bridge -internal" / "proxy bind 0.0.0.0") — converges with this note.**
+
+### ✅ Y2 (plugin sandbox dead code — resolver never injected) → RESOLVED
+- Resolver now injected through the **full loader chain**: `load_plugins(...posture_resolver...)` (`loader.py:507`) → `_load_plugin` (`:608-609`) → `load_plugin_code` (`:458-459`) → `_load_posture_b_fns` (`code.py:303-304`) → `_PostureBFn` (`code.py:298-305`).
+- **Composition-root ordering fixed:** `app.py:219-232` builds the resolver **before** `app.py:242-254` calls `load_plugins(..., posture_resolver=_sandbox_posture_resolver)`.
+- `-i` injected for MCP-stdio (`code.py:182-183`); container teardown in `finally` via `runtime.kill` (`code.py:237-240`).
+- Untrusted plugin container uses **deny-default `--network none`** (`code.py:185-192`) — the Y1 NAT'd-bridge residual does **not** apply to fetched (potentially-malicious) plugin code.
+- Re-verified by `test_posture_b_sandbox.py::test_rw8_load_plugin_code_sets_resolver` — drives the real `load_plugin_code(...fetched...)` and asserts `_PostureBFn._posture_resolver IS resolver` (the exact assertion **absent** in round 1) + `-i` / `--cap-drop` / `--read-only` / `--network none` / non-empty container name. **R1 retired** (SANDBOXED posture).
+
+### ✅ Y3 (config fails OPEN on absence + parse-fail) → RESOLVED
+- `app.py:219-232`: resolver is **always** constructed — present → `from_config`; `SandboxConfigError` → `fail_closed()` (`:230`); **absent → `fail_closed()`** (`:232`). The three registries (`:252,270,286`) never receive `None`.
+- `PostureResolver.fail_closed()` → FAIL_CLOSED on every resolve (`posture.py:88,102`); `assert_sandboxed_or_raise` never returns a runtime when unavailable, never silently spawns (`:117-141`).
+- `config/sandbox.yaml` is **shipped** (not just `.example`) for the repo dev loop with `degraded_app_level: true` — the architect-ratified, committed, **loud-per-call** DEGRADED opt-in (`posture.py:128-137`), categorically distinct from round 1's silent fail-open.
+- Re-verified by `test_constitution.py::test_rw8_config_absence_real_path_fail_closed` + `…parse_failure…` + `…web_fetch…`: fail_closed resolver → real registry builder → tool raises `sandbox_unavailable` **and** the app-level fallback (`run_scoped_command` / `build_ssrf_client`) is **never called**. (Minor: the test replicates the composition-root branch inline rather than importing `_build_context`; I independently confirmed `app.py:219-232` matches it byte-for-logic.)
+
+### ✅ Y4 (seccomp default-deny brick) → RESOLVED
+- `seccomp.json:2` now `"defaultAction": "SCMP_ACT_ALLOW"`; the `syscalls` denylist = Docker-default dangerous set ∪ P4.3 denials (incl. arg-filtered `clone` NEWUSER/NEWNET/NEWNS). **Augments rather than bricks** — exactly the ratified fix.
+- `profile.py:130-135` applies it via `--security-opt seccomp=`; the asset is now a complete standalone allow-default+denylist profile, honest about replace-not-merge (`seccomp.json:60` comment; `socket/AF_PACKET` denied by `--cap-drop=ALL`/no CAP_NET_RAW, not here). `_assert_no_docker_sock` invariant intact (`profile.py:121`).
+- Re-verified by `test_profile.py` (defaultAction=ALLOW, **not** ERRNO; denylist ⊇ P4.3 set ∪ Docker-default sample).
+
+## Y5 (latency gate measured total wall-time) → RESOLVED
+`spawn.py:140` measures `setup_s` **before** the workload; `:163` `overhead_s = setup_s + teardown_s` excludes the workload; the gate warning (`:172`) fires on overhead only. Converges with R0-B R0B-5.
+
+## Inscriptions (RW7) → corrected + honest
+ADR-031 D1a (R1), ADR-035 D2 (R4), ADR-036 D3-iii (R8) annotations now describe the **delivered** proxy / injected-container mechanism and each carries its residual (degraded-opt-in re-exposes R1; broad allowlist re-opens within-set for R8; R9 remains correctly BOUNDED-NOT-RETIRED). The round-1 "softer-than-real" gap is closed.
+
+## Test-gap (RW8) → closed at the right boundary
+New tests mock at `subprocess.run` / the CLI / the loader entrypoints — **not** at `sandboxed_run` — and assert the install/teardown actually fires, the resolver actually reaches the closure, and the composition-root fail-closed path actually blocks. This is the discipline whose absence let round 1's reds pass CI. s3 (executor byte-frozen) holds (empty diff vs `origin/main`); s5 updated for the new `loader.py` TYPE_CHECKING import.
+
+## 🟡 NEW (round 2) — non-blocking, surfaced for completeness
+
+### 🟡 N1 — ruff I001 in `tests/sandbox/test_egress.py:18` (the only non-green gate; must-fix before merge)
+RW1's rewrite of `test_egress.py` (dropping the nftables/firewall_rule tests) left **one extra blank line** after the import block. `ruff check .` (0.15.12, the pinned gate) exits non-zero (1 error, `[*]` auto-fixable). mypy + every rework-touched pytest suite are green; this is the sole red gate. Mechanical, test-file-only, **not** a correctness defect — but a red gate blocks merge by the project bar (CLAUDE.md "Tests + gates still mandatory"). **Recommend: junior micro-fix (RW9: `ruff --fix tests/sandbox/test_egress.py` + recommit) → gates green → merge.** A pre-commit ruff hook would have caught it; worth a glance at why it didn't.
+
+### 🟡 N2 — CONNECT-only proxy: sandboxed plain-`http://` web_fetch fails (https unaffected; fails-closed)
+The proxy handles only `CONNECT` (`egress_proxy.py:140-141` → non-CONNECT → 405). In-container `urllib` with `HTTPS_PROXY` uses CONNECT for `https://` ✓, but with `HTTP_PROXY` it sends an **absolute-form GET** for `http://` (no CONNECT) → proxy 405 → the plain-http fetch fails. Security-safe (fails closed, no exfil; https is the dominant path), but the `egress_proxy.py` docstring's "http(s): … → CONNECT" slightly over-claims plain-http. Follow-up / inscription nit, **not** blocking — flagging because P4.3's whole thesis is honest-residual inscription. (git_push ssh is fine: `nc -X connect` is genuine CONNECT.)
+
+## Cross-lens map (round 2 — for synthesis)
+| Finding | R0-A r2 (this) | R0-B r2 (`1abd9d4`) | Relationship |
+|---|---|---|---|
+| Y1 egress pin / proxy installed+enforcing | ✅ RESOLVED | ✅ R0B-2/3 RESOLVED | converge |
+| Y2 plugin resolver injected (R1) | ✅ RESOLVED | (✅ via RW5) | converge |
+| Y3 config fail-CLOSED | ✅ RESOLVED | ✅ R0B-4 RESOLVED | converge |
+| Y4 seccomp ALLOW-default | ✅ RESOLVED | ✅ R0B-1 RESOLVED | converge |
+| Y5 latency gate | ✅ RESOLVED | ✅ R0B-5 RESOLVED | converge |
+| Proxy bridge not `--internal` / binds 0.0.0.0 | 🟡 honest residual (Y1 tail) | 🟡 NEW (non-blocking) | converge |
+| ruff gate-red | 🟡 N1 (must-fix) | — | R0-A-only (gate) |
+| CONNECT-only / plain-http | 🟡 N2 (inscription) | — | R0-A-only |
+| plugin latency | — | 🟡 NEW (non-blocking) | R0-B-only |
+
+**Both lenses converge: all 4🔴 CLEARED, all round-1 🟡 resolved, no new blocker.** The rework genuinely delivered the enforcing, wired surface ADR-037 claims. Recommended path: **junior RW9 (ruff one-liner) → gates fully green → architect Accept → merge.** Whether N2 (plain-http) warrants a follow-up slice or a one-line inscription correction is a minor call for the architect; it does not gate this merge.
