@@ -73,7 +73,7 @@ ADR-029 D5 deferred "a discovered-but-not-activated registry" to P3.7 "when prov
   - Any env a fetched child receives beyond the 9-key minimal base (`_SAFE_ENV_KEYS`) is declared **in the operator-authored activation entry only** (a `plugin_subprocess_env: dict[str,str]` of operator-chosen **non-secret** keys), never read from the fetched manifest.
   - The **env-leak probe** (plan -5/-8) covers the **manifest-requests-a-secret** attack (a fetched manifest naming `api_key_env`/a secret key → refused, child env clean), **not only** the default-clean case.
 
-This makes the activation entry the single operator-authoritative source for *both* "run this code" (digest) *and* "with this env" (subprocess-env) — a fetched plugin author controls neither.
+This makes the activation entry the single operator-authoritative source for *both* "run this code" (digest) *and* "with this env" (subprocess-env) — a fetched plugin author controls neither. **[Annotated P4.4 → ADR-038, Accepted 2026-06-05: the activation entry is generalised to the unified `RegistryEntry` (ADR-038 D1), covering both operator-placed and fetched roots in `config/plugins.yaml`. The fetched-only `source_url`+`digest` fields move to `RegistryEntry`; the `enabled: bool` field is added. Fetched plugins still require a digest-bearing entry; the `plugin_subprocess_env` contract is preserved. The bare `activations.yaml` legacy path is retained for backward compat.]**
 
 ### D5. The minimal remote-fetch contract — pinned source, integrity-checked, fail-closed
 
@@ -88,7 +88,7 @@ A new `plugins/fetch.py` fetches **one** plugin bundle from a **pinned `https://
 - **Fail-closed** on unreachable / fetch error / malformed bundle → refused, nothing staged, no orchestrator crash (per-plugin isolation, ADR-029 D6 analog).
 - The staged bundle is marked provenance `fetched` by **origin** (discovered under `fetched_plugins_dir`, D3) → Posture B forced + activation required.
 
-This is the **minimal pinned-source fetch only**. **Out (deferred P4):** a registry/marketplace, plugin upgrade / version coexistence / uninstall, auth beyond the bundle integrity check.
+This is the **minimal pinned-source fetch only**. **Out (deferred P4):** a registry/marketplace, plugin upgrade / version coexistence / uninstall, auth beyond the bundle integrity check. **[Annotated P4.4 → ADR-038, Accepted 2026-06-05: the registry/lifecycle deferred-P4 has LANDED. `config/plugins.yaml` is the unified registry (ADR-038 D1); the boot-evaluated lifecycle (install→admit→enable⇄disable→update→remove) is implemented (ADR-038 D2). Hot-reload / runtime-store / signature/keyring / persistent-sandboxed-plugin remain deferred (ADR-038 D5). Digest-before-extract ordering is UNCHANGED (this D5 property is preserved).]**
 
 ### D6. The demo — one fetched-and-Posture-B plugin, end-to-end + fail-closed
 
