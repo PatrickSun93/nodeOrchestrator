@@ -7,8 +7,19 @@ branch: claude/P4.3-impl
 reviewed_commits: 2d5b163..311f4ca (P4.3-1..13)
 author: senior planner
 date: 2026-06-05
-verdict: blocking
-findings: {blocking: 1, needs_architect: 3, nits: 4}
+verdict: needs_architect
+findings: {blocking: 0, needs_architect: 2, nits: 1}
+verdict_history:
+- round: 1
+  verdict: blocking
+  reviewed_commits: 2d5b163..311f4ca (P4.3-1..13)
+  summary: B1 — pinned-IP egress rule computed but never installed (silent unconstrained egress).
+- round: 2
+  verdict: needs_architect
+  reviewed_commits: 311f4ca..f248a69 (P4.3-RW1..RW8)
+  summary: B1 CLEARED (egress proxy live). Rework substantially plan-faithful. Two routable
+    items, neither a delivered-code security hole — RA1 (ruff gate RED at HEAD, trivial 1-line)
+    + RA2 (RW8-2 composition-root tests re-implement the branch instead of driving _build_context).
 ---
 
 # Senior plan-vs-impl — P4.3 (container syscall/egress sandbox)
@@ -161,3 +172,116 @@ commits per RC-17.
 
 **Expected next:** state advances to `awaiting_R0_A` (ADR-008 Amendment 1, Route B — never
 short-circuits). Architect routes B1 (blocking) + Y1/Y2/Y3 after the dual-lens lands.
+
+---
+
+# Round 2 — rework re-verify (P4.3-RW1..RW8)
+
+Reviewed `311f4ca..f248a69` (the 8 rework commits) against the Rework R1 contract
+(`senior-plans/P4.3.md` "# Rework R1") + my round-1 B1. Same plan-vs-impl lens (plan-implied
+invariant drift). Daemon NOT reachable during the run — gates exercised stubbed.
+
+## Verdict: **needs_architect** (was: blocking)
+
+**B1 is CLEARED.** The load-bearing per-call egress constraint is now actually installed and
+enforced at runtime — the exact gap that made round-1 blocking is closed. The rework is
+**substantially plan-faithful** (RW1–RW7 match the contract; RW8 closes 4/5 of the wired-whole
+gap). Two items remain for architect routing, **neither a security hole in delivered code**:
+a RED ruff gate (trivial) and one wired-whole test that reproduces the very test-gap RW8 exists
+to close. I surface; architect routes.
+
+## ✅ B1 cleared — pinned-IP egress now installed + enforced (was the round-1 blocker)
+
+The dead firewall-string is gone and a real, root-free, cross-platform boundary replaces it:
+
+- **Proxy lifecycle inside `sandboxed_run`** (the exact "install/remove fires" demand of B1):
+  `EgressProxy.start()` runs **before** `docker run` (`spawn.py:110-118`); `proxy.stop()` runs
+  in the **shielded `finally`** (`spawn.py:158-159`), symmetric with network create/teardown,
+  and fires on the timeout-cancel path.
+- **Allowlist = exactly the one SSRF-pinned `(host, port)`**, dialing `pinned_ip` not the
+  hostname (`egress_proxy.py:159-173`) → SSRF pinning preserved end-to-end; every other
+  `CONNECT` (incl. a redirect-host) → 407 (resolves the round-1 per-hop-SSRF compounding for
+  free via the per-CONNECT allowlist).
+- **Dead string deleted:** repo-wide grep for `iptables`/`nftables`/`firewall_rule` finds only
+  two *descriptive* doc-prose mentions of the **withdrawn** approach (`egress.py:12`,
+  `test_egress.py:21` comment) — no enforcement string emitted, no `_build_firewall_rule`.
+- **`build_egress_spec` no longer reports false success:** returns `PROXY` mechanism (the
+  honest mechanism that *is* wired), not a `HOST_FIREWALL` success for an uninstalled rule.
+- **Wired-whole test exists** (`test_spawn.py:216-292`): spies on the real `EgressProxy.start`/
+  `stop` with `subprocess.run` mocked at the CLI boundary — asserts start AND stop fire,
+  including on timeout-cancel. This is the RW8-1 class and it is genuinely wired.
+
+## Rework plan-faithfulness (per RW atomic)
+
+| RW | Contract | Delivered | Verdict |
+|---|---|---|---|
+| RW1 egress proxy | host-side filtering CONNECT proxy started/stopped in `sandboxed_run`; dead string deleted; allowlist=pinned host; ssh ProxyCommand | ✓ proxy live (above); `container_network_args` injects `HTTP(S)_PROXY` + `GIT_SSH_COMMAND` ProxyCommand + `--add-host host.docker.internal:host-gateway` + DNS-disabled (`egress.py:134-178`) | **faithful** |
+| RW2 web_fetch | fetcher uses proxy env; no per-target `--add-host`; hostname → spec | ✓ `_sandbox_web_fetch` passes `hostname=` to `build_egress_spec` (`network_tools.py:199`); proxy env carries DNS-free fetch; only `host.docker.internal` add-host | **faithful** |
+| RW3 seccomp | ALLOW-default + ERRNO denylist ⊇ P4.3 set; un-bricked | ✓ `defaultAction=SCMP_ACT_ALLOW`; 55 ERRNO denials incl. all enumerated (ptrace/unshare/bpf/mount/keyctl/io_uring_setup/add_key/request_key/…) | **faithful** |
+| RW4 config fail-CLOSED | composition root never `None`; absence+parse-fail→`fail_closed()`; ordering before `load_plugins` | ✓ `posture.py:81-88` `fail_closed()`; `app.py:218-232` always assigns, both branches → `fail_closed()`; old `resolver=None` fail-open path deleted; block moved before `load_plugins` | **faithful** |
+| RW5 plugin route | resolver threaded `load_plugins`→`_PostureBFn`; `-i`; container-teardown | ✓ end-to-end forwarding (`loader.py` + `code.py`); `app.py:252-253` passes resolver+sandbox_root; `-i` + `--network none` injected; `runtime.kill(cname)` in `_run_mcp_session` `finally` (`code.py`) | **faithful** |
+| RW6 yellows | overhead-only latency gate; send_email warning; R5 wording | ✓ `spawn.py` measures setup+teardown only (not workload); send_email per-call WARNING threaded; "fixed 8-slot pool" wording corrected in net_trust + ADR-035 | **faithful** |
+| RW7 inscription | R1/R4/R8 annotations match proxy+injected-plugin surface; no over-claim | ✓ ADR-031/035/036 annotations re-worded with "corrected RW7" markers + honest residuals (degraded-opt-in re-exposes R1; broad allowlist re-opens within-set exfil) | **faithful** |
+| RW8 wired-whole | 5 wired-whole assertions; no mocking `sandboxed_run` for egress/plugin | ◑ 1/3/4/5 genuinely wired; **RW8-2 re-implements the composition-root branch** (see RA2) | **partial — RA2** |
+
+## 🔴-gate RA1 (needs_architect — gate RED) — ruff fails at HEAD
+
+The rework's own forcing function is "ruff + mypy `--strict` + pytest green **per commit**" — and
+`uv run ruff check src tests` is **RED** at HEAD:
+
+```
+I001 [*] Import block is un-sorted or un-formatted
+  --> tests/sandbox/test_egress.py:7  (one extra blank line after the import block)
+```
+
+Introduced by RW1/RW2 (`d063fb3`). **Trivial** (1-line, `ruff --fix`-able) but real: the branch
+is not mergeable while a gate is red, and the per-commit-green discipline was not met. **mypy
+`--strict src tests` = Success (262 files); pytest touched surface (`sandbox plugins tools`) exit
+0 stubbed** (no daemon) with the known R5 thread-leak warning (round-1 Y2, non-fatal). Executor
+byte-frozen since baseline (`b68d59b..HEAD` empty; s3 holds). **Route:** α quick-fix the blank
+line (re-run ruff to green) — no design question, just an unmet gate.
+
+## 🟡 RA2 (needs_architect) — RW8-2 reproduces the exact test-gap RW8 exists to close
+
+RW8's stated purpose is to close the structural gap that let 5🔴 pass CI: *"every sandboxed path
+is unit-tested by … hand-injecting a `PostureResolver`"*. RW8-2's acceptance is explicit: a test
+that drives the **real `_build_context`/registry-build path** with no `sandbox.yaml`, **"NOT a
+hand-injected resolver."**
+
+The delivered tests (`test_constitution.py:148-251`) **re-implement** `app.py`'s
+`if config_path.exists(): … else: PostureResolver.fail_closed()` branch **inline** (lines
+163-170, 198-205, 233-240) and then inject the locally-built resolver — the comment concedes it:
+*"via the REAL composition-root code path (**same logic as** api/app.py `_build_context`)."*
+"Same logic as" is the tell: it is a **copy of the control flow, not a drive of it**. A fail-open
+regression in `_build_context` (e.g. a revert to `resolver=None`) would **not** be caught — the
+test builds its own `fail_closed()` regardless of what `app.py` does. That is the precise
+anti-pattern RW8-2 was written to eliminate, relocated from "hand-inject SANDBOXED" to
+"hand-build fail_closed via duplicated branch."
+
+**Why this is 🟡 not 🔴:** the *delivered* production behavior is correct — I read `app.py:218-232`
+and it does fail closed on both absence and parse-failure; and RW8 assertions 1/3/4/5 (proxy
+start-stop, plugin-loader drive, seccomp, proxy semantics) **are** genuinely wired. So this is a
+**regression-guard weakness on one assertion**, not a live hole. **Route:** α — call
+`_build_context` directly (or extract a `_resolve_sandbox_posture(config_dir)` helper used by both
+`app.py` and the test) so the composition-root branch is actually exercised; or accept the
+duplicated-logic test as sufficient and inscribe the limitation.
+
+## 🟢 Nit (record only)
+
+- **G-rw1 — plugin deny-default built-then-discarded:** `code._build_sandboxed_harness_params`
+  calls `build_deny_default_spec()` and discards it (`# validate path; args added separately`),
+  then hand-adds `--network none`. Functionally identical (deny-default == `--network none`) but
+  the spec→args path is bypassed for the plugin route. Tidy-up, not a finding.
+
+## Round-2 confirmed faithful (positive record)
+
+B1 cleared (egress proxy live + wired-whole test); dead firewall string deleted; RW1–RW7 match
+the Rework R1 contract; RW8 1/3/4/5 wired at the CLI boundary (not `sandboxed_run`); config
+fail-CLOSED at the composition root with the fail-open `None` path deleted + ordering fixed;
+plugin resolver injected end-to-end with `-i` + `finally`-kill; seccomp un-bricked (ALLOW-default
+⊇ Docker∪P4.3); inscriptions corrected to the delivered surface; executor byte-frozen; mypy
+clean; pytest green stubbed without a daemon.
+
+**Expected next:** state advances to `awaiting_R0_A` (Route B). Architect routes RA1 (ruff red —
+trivial α) + RA2 (RW8-2 composition-root test fidelity) alongside the impl-stage dual-lens
+re-run. B1 needs no further action.
