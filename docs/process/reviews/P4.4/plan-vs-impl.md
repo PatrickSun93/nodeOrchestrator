@@ -3,14 +3,36 @@ review: senior plan-vs-impl
 task_id: P4.4
 cycle: 1
 branch: claude/P4.4-impl
-commits_reviewed: a089d89..db564db   # P4.4-1..6
+commits_reviewed: a089d89..f6bd908   # P4.4-1..6 + RW1..RW4
 plan: docs/process/senior-plans/P4.4.md
-verdict: needs_architect
-findings_count: 3   # 1 yellow + 2 green
+verdict: clean
+findings_count: 3   # 1 yellow + 2 green (F1 resolved via RW3 α-absorb; F2 test added by RW3)
 gates:
   ruff: pass            # ruff check src tests → All checks passed!
-  mypy: pass            # mypy --strict src tests → no issues, 264 files
+  mypy: pass            # uv run mypy (canonical files=src,tests) → Success, 264 files
   pytest: pass          # pytest tests/plugins tests/tools → exit 0 (only pre-existing net_trust thread-warning)
+verdict_history:
+  - round: 1
+    verdict: needs_architect
+    at_commit: db564db   # P4.4-6
+    reason: >-
+      F1 (🟡) plan-implied-invariant drift — namespacing identity-complete for
+      tools/impls/mcp but dict-key-only for roles/skills. Architect-routable
+      scoping call (ratify MVP vs. dispatch follow-up). F2/F3 informational.
+  - round: 2
+    verdict: clean
+    at_commit: f6bd908   # P4.4-RW4
+    reason: >-
+      RC-10 verdict-bump after architect α-absorb routing + junior rework.
+      F1 resolved: RW3 (329b490) inscribed the role/skill identity-level
+      namespacing deferred residual in ADR-038 D4 (option-(a) from F1, verbatim
+      scope: Agent.id/Skill.id/applies_to/regex_registry rewrite deferred).
+      F2 resolved: RW3 added test_f2_cross_plugin_same_name_tool_impl_coexist
+      (direct two-plugin tool_impl coexistence proof). RW1/RW2 (R0-A R1 sentinel
+      + R0-B Y2 yaml-catch) verified faithful to routing intent. A round-2 mypy
+      --strict regression (R0-A R2, introduced by RW1's union return-type) was
+      fixed by RW4 (f6bd908: isinstance-dict narrow in 3 valid-registry tests).
+      All three canonical gates green; no new plan-implied-invariant drift.
 ---
 
 # Senior plan-vs-impl — P4.4 (plugin registry / lifecycle / admission / namespacing)
@@ -32,6 +54,21 @@ roles/skills a deferred residual). Hence `needs_architect`, not `clean`. It is
 **not** blocking: nothing here is wrong against the acceptance criteria; the
 mandatory impl-stage dual-lens (R0-A ∥ R0-B, `requires_cross_family_review:true`)
 runs next regardless (ADR-008 Amendment 1, Route B → `awaiting_R0_A`).
+
+> **Round-2 update (RC-10 verdict-bump, verdict → clean @ f6bd908):** the
+> architect routed F1 as **α-absorb+inscribe**. Junior **RW3** (329b490)
+> inscribed the role/skill identity-level namespacing deferred residual in
+> **ADR-038 D4** — verbatim to F1 option (a): `<plugin_id>__<name>` dict-key
+> coexistence is the ratified MVP; rewriting `Agent.id`/`Skill.id`/`applies_to`/
+> `regex_registry` keys is the named deferred upgrade — and added
+> `test_f2_cross_plugin_same_name_tool_impl_coexist` (closes 🟢 F2). RW1/RW2
+> (R0-A R1 refuse-all sentinel + R0-B Y2 `yaml.YAMLError` catch) verified
+> faithful to routing intent. A round-2 `mypy --strict` regression (R0-A **R2**,
+> introduced by RW1's `PluginRegistry | _RegistryRefuseAll` return widening) was
+> fixed by **RW4** (f6bd908: `assert isinstance(result, dict)` narrowing in the
+> 3 valid-registry tests). All three canonical gates now green; no new
+> plan-implied-invariant drift introduced by the rework. **F1 + F2 resolved;
+> F3 was an observation (no action). Verdict clean.**
 
 ---
 
@@ -151,10 +188,16 @@ reviewers don't read the unwired legacy path as a fetched-admission gap.
 ## Gates (run by senior for plan-vs-impl self-check)
 
 ```
+Round-1 (@ db564db):
 ruff check src tests        → All checks passed!
 mypy --strict src tests     → Success: no issues found in 264 source files
 pytest tests/plugins tests/tools → exit 0
-    (sole warning: pre-existing net_trust DNS-timeout thread-warning, unrelated to P4.4)
+
+Round-2 (@ f6bd908, canonical gates post-RW4):
+ruff check src tests        → All checks passed!
+uv run mypy                 → Success: no issues found in 264 source files
+pytest tests/plugins tests/tools → exit 0
+    (sole warning both rounds: pre-existing net_trust DNS-timeout thread-warning, unrelated to P4.4)
 ```
 
 **Expected next (ADR-008 Amendment 1, Route B):** state auto-advances to
