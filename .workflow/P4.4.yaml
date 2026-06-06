@@ -1,7 +1,7 @@
 task_id: P4.4
-state: awaiting_junior_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-06-06T07:25:18.044861Z'
+last_transition_at: '2026-06-06T15:58:53.920406Z'
 cycle_started_at: '2026-06-06T05:31:00.557163Z'
 override_history:
 - timestamp: '2026-06-06T06:31:23.233532Z'
@@ -36,4 +36,18 @@ override_history:
   from_state: awaiting_senior_plan_vs_impl
   to_state: awaiting_junior_impl
   reason: junior impl continuing P4.4-5..6
+- timestamp: '2026-06-06T15:58:53.920406Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: closed
+  reason: 'P4.4 merged (PR #59, merge add7aff). Impl-stage mandatory dual-lens all
+    clean: R0-A round-3 clean (R1 refuse-all-sentinel + Y1 ADR-038-D4-deferred-residual
+    + R2 mypy-strict-narrow all resolved across RW1-RW4), R0-B cross-family clean
+    (Y1+Y2 resolved), senior plan-vs-impl round-2 clean. Gates green: ruff + mypy
+    --strict(files=src,tests) 0 errors + pytest plugins/tools. Constitutional spine
+    intact: _execute_local_call + gate byte-frozen, no new LLMPurpose, admission not
+    gated, provenance un-launderable. ADR-038 Accepted + ADR-029 D5/D6 + ADR-031 D4/D5
+    annotated. Deferred residuals inscribed: RB-ADMIT (no author-identity/revocation),
+    hot-reload, runtime-store, persistent-sandboxed-plugin, role/skill identity-level
+    namespacing. Closing.'
 requires_cross_family_review: true
