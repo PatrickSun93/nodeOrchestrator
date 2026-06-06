@@ -9,6 +9,15 @@ reviews_acked:
   - decisions/ADR-037-syscall-egress-sandbox.md
 verdict: blocking
 findings_count: { red: 1, yellow: 5, green: 6 }
+verdict_history:
+  - round: 1
+    date: 2026-06-05
+    verdict: blocking
+    summary: "1🔴 R1 egress-mechanism-unresolved + 5🟡 (Y1 seccomp ambiguity, Y2 mount-stance, Y3 latency-budget, Y4 R5-DNS-HOL, Y5 config-parse-default)"
+  - round: 2
+    date: 2026-06-05
+    verdict: clean
+    summary: "All 1🔴+5🟡 RESOLVED by architect-routed absorption (commit 3263726). Egress mechanism pinned (parent-pinned-IP per-call + DNS-disabled + single-family + cross-platform-honest fail-closed). Seccomp strategy pinned (augmented-blocklist + enumerated denials). Mount stance inscribed (docker.sock constitutional-invariant + /proc masking + /sys ro). Latency bounded (3s-p95 gate + probe-cached + 2s probe-timeout + daemon-dies-at-spawn path). R5 folded into P4.3 (P4.3-11 atomic). Config-parse→fail-closed + available() cached per turn. All 6 greens remain honest. Plan ready for architect Accept + junior dispatch from R0-B perspective."
 ---
 
 # R0-B cross-family review (plan-stage) — P4.3 container syscall/egress sandbox
@@ -160,3 +169,112 @@ The **single blocking gap** is the egress-allowlist mechanism (R1). The plan cor
 The five yellows cluster around two themes: **(a) specification precision** (seccomp blocklist-vs-allowlist ambiguity, /proc/sys/docker.sock masking not addressed, config-parse default unspecified) — these are the kind of gaps that cause a junior to guess and an R0-A to miss because the spec language is ambiguous; **(b) liveness edge cases** (latency budget undefined, probe→spawn race, R5 DNS head-of-line) — these are the runtime-integration failures that manifest at 3am when Docker Desktop is slow to start and the writer blocks for 100s.
 
 The six greens confirm the design is honest where it counts: R9 is not softened, R7's platform tail is named, the executor stays byte-frozen, and the fail-closed invariant is mechanized by constitutional tests. These are the marks of the honest-residual discipline working as intended.
+
+---
+
+## Round 2 — Absorption re-verify (2026-06-05, commit 3263726)
+
+The architect routed all round-1 findings and the senior absorbed into the plan + ADR-037. This section re-probes each finding against the absorbed artifacts.
+
+### 🔴 R1 re-verify — Egress mechanism now CONCRETE → RESOLVED
+
+**Absorption target:** Plan §5 (routing), P4.3-3, ADR-037 D2 Network paragraph.
+
+**Re-probe:** The plan now pins a **concrete mechanism** matching every sub-requirement from round 1:
+
+| Sub-requirement | Absorbed mechanism | Evidence |
+|---|---|---|
+| (a) Per-call egress constrained to exactly the pinned IP:port | Per-call ephemeral network + daemon-side nftables/iptables rule on bridge forward chain | P4.3-3, ADR-037 D2 Network |
+| (b) Container-internal DNS DISABLED | `--dns 0.0.0.0` / no resolver — DNS would bypass the pin | P4.3-3, ADR-037 D2 Network |
+| (c) IPv4+IPv6 both handled | Single-family pin — resolved family allowed, other family blocked (no dual-stack escape) | P4.3-3, ADR-037 D2 Network |
+| (d) Cross-platform honest | Native Linux: host-side iptables; Docker Desktop: host-side filtering proxy for `web_fetch`; non-viable combos (e.g. `git_push` over ssh on Docker Desktop) → deny-default fail-closed | P4.3-3, ADR-037 D2 Network |
+
+**No remaining gap.** The mechanism is specified at sufficient detail for junior implementation. Where the mechanism cannot be enforced on a given platform, the path is explicitly deny-default → fail-closed (loud, never silently unconstrained). The egress boundary is now REAL — a sandboxed `web_fetch`/`git_push` child on native Linux reaches only the pinned IP, and on Docker Desktop either routes through a filtering proxy or fails closed.
+
+**Verdict: 🔴 RESOLVED. The BLOCKING finding is CLEARED.**
+
+---
+
+### 🟡 Y1 re-verify — Seccomp strategy PINNED + syscalls ENUMERATED → RESOLVED
+
+**Absorption target:** Plan P4.3-2, ADR-037 D2 Syscall paragraph.
+
+**Re-probe:**
+- **Strategy:** PINNED — Docker/runtime default seccomp profile (curated blocklist baseline) **AUGMENTED** with explicit additional-deny set. NOT a full default-deny allowlist (rejected with reasoning: brittle for first-party pytest/ruff/git; stronger-but-deferred tail in D5).
+- **Enumerated additional denials:** `unshare`, `clone` (with `CLONE_NEWUSER`/`CLONE_NEWNET`/`CLONE_NEWNS`), `bpf`, `io_uring_setup`, `add_key`, `request_key`, `keyctl`, `ptrace`, `mount`, raw `socket`/`AF_PACKET`.
+- **Concrete asset:** `sandbox/seccomp.json` shipped; `--cap-drop=ALL` + `--security-opt no-new-privileges` always present.
+
+**Verdict: 🟡 RESOLVED.** No ambiguity — the junior knows exactly which strategy to build and which syscalls to deny.
+
+---
+
+### 🟡 Y2 re-verify — Mount stance INSCRIBED → RESOLVED
+
+**Absorption target:** Plan P4.3-2, ADR-037 D2 FS paragraph, constitutional invariant in plan §1 + P4.3-12 s6.
+
+**Re-probe:**
+- **`/var/run/docker.sock`:** NEVER bind-mounted — now a **constitutional invariant**, test-enforced (P4.3-12 s6). Both plan §1 and ADR-037 D2 carry it.
+- **`/sys`:** Read-only (Docker default, no `--privileged`).
+- **`/proc`:** Private PID namespace (Docker default) + sensitive paths masked (e.g. `/proc/sysrq-trigger`).
+
+**Verdict: 🟡 RESOLVED.** All three mount-namespace surfaces now have explicit, concrete stances.
+
+---
+
+### 🟡 Y3 re-verify — Latency budget + probe race SPECIFIED → RESOLVED
+
+**Absorption target:** Plan P4.3-1, P4.3-4, P4.3-5; ADR-037 D3, D4.
+
+**Re-probe:**
+- **(a) Latency budget:** 3s-p95 per-call setup target, measured+logged in P4.3-4, enforced as the plan-vs-impl gate.
+- **(b) Probe cadence:** Called once at bootstrap + cached per turn (short TTL ~30s) — P4.3-1/5.
+- **(c) Probe timeout:** ~2s timeout on the probe itself (a hung `docker info` cannot hang the writer) — P4.3-1.
+- **(d) Daemon-dies-at-spawn:** Raises `SandboxUnavailableError` and follows the posture path (D4) — P4.3-4.
+
+**Verdict: 🟡 RESOLVED.** All four liveness edge cases covered.
+
+---
+
+### 🟡 Y4 re-verify — R5 DNS head-of-line FOLDED INTO P4.3 (not deferred) → RESOLVED
+
+**Absorption target:** Plan P4.3-11; plan §5 routing; ADR-037 D5 / plan P4.3-13.
+
+**Re-probe:**
+- New atomic **P4.3-11** resolves R5 within P4.3: replace `ThreadPoolExecutor(max_workers=1)` head-of-line with per-call abandonable thread / asyncio true-cancel / bounded pool.
+- ADR-035's "folds into P4.3" commitment honored. P4.3-13 marks R5 as **resolved** (not deferred). R5 "leaves the deferred-residual set entirely."
+- Acceptance test: simulated hung resolve + assert concurrent resolve not blocked past deadline.
+
+**Verdict: 🟡 RESOLVED.** R5 is now an in-cycle atomic, not a deferral.
+
+---
+
+### 🟡 Y5 re-verify — Config-parse + available()-cached SPECIFIED → RESOLVED
+
+**Absorption target:** Plan P4.3-5; ADR-037 D4.
+
+**Re-probe:**
+- **(a) Config-parse failure:** → FAIL-CLOSED (same as runtime-unavailable + no opt-in — never a default that fails open). Test-asserted in P4.3-5 acceptance.
+- **(b) Repeated probe:** `available()` cached per turn (short TTL ~30s). First unavailable probe → all subsequent calls in the turn fail fast without re-probing. No per-call probe-timeout stack-up.
+
+**Verdict: 🟡 RESOLVED.** Both edge cases covered.
+
+---
+
+### 🟢 G1–G6 re-verify — All greens remain honest
+
+| ID | Re-check |
+|----|----------|
+| G1 | R9 still NOT retired (ADR-037 D5) — honest |
+| G2 | R7 cross-platform tail still inscribed (P4.3-9, ADR-037 D5) — honest |
+| G3 | Executor byte-frozen still constitutional invariant (plan §1, ADR-037 carry-forward) — honest |
+| G4 | Sandbox downstream-leaf still enforced (P4.3-12 s5) — honest |
+| G5 | Fail-closed + loud opt-in now stronger (Y5 absorption) — honest |
+| G6 | Subtree-kill via container boundary still clean (ADR-037 D2 Resources) — honest |
+
+---
+
+## Round-2 synthesis
+
+**All 1🔴 + 5🟡 findings are RESOLVED.** The absorbed plan (commit `3263726`) pins concrete mechanisms for every gap round 1 identified. The plan is ready for architect Accept + junior dispatch from the R0-B perspective. No new findings.
+
+**Verdict: clean (0🔴 / 0🟡 / 6🟢).**
