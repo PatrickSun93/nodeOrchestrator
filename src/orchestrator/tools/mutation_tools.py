@@ -1,4 +1,4 @@
-"""Mutation local tool closures (ADR-036 D1/D3-i/D4; P4.2-B5-1).
+"""Mutation local tool closures (ADR-036 D1/D3-i/D4; P4.2-B5-1; ADR-037 D3 P4.3-9).
 
 First tool surface that WRITES the workspace (apply_edit).
 
@@ -9,23 +9,22 @@ Threat model (ADR-036 D3-i):
   Untrusted input: LLM-proposed path + content.
   Trusted: operator-configured sandbox root.
 
-Write recipe (Y1-pinned, ONE coherent strategy):
+Write recipe (Y1-pinned, ONE coherent strategy; P4.3-9 adds openat2 hardening):
   1. Check-time containment: _check_path resolves + rejects any path that escapes
      the sandbox root, INCLUDING an existing escaping final-component symlink
      (.resolve() follows all symlinks -> relative_to() raises -> LocalToolError).
      apply_edit REFUSES (read tools only skip).
-  2. Atomic write via O_NOFOLLOW temp-create + os.replace:
-     - Create temp file in the CONTAINED directory with os.open(O_CREAT|O_EXCL|O_NOFOLLOW).
-       O_NOFOLLOW is on the TEMP CREATE (cannot be pre-planted/followed).
-       O_EXCL rejects a pre-existing temp name.
+  2. Atomic write via hardened open + os.replace:
+     - Create temp file via _hardened_open():
+         Linux 5.6+: openat2(RESOLVE_NO_SYMLINKS) — rejects parent-component symlinks.
+         macOS: O_NOFOLLOW on the temp create (best-effort; dir-fd walk deferred).
+         Windows: O_NOFOLLOW where available (final-component residual — ADR-037 D5).
      - Write content bytes, fsync, close.
      - os.replace(temp, dest) - atomic; mid-write failure leaves original intact.
-       os.replace REPLACES an in-sandbox final symlink at dest (does not follow it);
-       any escaping final symlink was already rejected at check time.
-  3. Parent-component TOCTOU note: O_NOFOLLOW is final-component-only. A concurrent
-     external FS writer planting a parent-directory symlink between _check_path and
-     os.replace is the named RB-FS residual retired by P4.3 — NOT a B5 hole
-     (no symlink-creation primitive in the B5 tool surface).
+  3. R7 retirement: openat2(RESOLVE_NO_SYMLINKS) on Linux 5.6+ closes the TOCTOU window
+     between _check_path and the write — a parent-dir symlink planted by a concurrent
+     external writer is rejected by the kernel at open time (not just at check time).
+     Cross-platform residual inscribed in ADR-037 D5.
 
 Output is TRUSTED (our own code) — NOT in any _*_TOOL_NAMES set, NOT excerpt-excluded.
 """
@@ -35,6 +34,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -44,6 +44,74 @@ from orchestrator.tools.executor import LocalToolFn, LocalToolOutput
 from orchestrator.tools.local import LocalToolError, _check_path
 
 _log = logging.getLogger("orchestrator.tools.mutation")
+
+# ---------------------------------------------------------------------------
+# P4.3-9: openat2(RESOLVE_NO_SYMLINKS) hardening (R7 retirement, ADR-037 D3)
+# ---------------------------------------------------------------------------
+
+# openat2 is Linux 5.6+. Syscall number on x86_64 = 437.
+_SYS_OPENAT2 = 437
+_RESOLVE_NO_SYMLINKS = 0x04
+_OPEN_HOW_SIZE = 24  # sizeof(struct open_how) = u64 flags + u64 mode + u64 resolve
+
+
+def _try_openat2(path: str, flags: int, mode: int) -> int | None:
+    """Try to open `path` via openat2(RESOLVE_NO_SYMLINKS) on Linux 5.6+.
+
+    Returns the opened fd on success, or None if openat2 is unavailable / not Linux.
+    A parent-component symlink → OSError (ELOOP/ENOENT) propagated to caller.
+    """
+    if sys.platform != "linux":
+        return None
+    try:
+        import ctypes
+        import ctypes.util
+
+        libc_name = ctypes.util.find_library("c")
+        if libc_name is None:
+            return None
+        libc = ctypes.CDLL(libc_name, use_errno=True)
+
+        # struct open_how: { u64 flags; u64 mode; u64 resolve; }
+        class _OpenHow(ctypes.Structure):
+            _fields_ = [
+                ("flags", ctypes.c_uint64),
+                ("mode", ctypes.c_uint64),
+                ("resolve", ctypes.c_uint64),
+            ]
+
+        how = _OpenHow(flags=flags, mode=mode, resolve=_RESOLVE_NO_SYMLINKS)
+        at_fdcwd = -100  # AT_FDCWD
+
+        fd: int = libc.syscall(
+            _SYS_OPENAT2,
+            ctypes.c_int(at_fdcwd),
+            path.encode(),
+            ctypes.byref(how),
+            ctypes.c_size_t(_OPEN_HOW_SIZE),
+        )
+        if fd < 0:
+            errno = ctypes.get_errno()
+            raise OSError(errno, os.strerror(errno), path)
+        return fd
+    except OSError:
+        raise
+    except Exception:
+        return None
+
+
+def _hardened_open(path: str, flags: int, mode: int) -> int:
+    """Open `path` with parent-symlink protection.
+
+    Linux 5.6+: openat2(RESOLVE_NO_SYMLINKS) — rejects symlinks in any component.
+    Other / older: os.open with O_NOFOLLOW on the final component (existing recipe).
+    """
+    result = _try_openat2(path, flags, mode)
+    if result is not None:
+        return result
+    # Fallback: O_NOFOLLOW on final component (pre-existing recipe).
+    o_nofollow = getattr(os, "O_NOFOLLOW", 0)
+    return os.open(path, flags | o_nofollow, mode)
 
 
 # ---------------------------------------------------------------------------
@@ -115,13 +183,11 @@ def _make_apply_edit(sandbox_root: Path) -> LocalToolFn:
             # Remove the placeholder so O_EXCL can succeed.
             temp_path.unlink()
 
-            # O_CREAT|O_EXCL|O_NOFOLLOW: create, fail if exists, no-follow on final component.
-            # This is the pinned location of O_NOFOLLOW (on the TEMP create, not the dest).
+            # P4.3-9: _hardened_open() uses openat2(RESOLVE_NO_SYMLINKS) on Linux 5.6+
+            # (rejects parent-component symlinks planted between _check_path and write);
+            # falls back to O_CREAT|O_EXCL|O_NOFOLLOW on macOS/Windows (final-component only).
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            # O_NOFOLLOW is POSIX; available on Linux/macOS (the target platforms).
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
-            fd = os.open(tmp_name, flags, 0o600)
+            fd = _hardened_open(tmp_name, flags, 0o600)
             try:
                 os.write(fd, content_bytes)
                 os.fsync(fd)

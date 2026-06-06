@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse
@@ -68,6 +69,9 @@ from orchestrator.skills.loader import load_skills
 from orchestrator.skills.schema import Skill
 from orchestrator.tools.executor import LocalToolRegistry, execute_pending_tool_calls
 from orchestrator.tools.local import build_local_tool_registry
+
+if TYPE_CHECKING:
+    from orchestrator.sandbox.posture import PostureResolver
 
 PAYLOAD_LIMIT_BYTES = 65_536  # 64 KiB
 
@@ -165,6 +169,35 @@ class _NoopLLMRouter:
         )
 
 
+def _resolve_sandbox_posture(config_dir: Path) -> PostureResolver:
+    """Resolve sandbox posture from config_dir/sandbox.yaml.
+
+    ALWAYS returns a resolver — absence or parse-failure → fail_closed().
+    ADR-037 D4 / A1-3: config-absence and config-parse-failure are FAIL_CLOSED, never fail-open.
+    Extracted so tests can exercise this branch without re-implementing it.
+    """
+    import logging
+
+    from orchestrator.sandbox.posture import (
+        PostureResolver,
+        SandboxConfigError,
+        load_sandbox_config,
+    )
+
+    config_path = config_dir / "sandbox.yaml"
+    if config_path.exists():
+        try:
+            cfg = load_sandbox_config(config_path)
+            return PostureResolver.from_config(cfg)
+        except SandboxConfigError as exc:
+            logging.getLogger("orchestrator.api.app").warning(
+                "sandbox config parse failed → fail-closed (no subprocess sandbox): %s", exc
+            )
+            return PostureResolver.fail_closed()
+    else:
+        return PostureResolver.fail_closed()
+
+
 def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     """Build the full production AppContext from config + DB path.
 
@@ -206,9 +239,15 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     sandbox_root = config_dir.parent
     local_tools = build_local_tool_registry(sandbox_root)
 
+    # Sandbox posture resolver (ADR-037 D4 / A1-3; P4.3-5 / RW4): load config + detect runtime.
+    # Delegated to _resolve_sandbox_posture so tests can exercise the real branch without
+    # re-implementing it (constitution RW8-2 wired-whole; this is the sole injection point).
+    _sandbox_posture_resolver = _resolve_sandbox_posture(config_dir)
+
     # Plugin aggregation pass (ADR-029 D2 / P3.5-5): discover + validate + merge
     # all valid plugins from plugins/ (repo-root sibling of config/).
     # Absent plugins/ → no-op. Any-stage plugin failure refuses only that plugin.
+    # Resolver built before this block (RW5 will thread it into load_plugins).
     from orchestrator.core.room import RoomType as _RoomType
     from orchestrator.plugins.loader import load_plugins
     from orchestrator.plugins.schema import PLUGIN_HOST_CONTRACT_VERSION
@@ -223,6 +262,8 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         host_tools=tools,
         host_local_tool_names=frozenset(local_tools.keys()),
         host_mcp_server_names=frozenset(mcp_sessions.keys()),
+        posture_resolver=_sandbox_posture_resolver,
+        sandbox_root=sandbox_root,
     )
     # Atomic per-plugin merge: plugin contributions that passed all stages are
     # merged here; partial or refused plugins leave no trace in these registries.
@@ -233,11 +274,14 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     local_tools = {**local_tools, **plugin_result.local_tools}
     mcp_sessions = {**mcp_sessions, **plugin_result.mcp_sessions}
 
-    # Subprocess local tools (ADR-034 D5 / P4.2-B3-3): compose at the api/ root
-    # so local.py stays in-process-pristine (constitution t6).
+    # Subprocess local tools (ADR-034 D5 / P4.2-B3-3; ADR-037 D2/D3 P4.3-6): compose at
+    # the api/ root so local.py stays in-process-pristine (constitution t6).
     from orchestrator.tools.subprocess_tools import build_subprocess_tool_registry
 
-    local_tools = {**local_tools, **build_subprocess_tool_registry(sandbox_root)}
+    local_tools = {
+        **local_tools,
+        **build_subprocess_tool_registry(sandbox_root, posture_resolver=_sandbox_posture_resolver),
+    }
 
     # Network local tools (ADR-035 D4 / P4.2-B4-4 + B5-2): compose at the api/ root
     # so local.py stays in-process-pristine (constitution t6).
@@ -252,6 +296,8 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         **build_network_tool_registry(
             web_search_config_path=_web_search_config if _web_search_config.exists() else None,
             email_config_path=_email_config if _email_config.exists() else None,
+            posture_resolver=_sandbox_posture_resolver,
+            sandbox_root=sandbox_root,
         ),
     }
 

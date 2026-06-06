@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
 import yaml
@@ -29,6 +29,9 @@ from orchestrator.mcp.execution import MAX_RESULT_BYTES
 from orchestrator.tools.executor import LocalToolFn, LocalToolOutput
 from orchestrator.tools.local import LocalToolError
 from orchestrator.tools.net_trust import build_ssrf_client
+
+if TYPE_CHECKING:
+    from orchestrator.sandbox.posture import PostureResolver
 
 _log = logging.getLogger("orchestrator.tools.network")
 
@@ -121,7 +124,18 @@ def _stream_bounded(response: httpx.Response) -> tuple[str, int | None]:
 # ---------------------------------------------------------------------------
 
 
-def _make_web_fetch() -> _NetworkToolFn:
+def _make_web_fetch(
+    posture_resolver: PostureResolver | None = None,
+    sandbox_root: Path | None = None,
+) -> _NetworkToolFn:
+    """Build a web_fetch impl.
+
+    When posture_resolver is provided (ADR-037 D3; P4.3-8):
+    - SANDBOXED: SSRF floor validates + pins the URL; egress container constrained to
+      the pinned IP; sandboxed_run executes a Python fetcher inside the container.
+    - FAIL_CLOSED: LocalToolError(sandbox_unavailable:…).
+    - DEGRADED: in-process httpx with SSRF floor (loudly warned by posture resolver).
+    """
     allowed: frozenset[str] = frozenset({"url"})
 
     def _impl(params: dict[str, Any]) -> LocalToolOutput:
@@ -130,32 +144,146 @@ def _make_web_fetch() -> _NetworkToolFn:
         if not url_str:
             raise LocalToolError("web_fetch: 'url' is required")
 
-        # Build a fresh anonymous SSRF-validating client per call (no cross-call cookie state).
-        client = build_ssrf_client(timeout=_WEB_FETCH_TIMEOUT, max_redirects=_MAX_REDIRECTS)
-        try:
-            with client:
-                response = client.send(
-                    client.build_request("GET", url_str),
-                    stream=True,
-                )
-                content, truncated_at = _stream_bounded(response)
-        except LocalToolError:
-            raise
-        except httpx.InvalidURL as exc:
-            raise LocalToolError(f"fetch_failed: invalid URL {url_str!r}: {exc}") from exc
-        except httpx.TooManyRedirects as exc:
-            raise LocalToolError(
-                f"fetch_failed: too many redirects (max {_MAX_REDIRECTS}): {exc}"
-            ) from exc
-        except httpx.TimeoutException as exc:
-            raise LocalToolError(f"network_timeout: {exc}") from exc
-        except httpx.RequestError as exc:
-            raise LocalToolError(f"fetch_failed: {exc}") from exc
+        if posture_resolver is not None:
+            return _sandbox_web_fetch(url_str, posture_resolver, sandbox_root)
 
-        body = f"status={response.status_code}\nurl={response.url}\n\n{content}"
-        return LocalToolOutput(content=body, output_truncated_at=truncated_at)
+        return _inprocess_web_fetch(url_str)
 
     return _NetworkToolFn(_impl)
+
+
+def _sandbox_web_fetch(
+    url_str: str,
+    posture_resolver: PostureResolver,
+    sandbox_root: Path | None,
+) -> LocalToolOutput:
+    """web_fetch routed through a per-call egress container (ADR-037 D3; P4.3-8).
+
+    SSRF floor validates + pins the URL (parent-side, defense-in-depth).
+    The container's egress is constrained to the pinned IP only.
+    """
+    from orchestrator.sandbox.egress import EgressDenied, build_egress_spec
+    from orchestrator.sandbox.profile import SandboxProfile
+    from orchestrator.sandbox.runtime import SandboxUnavailableError
+    from orchestrator.sandbox.spawn import sandboxed_run
+    from orchestrator.tools.net_trust import _resolve_and_validate
+
+    # SSRF floor: validate + pin (parent-side, every redirect would be validated here
+    # if we were doing in-process multi-hop; for sandbox, the egress constraint is the
+    # primary enforcement per ADR-037 D3 / ADR-035 D2 re-homed).
+    try:
+        import urllib.parse
+
+        parsed = urllib.parse.urlparse(url_str)
+        hostname = parsed.hostname or ""
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if not hostname:
+            raise LocalToolError(f"fetch_failed: could not parse hostname from {url_str!r}")
+        pinned_ip = _resolve_and_validate(hostname, port)
+    except LocalToolError:
+        raise
+
+    try:
+        runtime = posture_resolver.assert_sandboxed_or_raise("web_fetch")
+    except SandboxUnavailableError as exc:
+        if posture_resolver.is_degraded_opted_in():
+            return _inprocess_web_fetch(url_str)
+        raise LocalToolError(f"sandbox_unavailable: web_fetch: {exc}") from exc
+
+    try:
+        egress_spec = build_egress_spec(
+            pinned_ip,
+            port,
+            runtime_kind=runtime.kind,
+            tool_kind="web_fetch",
+            hostname=hostname,
+            call_id="web_fetch",
+        )
+    except EgressDenied as exc:
+        raise LocalToolError(f"sandbox_egress_denied: web_fetch: {exc}") from exc
+
+    image = getattr(getattr(posture_resolver, "_config", None), "image", "sandbox:latest")
+    cwd = sandbox_root or Path("/tmp")
+
+    # Python fetcher: runs inside the container, fetches the URL via urllib stdlib.
+    fetcher_argv = [
+        "python3",
+        "-c",
+        _SANDBOX_FETCHER_SCRIPT,
+        url_str,
+        str(MAX_RESULT_BYTES),
+    ]
+
+    profile = SandboxProfile(sandbox_root=cwd, image=image)
+    try:
+        result = sandboxed_run(
+            fetcher_argv,
+            cwd=cwd,
+            env={},
+            timeout_s=float(_WEB_FETCH_TIMEOUT.read or 15.0)
+            + float(_WEB_FETCH_TIMEOUT.connect or 5.0)
+            + 5.0,
+            max_bytes=MAX_RESULT_BYTES + 512,
+            profile=profile,
+            egress_spec=egress_spec,
+            runtime=runtime,
+        )
+    except SandboxUnavailableError as exc:
+        raise LocalToolError(f"sandbox_unavailable: web_fetch: {exc}") from exc
+
+    if result.exit_code != 0:
+        raise LocalToolError(f"fetch_failed: sandboxed web_fetch failed: {result.output[:200]}")
+
+    truncated_at = MAX_RESULT_BYTES if result.truncated else None
+    return LocalToolOutput(content=result.output, output_truncated_at=truncated_at)
+
+
+def _inprocess_web_fetch(url_str: str) -> LocalToolOutput:
+    """Original in-process httpx web_fetch (app-level SSRF floor; ADR-035 D2)."""
+    client = build_ssrf_client(timeout=_WEB_FETCH_TIMEOUT, max_redirects=_MAX_REDIRECTS)
+    try:
+        with client:
+            response = client.send(
+                client.build_request("GET", url_str),
+                stream=True,
+            )
+            content, truncated_at = _stream_bounded(response)
+    except LocalToolError:
+        raise
+    except httpx.InvalidURL as exc:
+        raise LocalToolError(f"fetch_failed: invalid URL {url_str!r}: {exc}") from exc
+    except httpx.TooManyRedirects as exc:
+        raise LocalToolError(
+            f"fetch_failed: too many redirects (max {_MAX_REDIRECTS}): {exc}"
+        ) from exc
+    except httpx.TimeoutException as exc:
+        raise LocalToolError(f"network_timeout: {exc}") from exc
+    except httpx.RequestError as exc:
+        raise LocalToolError(f"fetch_failed: {exc}") from exc
+
+    body = f"status={response.status_code}\nurl={response.url}\n\n{content}"
+    return LocalToolOutput(content=body, output_truncated_at=truncated_at)
+
+
+# Minimal Python fetcher script that runs inside the sandbox container.
+# Uses only stdlib (urllib) — no external deps required in the container.
+_SANDBOX_FETCHER_SCRIPT = """
+import sys, urllib.request, urllib.error
+url, max_bytes = sys.argv[1], int(sys.argv[2])
+try:
+    req = urllib.request.Request(url, headers={"User-Agent": "orchestrator-sandbox/1.0"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        code = resp.status
+        final_url = resp.url
+        body = resp.read(max_bytes).decode("utf-8", errors="replace")
+        print(f"status={code}\\nurl={final_url}\\n\\n{body}", end="")
+except urllib.error.HTTPError as e:
+    body = e.read(max_bytes).decode('utf-8', 'replace')
+    print(f"status={e.code}\\nurl={url}\\n\\n{body}", end="")
+except Exception as e:
+    print(f"fetch_failed: {e}", file=sys.stderr)
+    sys.exit(1)
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +406,10 @@ def _load_email_config(config_path: Path | None) -> dict[str, Any] | None:
         return None
 
 
-def _make_send_email(provider_config: dict[str, Any] | None) -> _NetworkToolFn:
+def _make_send_email(
+    provider_config: dict[str, Any] | None,
+    posture_resolver: PostureResolver | None = None,
+) -> _NetworkToolFn:
     """Build a send_email impl using config-driven HTTP (ADR-036 D3-ii).
 
     Reads endpoint + api_key_env + from_addr + allowed_domains from provider_config.
@@ -286,6 +417,8 @@ def _make_send_email(provider_config: dict[str, Any] | None) -> _NetworkToolFn:
     Domain-allowlist (primary) + optional explicit recipient list.
     Unconfigured allowlist -> fail-closed (cannot send to unbounded recipient set).
     SSRF N/A: endpoint is operator-trusted config, NOT in the param allowlist.
+    When posture_resolver is set, logs a per-call WARNING that send_email runs unsandboxed
+    by design (R9 DLP tail, ADR-037 D5) — execution unchanged, warning is the transparency.
     """
     allowed: frozenset[str] = frozenset({"to", "subject", "body"})
 
@@ -310,6 +443,17 @@ def _make_send_email(provider_config: dict[str, Any] | None) -> _NetworkToolFn:
 
     def _impl(params: dict[str, Any]) -> LocalToolOutput:
         _check_disallowed(params, allowed, "send_email")
+
+        # Transparency warning: send_email runs unsandboxed by design (R9 DLP tail,
+        # ADR-037 D5). Log on every call when a sandbox posture is configured so the
+        # operator knows the container boundary does not cover the recipient field.
+        if posture_resolver is not None:
+            _log.warning(
+                "sandbox: send_email is running UNSANDBOXED by design — "
+                "R9 (recipient-exfil DLP tail) is NOT retired by ADR-037 D5. "
+                "Within-allowed-domain exfil persists. Sandbox posture: %s",
+                posture_resolver.resolve().value,
+            )
 
         to_addr = str(params.get("to", ""))
         subject = str(params.get("subject", ""))
@@ -397,20 +541,24 @@ def build_network_tool_registry(
     *,
     web_search_config_path: Path | None = None,
     email_config_path: Path | None = None,
+    posture_resolver: PostureResolver | None = None,
+    sandbox_root: Path | None = None,
 ) -> dict[str, LocalToolFn]:
     """Build the network local tools registry.
 
     Returns a dict keyed by tool name (matching tools.yaml classifications).
     Each value is a _NetworkToolFn carrying _is_network_tool = True.
 
-    web_fetch: SSRF-validating HTTPS/HTTP fetch; no auth/cookies; raw TOOL_RESULT.
+    web_fetch: SSRF-validating HTTPS/HTTP fetch; when posture_resolver is provided,
+    routes through a per-call egress container (ADR-037 D3; P4.3-8). App-level SSRF
+    floor stays as defense-in-depth. DEGRADED opt-in falls through to in-process SSRF.
     web_search: Brave Search API query; api_key from env (fail-closed if absent).
     send_email: config-driven HTTP email send (ADR-036 D3-ii); fail-closed if unconfigured.
     """
     provider_config = _load_web_search_config(web_search_config_path)
     email_config = _load_email_config(email_config_path)
     return {
-        "web_fetch": _make_web_fetch(),
+        "web_fetch": _make_web_fetch(posture_resolver=posture_resolver, sandbox_root=sandbox_root),
         "web_search": _make_web_search(provider_config),
-        "send_email": _make_send_email(email_config),
+        "send_email": _make_send_email(email_config, posture_resolver=posture_resolver),
     }

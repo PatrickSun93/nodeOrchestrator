@@ -29,23 +29,39 @@ DNS_RESOLVE_TIMEOUT_S: float = 5.0
 # Includes Alibaba Cloud metadata 100.100.100.200.
 _CGNAT_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
 
+# NAT64 well-known prefix (RFC 6052, 64:ff9b::/96).
+# An IPv4 address embedded in NAT64 is the low 32 bits; extract + validate against floor.
+# Python is_private does NOT cover this range — explicit check required (R6 / ADR-037 D2).
+_NAT64_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
+
 _ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
-# Single-thread pool for bounded DNS resolution.
-# Keeps getaddrinfo off the main writer thread so the writer can impose a deadline
-# (ThreadPoolExecutor.submit(...).result(timeout=DNS_RESOLVE_TIMEOUT_S)).
-_DNS_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="net-dns")
+# Fixed 8-slot DNS pool — R5 head-of-line fix (ADR-035 impl-degradation ¶; P4.3-11).
+# Raises the head-of-line threshold 1→8: a hung getaddrinfo consumes one slot but does
+# not queue subsequent resolves in the other 7 slots. A permanently-hung getaddrinfo
+# consumes a slot until the thread pool is GC'd (the abandonable-per-call-thread is the
+# deferred-stronger tail, ADR-037 D5). max_workers=8 handles typical bursts; the
+# DNS_RESOLVE_TIMEOUT_S per-call deadline still bounds each individual future.
+_DNS_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="net-dns")
 
 
 def is_denied_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Return True if ip falls within any SSRF-floor denied range.
 
     Denied: loopback, private, CGNAT (100.64.0.0/10), link-local, unspecified,
-    multicast, reserved, or IPv4-mapped IPv6 whose mapped address is denied.
+    multicast, reserved, IPv4-mapped IPv6, or NAT64-wrapped internal IPv4 (R6 fold-in).
     """
     # Unwrap IPv4-mapped IPv6 first (::ffff:127.0.0.1 bypass class).
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         return is_denied_ip(ip.ipv4_mapped)
+
+    # Unwrap NAT64 (64:ff9b::/96 well-known prefix; R6 fold-in ADR-037 D2).
+    # The embedded IPv4 is the low 32 bits of the IPv6 address.
+    if isinstance(ip, ipaddress.IPv6Address) and ip in _NAT64_PREFIX:
+        # Extract the embedded IPv4: last 4 bytes of the 16-byte address.
+        packed = ip.packed
+        embedded_ipv4 = ipaddress.IPv4Address(packed[12:])
+        return is_denied_ip(embedded_ipv4)
 
     if ip.is_loopback:
         return True
