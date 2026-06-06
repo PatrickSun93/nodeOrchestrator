@@ -326,3 +326,40 @@ def test_ssrf_client_blocks_internal_url() -> None:
         with pytest.raises(LocalToolError, match="ssrf_blocked:"):
             client.get("http://internal.example.com/")
         client.close()
+
+
+# ---------------------------------------------------------------------------
+# P4.3-10: NAT64 floor extension (R6 fold-in — ADR-037 D2)
+# ---------------------------------------------------------------------------
+
+
+def test_nat64_wrapped_internal_ipv4_denied() -> None:
+    """NAT64 64:ff9b::/96 wrapping an internal IPv4 must be denied (R6 fold-in)."""
+    import ipaddress
+
+    from orchestrator.tools.net_trust import is_denied_ip
+
+    # 127.0.0.1 embedded in NAT64: 64:ff9b::7f00:0001
+    nat64_loopback = ipaddress.ip_address("64:ff9b::7f00:1")
+    assert is_denied_ip(nat64_loopback), "NAT64-wrapped 127.0.0.1 must be denied"
+
+    # 10.0.0.1 embedded in NAT64: 64:ff9b::0a00:0001
+    nat64_private = ipaddress.ip_address("64:ff9b::a00:1")
+    assert is_denied_ip(nat64_private), "NAT64-wrapped 10.0.0.1 must be denied"
+
+    # 192.168.1.1 embedded in NAT64: 64:ff9b::c0a8:0101
+    nat64_private2 = ipaddress.ip_address("64:ff9b::c0a8:101")
+    assert is_denied_ip(nat64_private2), "NAT64-wrapped 192.168.1.1 must be denied"
+
+
+def test_nat64_wrapped_public_ipv4_allowed() -> None:
+    """NAT64 64:ff9b::/96 wrapping a public IPv4 must be allowed."""
+    import ipaddress
+
+    from orchestrator.tools.net_trust import is_denied_ip
+
+    # 93.184.216.34 (example.com) embedded in NAT64: 64:ff9b::5db8:d822
+    nat64_public = ipaddress.ip_address("64:ff9b::5db8:d822")
+    assert not is_denied_ip(nat64_public), (
+        "NAT64-wrapped public IP (93.184.216.34) must be allowed"
+    )
