@@ -35,6 +35,7 @@ from orchestrator.plugins.provenance import (
     PluginProvenance,
     PluginRegistry,
     RegistryEntry,
+    _RegistryRefuseAll,
     check_fetched_activation,
     load_activation_registry,
 )
@@ -548,7 +549,7 @@ def load_plugins(
     host_mcp_server_names: frozenset[str],
     fetched_plugins_dir: Path | None = None,
     activation_registry_path: Path | None = None,
-    plugin_registry: PluginRegistry | None = None,
+    plugin_registry: PluginRegistry | _RegistryRefuseAll | None = None,
     posture_resolver: PostureResolver | None = None,
     sandbox_root: Path | None = None,
 ) -> PluginLoadResult:
@@ -625,6 +626,17 @@ def load_plugins(
                 provenance="fetched",
             )
         )
+
+    # Sentinel guard: malformed plugins.yaml → refuse-all (ADR-038 D2).
+    # REGISTRY_REFUSE_ALL is distinct from None (absent → defaults) and {} (empty → defaults).
+    # On malformed config the operator's intent is unknown — the safe position is refuse-all,
+    # never admit-by-presence.  This mirrors _resolve_sandbox_posture → fail_closed().
+    if isinstance(plugin_registry, _RegistryRefuseAll):
+        _log.warning(
+            "plugins.yaml is malformed — refusing all %d candidate(s) (ADR-038 D2 refuse-all)",
+            len(candidates),
+        )
+        return PluginLoadResult()
 
     # Steps 3-7: Per-plugin host-collision-check + load + namespaced merge (global, cross-root).
     # Cross-plugin collision is resolved by deterministic always-prefix namespacing

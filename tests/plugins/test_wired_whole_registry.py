@@ -5,7 +5,7 @@ matching the wired-whole discipline (constitution RW8-2).
 
 Acceptance (plan P4.4-4):
   rw1 — absent config/plugins.yaml → empty registry (today's defaults)
-  rw2 — malformed plugins.yaml → empty registry + WARNING + no exception escapes
+  rw2 — malformed plugins.yaml → REGISTRY_REFUSE_ALL sentinel + WARNING (no exception escapes)
   rw3 — valid plugins.yaml → entries applied
   rw4 — empty-disabled plugin + _resolve_plugin_registry: disabled plugin refused,
          load_plugins receives real PluginRegistry from helper
@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator.api.app import _resolve_plugin_registry
+from orchestrator.plugins.provenance import REGISTRY_REFUSE_ALL
 
 # ---------------------------------------------------------------------------
 # rw1: absent config/plugins.yaml → empty registry
@@ -38,10 +39,15 @@ def test_rw1_absent_plugins_yaml_returns_empty(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_rw2_malformed_plugins_yaml_returns_empty_and_warns(
+def test_rw2_malformed_plugins_yaml_returns_sentinel_and_warns(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Malformed plugins.yaml → empty registry + WARNING, no exception escapes (ADR-038 D2)."""
+    """Malformed plugins.yaml → REGISTRY_REFUSE_ALL sentinel + WARNING (ADR-038 D2 refuse-all).
+
+    The sentinel is distinct from an empty dict: absent config → empty {} (defaults);
+    malformed config → sentinel (refuse-all, no presence resurrection).
+    No exception propagates through _resolve_plugin_registry (graceful, app does not crash).
+    """
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "plugins.yaml").write_text(
@@ -49,7 +55,7 @@ def test_rw2_malformed_plugins_yaml_returns_empty_and_warns(
     )
     with caplog.at_level(logging.WARNING, logger="orchestrator.api.app"):
         result = _resolve_plugin_registry(config_dir)
-    assert result == {}
+    assert result is REGISTRY_REFUSE_ALL
     assert any("parse failed" in r.message for r in caplog.records)
 
 

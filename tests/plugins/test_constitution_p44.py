@@ -26,7 +26,13 @@ from orchestrator.llm.exceptions import ConfigError
 from orchestrator.llm.router import ModelRegistry
 from orchestrator.llm.types import ModelId, ModelProfile, ProviderId
 from orchestrator.plugins.loader import PluginLoadResult, load_plugins
-from orchestrator.plugins.provenance import PluginRegistry, RegistryEntry, load_plugin_registry
+from orchestrator.plugins.provenance import (
+    REGISTRY_REFUSE_ALL,
+    PluginRegistry,
+    RegistryEntry,
+    _RegistryRefuseAll,
+    load_plugin_registry,
+)
 from orchestrator.plugins.schema import PLUGIN_HOST_CONTRACT_VERSION
 
 _PROVIDER = ProviderId("test_provider")
@@ -83,7 +89,7 @@ def _minimal_op_plugin(plugins_dir: Path, plugin_id: str, with_tool_impl: bool =
 def _load(
     plugins_dir: Path,
     *,
-    plugin_registry: PluginRegistry | None = None,
+    plugin_registry: PluginRegistry | _RegistryRefuseAll | None = None,
     fetched_plugins_dir: Path | None = None,
     activation_registry_path: Path | None = None,
     host_local_tool_names: frozenset[str] | None = None,
@@ -162,17 +168,48 @@ def test_g2_malformed_registry_path_raises_config_error(tmp_path: Path) -> None:
         load_plugin_registry(p)
 
 
-def test_g2_empty_plugin_registry_refuses_all_op_placed(tmp_path: Path) -> None:
-    """Empty plugin_registry (from malformed parse → empty dict) still loads op-placed.
+def test_g2_empty_registry_absent_loads_op_placed(tmp_path: Path) -> None:
+    """Empty plugin_registry dict ({}) = absent registry → op-placed loads by presence.
 
-    An empty PluginRegistry = absent registry = today's defaults (op-placed loads).
-    The refuse-all is achieved by _resolve_plugin_registry catching ConfigError → empty.
+    An empty PluginRegistry (not the refuse-all sentinel) is treated the same as
+    no registry at all: ADR-029 D5 presence=opt-in applies and op-placed loads.
+    This is DISTINCT from REGISTRY_REFUSE_ALL which refuses every candidate.
     """
     plugins_dir = tmp_path / "plugins"
     _minimal_op_plugin(plugins_dir, "op_plugin", with_tool_impl=True)
-    # Empty registry = absent → op-placed still loads (ADR-029 D5 presence=opt-in)
+    # Empty dict = absent defaults → op-placed still loads (ADR-029 D5 presence=opt-in)
     result = _load(plugins_dir, plugin_registry={})
     assert "op_plugin__echo_tool" in result.local_tools
+
+
+def test_g2_refuse_all_sentinel_refuses_all_op_placed(tmp_path: Path) -> None:
+    """REGISTRY_REFUSE_ALL sentinel → all op-placed candidates refused (ADR-038 D2 refuse-all).
+
+    The sentinel is returned by _resolve_plugin_registry when plugins.yaml is malformed.
+    It is distinct from an empty dict ({}) — the empty dict triggers absence-defaults
+    (op-placed loads by presence), while the sentinel refuses every candidate regardless
+    of provenance.  This closes the fail-open: an operator-placed plugin that would have
+    been disabled in a valid config must NOT be resurrected by malformed-config presence.
+    """
+    plugins_dir = tmp_path / "plugins"
+    _minimal_op_plugin(plugins_dir, "op_plugin", with_tool_impl=True)
+    result = _load(plugins_dir, plugin_registry=REGISTRY_REFUSE_ALL)
+    assert result.local_tools == {}
+    assert "op_plugin__echo_tool" not in result.local_tools
+
+
+def test_g2_refuse_all_disabled_op_placed_stays_down(tmp_path: Path) -> None:
+    """Malformed config (REGISTRY_REFUSE_ALL): op-placed plugin with enabled:false stays down.
+
+    Old behaviour (malformed → empty dict {}): op-placed plugin was RESURRECTED by
+    presence-opt-in even though the operator wrote enabled:false in the (broken) config.
+    New behaviour (malformed → sentinel): refuse-all, no presence resurrection.
+    """
+    plugins_dir = tmp_path / "plugins"
+    _minimal_op_plugin(plugins_dir, "op_plugin", with_tool_impl=True)
+    # Sentinel refuses the plugin even though it would normally load by presence
+    result = _load(plugins_dir, plugin_registry=REGISTRY_REFUSE_ALL)
+    assert "op_plugin__echo_tool" not in result.local_tools
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +514,7 @@ def test_g10_gate_not_referenced_in_plugin_loader() -> None:
     """
     loader_path = _PLUGINS_PKG / "loader.py"
     source = loader_path.read_text(encoding="utf-8")
-    # _apply_reversibility_cap is called in loader.py (correct) — assert it IS there
+    # _apply_reversibility_cap is called in loader.py (correct) �� assert it IS there
     assert "_apply_reversibility_cap" in source, (
         "g10: _apply_reversibility_cap missing from loader.py — unexpected removal"
     )

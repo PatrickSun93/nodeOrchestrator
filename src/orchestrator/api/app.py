@@ -71,7 +71,7 @@ from orchestrator.tools.executor import LocalToolRegistry, execute_pending_tool_
 from orchestrator.tools.local import build_local_tool_registry
 
 if TYPE_CHECKING:
-    from orchestrator.plugins.provenance import PluginRegistry
+    from orchestrator.plugins.provenance import PluginRegistry, _RegistryRefuseAll
     from orchestrator.sandbox.posture import PostureResolver
 
 PAYLOAD_LIMIT_BYTES = 65_536  # 64 KiB
@@ -199,18 +199,29 @@ def _resolve_sandbox_posture(config_dir: Path) -> PostureResolver:
         return PostureResolver.fail_closed()
 
 
-def _resolve_plugin_registry(config_dir: Path) -> PluginRegistry:
+def _resolve_plugin_registry(
+    config_dir: Path,
+) -> PluginRegistry | _RegistryRefuseAll:
     """Resolve unified plugin registry from config_dir/plugins.yaml.
 
-    ALWAYS returns a registry — absence → empty (today's defaults);
-    parse-failure → empty + WARNING (refuse-all, graceful, ADR-038 D2).
-    Follows the _resolve_sandbox_posture pattern (app.py:172).
+    Three outcomes:
+      absent        → PluginRegistry() empty dict (today's defaults; op-placed by presence).
+      parseable     → PluginRegistry with the declared entries.
+      malformed     → REGISTRY_REFUSE_ALL sentinel + WARNING (refuse-all, ADR-038 D2).
+
+    The sentinel is distinct from an empty dict so load_plugins can tell
+    "no config file" (absent → defaults) from "config file broken" (refuse-all).
+    Follows the _resolve_sandbox_posture → fail_closed() pattern (app.py:172).
     Extracted so wired-whole tests can drive the real function.
     """
     import logging
 
     from orchestrator.llm.exceptions import ConfigError
-    from orchestrator.plugins.provenance import PluginRegistry, load_plugin_registry
+    from orchestrator.plugins.provenance import (
+        REGISTRY_REFUSE_ALL,
+        PluginRegistry,
+        load_plugin_registry,
+    )
 
     config_path = config_dir / "plugins.yaml"
     if config_path.exists():
@@ -218,9 +229,9 @@ def _resolve_plugin_registry(config_dir: Path) -> PluginRegistry:
             return load_plugin_registry(config_path)
         except ConfigError as exc:
             logging.getLogger("orchestrator.api.app").warning(
-                "plugins.yaml parse failed → empty registry (refuse-all, ADR-038 D2): %s", exc
+                "plugins.yaml parse failed → refuse-all sentinel (ADR-038 D2): %s", exc
             )
-            return PluginRegistry()
+            return REGISTRY_REFUSE_ALL
     return PluginRegistry()
 
 
@@ -273,7 +284,7 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     # Plugin aggregation pass (ADR-029 D2 / P3.5-5 / ADR-038 D1/D2 P4.4-4): discover + validate
     # + merge all valid plugins from plugins/ (operator-placed) and fetched_plugins/ (fetched).
     # Absent plugins/ → no-op. Any-stage plugin failure refuses only that plugin.
-    # Plugin registry resolved here — parse-failure → empty (refuse-all, graceful, ADR-038 D2).
+    # Plugin registry: absent → defaults; malformed → REGISTRY_REFUSE_ALL sentinel → refuse-all.
     from orchestrator.core.room import RoomType as _RoomType
     from orchestrator.plugins.loader import load_plugins
     from orchestrator.plugins.schema import PLUGIN_HOST_CONTRACT_VERSION

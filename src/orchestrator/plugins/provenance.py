@@ -209,6 +209,24 @@ class RegistryEntry:
 PluginRegistry = dict[str, RegistryEntry]
 
 
+class _RegistryRefuseAll:
+    """Sentinel: plugins.yaml exists but failed to parse → refuse ALL candidates.
+
+    Distinct from None (absent registry → today's defaults, op-placed loads by
+    presence) and {} (empty registry, same absent-defaults behaviour).
+    load_plugins receiving this value must refuse every candidate without
+    processing, regardless of provenance (ADR-038 D2 refuse-all, graceful).
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "REGISTRY_REFUSE_ALL"
+
+
+REGISTRY_REFUSE_ALL: _RegistryRefuseAll = _RegistryRefuseAll()
+
+
 def load_plugin_registry(path: Path | None) -> PluginRegistry:
     """Load the unified plugin registry from config/plugins.yaml.
 
