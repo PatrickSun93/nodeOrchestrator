@@ -43,6 +43,7 @@ from orchestrator.tools.executor import LocalToolFn
 
 if TYPE_CHECKING:
     from orchestrator.mcp.client import MCPSession
+    from orchestrator.sandbox.posture import PostureResolver
 
 _log = logging.getLogger("orchestrator.plugins.loader")
 
@@ -337,6 +338,8 @@ def _load_plugin(
     seen_tool_impl_names: set[str],
     seen_server_names: set[str],
     activation_entry: ActivationEntry | None = None,
+    posture_resolver: PostureResolver | None = None,
+    sandbox_root: Path | None = None,
 ) -> PluginLoadResult | None:
     """Load one plugin: provenance-check → collision-check → non-code load → code load → rev-cap.
 
@@ -452,6 +455,8 @@ def _load_plugin(
                 manifest.contributions.tool_impls,
                 plugin_subprocess_env=subprocess_env,
                 provenance=provenance,
+                posture_resolver=posture_resolver,
+                sandbox_root=sandbox_root,
             )
         except PluginCodeLoadError as exc:
             _log.warning("plugin %r: code load failed: %s — refusing", pid, exc)
@@ -499,6 +504,8 @@ def load_plugins(
     host_mcp_server_names: frozenset[str],
     fetched_plugins_dir: Path | None = None,
     activation_registry_path: Path | None = None,
+    posture_resolver: PostureResolver | None = None,
+    sandbox_root: Path | None = None,
 ) -> PluginLoadResult:
     """Discover, validate, and merge plugin contributions (ADR-029 D2, ADR-031 D3/D4).
 
@@ -598,6 +605,8 @@ def load_plugins(
             seen_tool_impl_names=seen_tool_impl_names,
             seen_server_names=seen_server_names,
             activation_entry=activation,
+            posture_resolver=posture_resolver,
+            sandbox_root=sandbox_root,
         )
         if result is None:
             continue

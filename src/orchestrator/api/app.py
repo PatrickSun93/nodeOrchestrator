@@ -249,6 +249,8 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         host_tools=tools,
         host_local_tool_names=frozenset(local_tools.keys()),
         host_mcp_server_names=frozenset(mcp_sessions.keys()),
+        posture_resolver=_sandbox_posture_resolver,
+        sandbox_root=sandbox_root,
     )
     # Atomic per-plugin merge: plugin contributions that passed all stages are
     # merged here; partial or refused plugins leave no trace in these registries.

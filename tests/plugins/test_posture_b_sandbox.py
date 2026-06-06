@@ -49,12 +49,12 @@ def _make_fn(
 
 
 def test_sandboxed_harness_params_uses_docker_cli(tmp_path: Path) -> None:
-    """_build_sandboxed_harness_params returns params with the runtime CLI as command."""
+    """_build_sandboxed_harness_params returns (params, cname) with runtime CLI as command."""
     resolver = _make_resolver(available=True)
     fn = _make_fn(tmp_path, resolver=resolver)
 
     rt = SandboxRuntime(kind="docker", cli="/usr/bin/docker")
-    params = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
+    params, _cname = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
 
     assert params.command == "/usr/bin/docker"
 
@@ -65,9 +65,20 @@ def test_sandboxed_harness_params_starts_with_run(tmp_path: Path) -> None:
     fn = _make_fn(tmp_path, resolver=resolver)
 
     rt = SandboxRuntime(kind="docker", cli="/usr/bin/docker")
-    params = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
+    params, _cname = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
 
     assert params.args[0] == "run"
+
+
+def test_sandboxed_harness_params_includes_interactive_flag(tmp_path: Path) -> None:
+    """Container args must include -i for MCP-stdio handshake (RW5)."""
+    resolver = _make_resolver(available=True)
+    fn = _make_fn(tmp_path, resolver=resolver)
+
+    rt = SandboxRuntime(kind="docker", cli="/usr/bin/docker")
+    params, _cname = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
+
+    assert "-i" in params.args
 
 
 def test_sandboxed_harness_params_no_docker_sock(tmp_path: Path) -> None:
@@ -76,7 +87,7 @@ def test_sandboxed_harness_params_no_docker_sock(tmp_path: Path) -> None:
     fn = _make_fn(tmp_path, resolver=resolver)
 
     rt = SandboxRuntime(kind="docker", cli="/usr/bin/docker")
-    params = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
+    params, _cname = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
 
     all_args = " ".join(params.args)
     assert "/var/run/docker.sock" not in all_args
@@ -88,7 +99,7 @@ def test_sandboxed_harness_params_deny_default_network(tmp_path: Path) -> None:
     fn = _make_fn(tmp_path, resolver=resolver)
 
     rt = SandboxRuntime(kind="docker", cli="/usr/bin/docker")
-    params = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
+    params, _cname = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
 
     args_str = " ".join(params.args)
     assert "--network" in args_str
