@@ -4,8 +4,17 @@ round: R0-A
 verdict: needs_architect
 findings_count:
   red: 0
-  yellow: 4
+  yellow: 1
   green: 7
+verdict_history:
+  - round: 1
+    impl_head: 7924b36
+    verdict: needs_architect
+    summary: "0🔴 4🟡 7🟢 @ 7924b36. Y1-impl (/logout public + _is_public /health-prefix → unauthenticated writer-revoke), Y2 (_post_intent else 'user' fail-open), Y3 (cookie-path + WS-negative coverage gaps), Y4 (verify-timing / idle-expiry / token-hash docstring honesty). Boundary fail-closed, constitutional spine byte-frozen, plan-stage Y1 wiring seam resolved. Route nothing — surfaced for architect."
+  - round: 2
+    impl_head: ca8ca1c
+    verdict: needs_architect
+    summary: "All 4 round-1🟡 RESOLVED (architect-routed α; junior RW2–RW5b): Y1-impl→RW3 adf7053, Y2→RW4 f114522, Y3→RW2 1cf34f9, Y4→RW5 5add58b — verified by diff + code read; product code fail-closed; spine intact (scoring.py byte-frozen, core/event.py untouched in rework). Gates re-run by me: ruff ✅ / mypy ✅ (275 files) / pytest ❌ NOT clean. NEW 🟡 Y5: RW5(d)'s flaky-test 'stabilisation' is INEFFECTIVE — tests/api/test_concurrency.py two_concurrent_subscribers_both_see_replay still flakes (assert 0==3, replays 0/3 events) AND hangs (reproduced >6 min); the bounded loop caps iteration count but ws.receive_json() has no timeout, the two threads share one reader_store.conn, and the worker threads are non-daemon → a stuck thread deadlocks the pytest process → CI hang (the recurring multi-day stale-pytest zombies are this). Pre-existing P2.x WS-replay raciness, NOT a P4.5 regression, but a CI-deadlocking hang R0-A must not pass. Architect-routed α (junior truly fixes the hang, no revert) → RW6. Two below-bar residuals noted (noting-not-blocking): (a) verify_password disabled-branch returns pre-scrypt — weaker oracle than the fixed not-found path; (b) authenticated-/logout success path / revoke_sessions_for_user has no positive test. Verdict stays needs_architect — cannot clean until the hang is fixed and the full suite is stably green (round-3)."
 reviewer: architect-partner
 date: 2026-06-06
 reviewed_artifacts:
@@ -19,7 +28,7 @@ contract:
   - docs/decisions/ADR-039-auth-identity-model.md (Accepted 2026-06-06)
   - docs/process/senior-plans/P4.5.md
 against: claude/P4.5-impl @ 7924b36 (8 atomic commits over origin/main)
-gates: ruff ✅ (exit 0) · mypy ✅ (no issues, 275 files) · pytest tests/api+tests/core ✅ (373 passed, exit 0)
+gates: ruff ✅ (exit 0) · mypy ✅ (no issues, 275 files) · pytest — R1 tests/api+tests/core ✅ (373 passed); R2 NOT clean — tests/api concurrency test flakes+hangs (Y5; see verdict_history R2 + Round 2 §)
 ---
 
 # R0-A on impl — P4.5: the first human-identity trust boundary (ADR-039 D1–D10)
@@ -119,3 +128,48 @@ Three small gaps between the ADR's promised posture and the impl/comments — HR
 | Y4 | verify-timing docstring · idle-expiry · token-hash docstring | α (doc/dummy-scrypt) + β (idle-expiry residual) | HR#5 honesty |
 
 The boundary is sound and fail-closed; the spine is intact; Y1-from-plan is resolved. None of the above is do-not-reverse or HR-breaking.
+
+---
+
+## Round 2 — verdict-bump re-review (RC-10): four 🟡 resolved, NEW Y5 blocks clean
+
+**Dispatch.** Architect routed all four round-1 🟡 as α; junior reworked (RW1–RW5b on `claude/P4.5-impl @ ca8ca1c`). This is the RC-10 verdict-bump re-verification: confirm each routed 🟡 is genuinely resolved, the product-code changes are correct, no constitutional invariant regressed, and re-run the gates. **Route nothing** — the one new finding (Y5) was architect-routed α in-chat; recorded below.
+
+**Verdict: `needs_architect` (cannot bump to clean).** All four round-1 🟡 are resolved and the auth boundary is sound, but re-running the gates surfaced a CI-deadlocking hang in a test RW5 bundled-and-claimed-to-stabilise (**Y5**). The hang must be fixed before clean (→ round-3).
+
+### The four round-1 🟡 — all resolved
+
+| Round-1 🟡 | Rework | Verified resolved |
+|---|---|---|
+| **Y1-impl** — `/logout` public + `_is_public` `startswith("/health")`; unauthenticated writer-`revoke_session` | RW3 `adf7053` | `_is_public` is now `path in PUBLIC_PATHS` (exact); `PUBLIC_PATHS = {/login, /health}`. `/logout` is protected — added to the parametrised-401 `PROTECTED_ROUTES` (`test_constitution.py:203`). `_logout` reads `request.state.principal` (middleware-guaranteed) → new `revoke_sessions_for_user(conn, principal.user_id)`: revocation is driven by the *authenticated* principal, never an attacker-presented cookie; the unauthenticated write path is closed. No real `/health*` sub-route exists in `src/` (only the allowlist entry) → exact-match drops zero coverage. |
+| **Y2** — `_post_intent` `else "user"` fail-open fallback | RW4 `f114522` | Replaced with `assert _principal is not None` → `build_user_author(principal.user_id)`. Fail-closed (AssertionError → 500); *strengthens* L1 (author server-derived). Robust even under `python -O` (assert stripped): the next line dereferences `principal.user_id` → AttributeError → 500. `_post_confirm`'s by-design `else None` (D6 nullable approver) correctly left untouched. |
+| **Y3** — cookie-path + WS-reject-before-accept coverage | RW2 `1cf34f9` | `TestLensACookiePath` drives `/login → Set-Cookie → cookie-authed POST /rooms` through the live middleware (`TestClient(base_url="https://testserver")` so the Secure cookie is sent). `test_ws_unauthenticated_rejected_with_1008` asserts `WebSocketDisconnect(1008)` is raised on context-*enter* — only true if the server closes *before* `accept()` (the A-1 property). |
+| **Y4** — verify-timing / idle-expiry / token-hash docstring honesty | RW5 `5add58b` | (1) `verify_password` runs a dummy `hashlib.scrypt` on the not-found path with identical `n/r/p` → closes the user-existence timing oracle; docstring corrected. (2) `session.py` module docstring corrected: bearer token is SHA-256 (correct for a 256-bit-entropy token), not scrypt. (3) ADR-039 D10 names two honest residuals — bearer-token-no-expiry, session-no-idle-expiry — as architect-ratified not-built. |
+
+Product code is fail-closed and the constitutional spine is intact: `scoring.py` is byte-frozen and `core/event.py` shows no diff in `7924b36..HEAD`; the Y2 change only *tightens* the server-derived-author invariant.
+
+### 🟡 Y5 (round-2, NEW) — RW5(d)'s flaky-test "stabilisation" is ineffective; the concurrency test deadlocks CI → **architect-routed α (junior fix, no revert)**
+
+`tests/api/test_concurrency.py::TestMultipleConnections::test_two_concurrent_subscribers_both_see_replay` exhibits **three** modes when I re-ran the gates:
+- **pass** (isolation run 1);
+- **fail** — `assert 0 == 3`: both concurrent subscribers replay **0** of the 3 pre-appended events (full targeted-scope run);
+- **hang** — isolation run 2 blocked **>6 min** before I killed it.
+
+RW5(d)'s commit claims the bounded drain (`range(len(pre)+10)`) "prevent[s] infinite hang." It does **not**: the bound caps *iteration count*, but `ws.receive_json()` (`test_concurrency.py:137`) has **no timeout**, so a single blocking call still hangs forever; and the worker threads are **non-daemon** (`:146`), so one stuck thread blocks the pytest process from exiting → the full suite deadlocks in CI. (The ~30 multi-day stale `pytest` zombies across sessions — several running this exact test — are this hang recurring.)
+
+**Root cause** (pre-existing, P2.x pubsub / WS-replay — **not** a P4.5 regression): both threads' replays read historical events from the **same shared `reader_store.conn`** (one SQLite connection), so concurrent cursors race → 0 rows / block. Each test is DB-isolated (`tmp_path`), so this is intrinsic raciness, not cross-process contention. P4.5's auth slice never touched the replay / reader-conn path; RW5 only altered the drain bounding.
+
+**Why this blocks clean (despite being test-only + pre-existing):** a CI-deadlocking hang that a rework commit *claims to have fixed but hasn't* is exactly what R0-A must not pass. **Architect routing (given in-chat): α — junior truly fixes the hang (RW6), no revert.** The fix is small: give `receive_json` a real timeout (and/or make the worker threads daemon, and/or fix the shared-reader-conn race). Clean awaits round-3: hang fixed + full suite stably green.
+
+**Cross-lens note.** Senior plan-vs-impl round-2 (`932f25b`) and R0-B round-2 (`51e2e57`) both judged `clean` and read RW5(d) as having "stabilised" the test; the senior's *single* full-suite run passed (2221), consistent with this test's flaky nature. The nondeterministic flake/hang only surfaces on **re-run** — which is how this lens caught it. The divergence is reconciled by the architect's α routing (fix the hang before P4.5 closes).
+
+### Below-bar residuals (noting, not blocking — no routing)
+
+- **`verify_password` disabled-user branch** (`users.py:201-202`) returns before scrypt, so a *disabled* account stays timing-distinguishable — a strictly weaker oracle than the not-found existence-enum Y4 fixed (it requires the account to exist *and* be disabled), and outside Y4's scope. Optional follow-on: run the dummy-scrypt on the disabled branch too.
+- **Authenticated-`/logout` success path** (`_logout` + `revoke_sessions_for_user`) has no positive integration test — only the unauthenticated-401 case is covered. The function is a single parametrised `UPDATE` mirroring `revoke_session`, and the security-relevant property (route is protected) *is* tested; the success path is a minor coverage gap, not a correctness defect.
+
+### Gates (round-2, re-run by me)
+
+- **ruff** ✅ exit 0
+- **mypy** ✅ "no issues found in 275 source files" (`files=src,tests`)
+- **pytest** ❌ **not clean** — `tests/api + tests/core + tests/tools/test_e2e.py`: all green **except** Y5's concurrency test (flake/hang). The full-suite-green (2220 passed) reported by the junior + senior runs reflects the test's *flaky* nature (it usually passes), not stability.
