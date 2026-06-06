@@ -277,6 +277,8 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         **build_network_tool_registry(
             web_search_config_path=_web_search_config if _web_search_config.exists() else None,
             email_config_path=_email_config if _email_config.exists() else None,
+            posture_resolver=_sandbox_posture_resolver,
+            sandbox_root=sandbox_root,
         ),
     }
 
