@@ -196,6 +196,7 @@ def _sandbox_web_fetch(
             port,
             runtime_kind=runtime.kind,
             tool_kind="web_fetch",
+            hostname=hostname,
             call_id="web_fetch",
         )
     except EgressDenied as exc:

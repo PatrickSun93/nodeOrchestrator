@@ -183,6 +183,7 @@ def _sandbox_dispatch(
                 egress_port,
                 runtime_kind=runtime.kind,
                 tool_kind="subprocess",
+                hostname=egress_hostname,
                 call_id=tool_name,
             )
         except (EgressDenied, LocalToolError) as exc:

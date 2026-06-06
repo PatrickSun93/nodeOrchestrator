@@ -1,19 +1,20 @@
-"""The one sandboxed-spawn interface (ADR-037 D3; P4.3-4).
+"""The one sandboxed-spawn interface (ADR-037 D3; P4.3-4 / RW1).
 
 sandboxed_run(argv, *, cwd, env, timeout_s, max_bytes, profile, egress_spec)
   -> SubprocessResult
 
 Builds the container invocation (runtime + profile.build_container_args + egress
-network args), spawns reusing the existing bounded-read + run_sync timeout +
-shielded-kill machinery, re-homes the kill to container kill (retires R3), measures
-setup/teardown latency against the 3s p95 target, and creates/tears down the per-call
-egress network.
+network args + proxy env), spawns reusing the existing bounded-read + run_sync
+timeout + shielded-kill machinery, re-homes the kill to container kill (retires R3),
+measures setup/teardown latency against the 3s p95 target, and creates/tears down
+the per-call egress network + proxy.
 
 Key properties:
 - Timeout wraps the whole `docker run` incl. container startup (setup inside deadline).
-- Teardown is shielded so a timeout-cancel still reaps the container (no leaks).
+- Teardown is shielded so a timeout-cancel still reaps the container+proxy (no leaks).
 - Runtime unavailable OR daemon-dies-at-spawn → SandboxUnavailableError (never raw spawn).
-- Setup/teardown latency logged against 3s p95 target (plan-vs-impl gate).
+- Setup overhead (network create + proxy start) measured separately from workload.
+- For PROXY egress: EgressProxy started before docker run, stopped in shielded finally.
 """
 
 from __future__ import annotations
@@ -25,13 +26,13 @@ import uuid
 from pathlib import Path
 
 from orchestrator.mcp.subprocess_trust import SubprocessResult, SubprocessTimeoutError
-from orchestrator.sandbox.egress import EgressSpec, container_network_args
+from orchestrator.sandbox.egress import EgressMechanism, EgressSpec, container_network_args
 from orchestrator.sandbox.profile import SandboxProfile, build_container_args
 from orchestrator.sandbox.runtime import SandboxRuntime, SandboxUnavailableError
 
 _log = logging.getLogger("orchestrator.sandbox.spawn")
 
-# p95 target for per-call container setup+teardown (ADR-037 D3; plan-vs-impl gate).
+# p95 target for per-call host-side setup+teardown overhead (ADR-037 D3; plan-vs-impl gate).
 SETUP_TEARDOWN_P95_TARGET_S: float = 3.0
 
 # Bounded output cap (matches run_scoped_command default).
@@ -56,8 +57,10 @@ def sandboxed_run(
     - runtime is available at probe time but the `docker run` spawn itself fails
       (daemon-dies-at-spawn path).
 
-    Teardown (container kill + rm) is shielded so it completes even on timeout.
-    Setup/teardown latency is measured and logged against SETUP_TEARDOWN_P95_TARGET_S.
+    For PROXY egress: starts the EgressProxy before docker run; stops it in the
+    shielded finally (symmetric with network create/teardown).
+    Teardown (container kill + proxy stop + net rm) is shielded on timeout/cancel.
+    Setup/teardown overhead logged against SETUP_TEARDOWN_P95_TARGET_S.
     """
     if not runtime.available():
         raise SandboxUnavailableError(
@@ -80,10 +83,15 @@ def sandboxed_run(
 
     container_args = build_container_args(profile_with_name, argv)
 
-    net_args: list[str] = []
-    if egress_spec is not None:
-        net_args = container_network_args(egress_spec)
-        if egress_spec.network_name:
+    t_setup_start = time.monotonic()
+    setup_s: float = 0.0
+    network_created = False
+    proxy = None
+    proxy_port = 0
+
+    try:
+        if egress_spec is not None and egress_spec.network_name:
+            # Update profile network to the per-call network name.
             profile_with_name = SandboxProfile(
                 sandbox_root=profile.sandbox_root,
                 image=profile.image,
@@ -95,25 +103,40 @@ def sandboxed_run(
                 container_name=container_name,
             )
             container_args = build_container_args(profile_with_name, argv)
-
-    # Merge DNS/sysctl args from egress into container_args (before image position).
-    if net_args:
-        img_idx = _find_image_idx(container_args, profile.image)
-        if img_idx is not None:
-            container_args = container_args[:img_idx] + net_args + container_args[img_idx:]
-
-    full_argv = [runtime.cli, *container_args]
-
-    t_setup_start = time.monotonic()
-    network_created = False
-
-    try:
-        if egress_spec is not None and egress_spec.network_name:
             _create_network(runtime, egress_spec.network_name)
             network_created = True
 
-        # setup_s = host-side setup overhead (network create; proxy start added by RW1).
-        # The in-container startup is NOT separable in the subprocess.run blocking shape.
+        # For PROXY egress: start the filtering proxy before docker run.
+        if egress_spec is not None and egress_spec.mechanism == EgressMechanism.PROXY:
+            from orchestrator.sandbox.egress_proxy import EgressProxy
+
+            proxy = EgressProxy(
+                hostname=egress_spec.hostname,
+                pinned_ip=egress_spec.pinned_ip,
+                pinned_port=egress_spec.pinned_port,
+            )
+            proxy_port = proxy.start()
+            _log.debug(
+                "sandbox: call_id=%s proxy started on port %d (→ %s:%d)",
+                call_id,
+                proxy_port,
+                egress_spec.pinned_ip,
+                egress_spec.pinned_port,
+            )
+
+        # Build network args (includes proxy env if proxy_port > 0).
+        net_args: list[str] = []
+        if egress_spec is not None:
+            net_args = container_network_args(egress_spec, proxy_port=proxy_port)
+
+        # Merge net/proxy args into container_args (before image position).
+        if net_args:
+            img_idx = _find_image_idx(container_args, profile.image)
+            if img_idx is not None:
+                container_args = container_args[:img_idx] + net_args + container_args[img_idx:]
+
+        full_argv = [runtime.cli, *container_args]
+
         setup_s = time.monotonic() - t_setup_start
         if setup_s > SETUP_TEARDOWN_P95_TARGET_S:
             _log.warning(
@@ -132,9 +155,10 @@ def sandboxed_run(
     finally:
         t_teardown_start = time.monotonic()
         _safe_kill(runtime, container_name)
+        if proxy is not None:
+            proxy.stop()
         if network_created and egress_spec is not None and egress_spec.network_name:
             _remove_network(runtime, egress_spec.network_name)
-        # teardown_s = host-side teardown overhead (kill + rm + net rm; proxy stop added by RW1).
         teardown_s = time.monotonic() - t_teardown_start
         overhead_s = setup_s + teardown_s
         _log.debug(

@@ -1,24 +1,23 @@
-"""Egress-constraint mechanism: parent-pinned-IP per-call container egress (ADR-037 D2/D3; P4.3-3).
-
-The load-bearing network-isolation boundary (R0-B R1 resolved).
+"""Egress-constraint mechanism: host-side filtering CONNECT proxy (ADR-037 A1-1; RW1).
 
 Per call, constrains container egress to exactly the parent-validated pinned IP:port:
 1. Parent resolves+validates via _resolve_and_validate (net_trust.py:79-122).
-2. Container gets --dns 0.0.0.0 (internal DNS disabled — DNS would bypass the pin).
-3. Egress permitted ONLY to the pinned IP:port via per-call ephemeral network +
-   daemon-side nftables/iptables egress rule on the bridge forward chain.
-4. Single-family pin: the resolved family is allowed; the other is blocked.
+2. A per-call EgressProxy is started on the host, allowlisted to (hostname→pinned_ip, port).
+3. Container runs with no direct egress; DNS disabled (--dns 0.0.0.0).
+4. Container pointed at the proxy via HTTP_PROXY/HTTPS_PROXY env +
+   --add-host host.docker.internal:host-gateway (portable across Docker Desktop + native).
+5. Proxy dials the pinned IP (SSRF pinning preserved end-to-end); refuses all else → 407.
 
-Cross-platform honesty (ADR-037 D2 ratified §5.1(d)):
-- Native Linux: host-side per-call firewall is fully viable.
-- Docker Desktop (mac/win): host cannot reach VM firewall.
-  - web_fetch (http/https): routes through host-side filtering proxy pinned to the IP.
-  - git_push over ssh on Docker Desktop: non-viable → EgressDenied (fail-closed, loud).
+Cross-platform (ADR-037 A1-1): host-side proxy is root-free and works in both the
+Docker Desktop VM and native Linux — unlike the withdrawn nftables-on-bridge approach.
+
+ssh git_push: ProxyCommand nc -X connect -x host.docker.internal:<port> %h %p in
+GIT_SSH_COMMAND routes ssh CONNECT through the same proxy → ssh reaches only the
+SSRF-pinned IP:port (proxy allowlist enforces it).
 """
 
 from __future__ import annotations
 
-import ipaddress
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -36,10 +35,9 @@ class EgressDenied(Exception):  # noqa: N818
 
 
 class EgressMechanism(Enum):
-    """Which egress-constraint mechanism applies for this runtime x tool combination."""
+    """Which egress-constraint mechanism applies for this call."""
 
     DENY_DEFAULT = "deny_default"
-    HOST_FIREWALL = "host_firewall"
     PROXY = "proxy"
     DENIED = "denied"
 
@@ -53,25 +51,23 @@ class EgressSpec:
     """Per-call egress specification produced by build_egress_spec().
 
     Fields:
-    - mechanism: how egress is constrained.
-    - pinned_ip: the single validated IP the container may reach.
-    - pinned_port: the port the container may reach.
-    - network_name: ephemeral Docker network name (HOST_FIREWALL / PROXY mechanisms).
+    - mechanism: DENY_DEFAULT (--network none) or PROXY (host-side filtering proxy).
+    - hostname: the original hostname for the proxy allowlist (empty for DENY_DEFAULT).
+    - pinned_ip: the single validated IP the proxy dials.
+    - pinned_port: the port the proxy dials.
+    - network_name: ephemeral Docker network name (PROXY mechanism).
     - dns_disabled: True = --dns 0.0.0.0 must appear in container args.
     - ipv4_only / ipv6_only: single-family pin (other family blocked).
-    - firewall_rule: nftables/iptables rule to install (HOST_FIREWALL, informational).
-    - proxy_addr: host proxy address for PROXY mechanism (web_fetch on Docker Desktop).
     """
 
     mechanism: EgressMechanism
     pinned_ip: str
     pinned_port: int
+    hostname: str = ""
     network_name: str | None = None
     dns_disabled: bool = True
     ipv4_only: bool = False
     ipv6_only: bool = False
-    firewall_rule: str | None = None
-    proxy_addr: str | None = None
 
 
 def build_egress_spec(
@@ -80,6 +76,7 @@ def build_egress_spec(
     *,
     runtime_kind: RuntimeKind,
     tool_kind: ToolKind,
+    hostname: str = "",
     on_docker_desktop: bool = False,
     call_id: str = "",
 ) -> EgressSpec:
@@ -90,12 +87,15 @@ def build_egress_spec(
     - pinned_port: the target port (80/443/22/etc).
     - runtime_kind: "docker" or "podman".
     - tool_kind: "subprocess" (git_push) or "web_fetch".
-    - on_docker_desktop: True when the runtime is Docker Desktop (mac/win VM).
-    - call_id: for log correlation.
+    - hostname: the original hostname (for proxy allowlist and Host header).
+    - on_docker_desktop: unused (kept for call-site compat); proxy works cross-platform.
+    - call_id: for network name and log correlation.
 
-    Returns an EgressSpec; raises EgressDenied if no viable constrained path exists.
+    Returns an EgressSpec with PROXY mechanism; raises EgressDenied on invalid inputs.
     The caller MUST NOT fall back to an unconstrained network — EgressDenied is fail-closed.
     """
+    import ipaddress
+
     try:
         ip_obj = ipaddress.ip_address(pinned_ip)
     except ValueError as exc:
@@ -107,48 +107,15 @@ def build_egress_spec(
 
     network_name = f"sandbox-egress-{call_id}" if call_id else "sandbox-egress"
 
-    if not on_docker_desktop:
-        # Native Linux: host-side per-call firewall fully viable.
-        firewall_rule = _build_firewall_rule(pinned_ip, pinned_port, network_name, is_v4)
-        return EgressSpec(
-            mechanism=EgressMechanism.HOST_FIREWALL,
-            pinned_ip=pinned_ip,
-            pinned_port=pinned_port,
-            network_name=network_name,
-            dns_disabled=True,
-            ipv4_only=ipv4_only,
-            ipv6_only=ipv6_only,
-            firewall_rule=firewall_rule,
-        )
-
-    # Docker Desktop (mac/win): host cannot reach VM firewall.
-    if tool_kind == "web_fetch":
-        # web_fetch over http/https: route through host-side filtering proxy.
-        proxy_port = _proxy_port_for(pinned_port)
-        proxy_addr = f"http://host.docker.internal:{proxy_port}"
-        _log.info(
-            "egress: Docker Desktop web_fetch → host-proxy %s (pinned to %s:%s)",
-            proxy_addr,
-            pinned_ip,
-            pinned_port,
-        )
-        return EgressSpec(
-            mechanism=EgressMechanism.PROXY,
-            pinned_ip=pinned_ip,
-            pinned_port=pinned_port,
-            network_name=network_name,
-            dns_disabled=True,
-            ipv4_only=ipv4_only,
-            ipv6_only=ipv6_only,
-            proxy_addr=proxy_addr,
-        )
-
-    # git_push over ssh on Docker Desktop: non-viable → fail-closed.
-    raise EgressDenied(
-        f"egress: (runtime=docker-desktop, tool={tool_kind!r}) has no viable "
-        "constrained-egress path — failing closed (ADR-037 D2 cross-platform honesty; "
-        "ssh-over-ssh on Docker Desktop VM cannot be pinned via host firewall). "
-        "Use a native Linux runtime or disable the sandbox (degraded-opt-in)."
+    return EgressSpec(
+        mechanism=EgressMechanism.PROXY,
+        pinned_ip=pinned_ip,
+        pinned_port=pinned_port,
+        hostname=hostname or pinned_ip,
+        network_name=network_name,
+        dns_disabled=True,
+        ipv4_only=ipv4_only,
+        ipv6_only=ipv6_only,
     )
 
 
@@ -158,14 +125,16 @@ def build_deny_default_spec() -> EgressSpec:
         mechanism=EgressMechanism.DENY_DEFAULT,
         pinned_ip="",
         pinned_port=0,
+        hostname="",
         network_name=None,
         dns_disabled=False,
     )
 
 
-def container_network_args(spec: EgressSpec) -> list[str]:
-    """Convert an EgressSpec to the --network / --dns container CLI args.
+def container_network_args(spec: EgressSpec, proxy_port: int = 0) -> list[str]:
+    """Convert an EgressSpec to the --network / --dns / --add-host / --env container args.
 
+    For PROXY mechanism, proxy_port must be the bound port of the EgressProxy.
     Returns the list to extend the container's arg list with.
     docker.sock is never included (constitutional invariant lives in profile.py).
     """
@@ -175,46 +144,35 @@ def container_network_args(spec: EgressSpec) -> list[str]:
         args += ["--network", "none"]
         return args
 
-    # For HOST_FIREWALL, PROXY, or DENIED — network is the per-call ephemeral net.
+    # PROXY mechanism: per-call ephemeral network.
     if spec.network_name:
         args += ["--network", spec.network_name]
 
-    # Disable container-internal DNS (DNS would bypass the pinned-IP constraint).
+    # Disable container-internal DNS (DNS is resolved by the proxy, not the container).
     if spec.dns_disabled:
         args += ["--dns", "0.0.0.0"]
 
-    # Block the non-pinned address family via sysctl (best-effort; the firewall rule
-    # is the primary enforcement).
+    # host.docker.internal → host-gateway: portable across Docker Desktop + native 20.10+.
+    args += ["--add-host", "host.docker.internal:host-gateway"]
+
+    # Block the non-pinned address family via sysctl (defense-in-depth).
     if spec.ipv4_only:
         args += ["--sysctl", "net.ipv6.conf.all.disable_ipv6=1"]
 
-    return args
-
-
-def _build_firewall_rule(
-    pinned_ip: str, pinned_port: int, network_name: str, is_v4: bool
-) -> str:
-    """Build the informational nftables/iptables rule for host-side enforcement.
-
-    This is the rule the sandbox-run caller should install before launching the container
-    and remove after. The rule is informational (a string descriptor); actual installation
-    is the caller's responsibility (P4.3-4 spawn.py).
-    """
-    if is_v4:
-        return (
-            f"iptables -I FORWARD -o br-{network_name[:12]} "
-            f"-d {pinned_ip} -p tcp --dport {pinned_port} -j ACCEPT; "
-            f"iptables -I FORWARD -o br-{network_name[:12]} ! -d {pinned_ip} -j DROP"
+    # Proxy env: container routes outbound http(s) through the host-side filtering proxy.
+    # GIT_SSH_COMMAND: ssh ProxyCommand routes ssh through the same proxy (ADR-037 A1-1;
+    # the sandbox image must ship nc or socat for the ProxyCommand — D5 tail).
+    if proxy_port:
+        proxy_url = f"http://host.docker.internal:{proxy_port}"
+        args += ["--env", f"HTTP_PROXY={proxy_url}"]
+        args += ["--env", f"HTTPS_PROXY={proxy_url}"]
+        args += ["--env", "NO_PROXY="]
+        # ssh git_push: route through the same CONNECT proxy via ProxyCommand.
+        # nc -X connect = CONNECT proxy mode; -x = proxy address.
+        ssh_cmd = (
+            f"ssh -o StrictHostKeyChecking=no "
+            f"-o ProxyCommand='nc -X connect -x host.docker.internal:{proxy_port} %h %p'"
         )
-    return (
-        f"ip6tables -I FORWARD -o br-{network_name[:12]} "
-        f"-d {pinned_ip} -p tcp --dport {pinned_port} -j ACCEPT; "
-        f"ip6tables -I FORWARD -o br-{network_name[:12]} ! -d {pinned_ip} -j DROP"
-    )
+        args += ["--env", f"GIT_SSH_COMMAND={ssh_cmd}"]
 
-
-def _proxy_port_for(target_port: int) -> int:
-    """Map target port to the local filtering proxy port (Docker Desktop path)."""
-    if target_port == 443:
-        return 8443
-    return 8080
+    return args
