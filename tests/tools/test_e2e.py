@@ -26,6 +26,8 @@ from mcp.types import CallToolResult, TextContent, Tool
 
 from orchestrator.agents.dispatch import LLMRouterProtocol
 from orchestrator.api.app import AppContext, _make_test_app
+from orchestrator.api.auth.session import create_token
+from orchestrator.api.auth.users import create_user, init_auth_schema
 from orchestrator.api.pubsub import RoomEventBus
 from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.core.event import (
@@ -61,6 +63,14 @@ from orchestrator.tools.mutation_tools import build_mutation_tool_registry
 # ---------------------------------------------------------------------------
 
 _MOCK_MODEL = ModelId("mock-model")
+_TEST_USER = "e2etest"
+_TEST_PW = "e2e-test-pw"
+
+
+def _make_authed_client(app: Any, ctx: AppContext) -> TestClient:
+    """Build a TestClient with bearer-token auth for _TEST_USER."""
+    raw_token = create_token(ctx.writer_store.conn, _TEST_USER)
+    return TestClient(app, headers={"Authorization": f"Bearer {raw_token}"})
 _MOCK_PROVIDER = ProviderId("mock-provider")
 
 
@@ -133,6 +143,8 @@ def _make_ctx(
     writer_store.init_schema()
     writer_conn.execute("PRAGMA journal_mode=WAL")
     writer_conn.commit()
+    init_auth_schema(writer_conn)
+    create_user(writer_conn, _TEST_USER, _TEST_PW)
 
     reader_conn = sqlite3.connect(str(db_path), check_same_thread=False)
     reader_store = EventStore(reader_conn)
@@ -177,7 +189,7 @@ def test_e2e_local_auto_tool_appends_tool_result(tmp_path: Path) -> None:
     ctx = _make_ctx(db_path=db, tools=tools, llm_router=router, sandbox_root=tmp_path)
     app = _make_test_app(ctx)
 
-    with TestClient(app) as client:
+    with _make_authed_client(app, ctx) as client:
         room_id = client.post("/rooms", json={"type": "free_chat"}).json()["id"]
         resp = client.post(
             f"/rooms/{room_id}/intent",
@@ -230,7 +242,7 @@ def test_e2e_mcp_auto_tool_appends_tool_result_and_observation(tmp_path: Path) -
     )
     app = _make_test_app(ctx)
 
-    with TestClient(app) as client:
+    with _make_authed_client(app, ctx) as client:
         room_id = client.post("/rooms", json={"type": "free_chat"}).json()["id"]
         resp = client.post(
             f"/rooms/{room_id}/intent",
@@ -262,7 +274,7 @@ def test_e2e_hard_mcp_tool_not_executed(tmp_path: Path) -> None:
     ctx = _make_ctx(db_path=db, tools=tools, llm_router=router, sandbox_root=tmp_path)
     app = _make_test_app(ctx)
 
-    with TestClient(app) as client:
+    with _make_authed_client(app, ctx) as client:
         room_id = client.post("/rooms", json={"type": "free_chat"}).json()["id"]
         resp = client.post(
             f"/rooms/{room_id}/intent",
@@ -336,6 +348,8 @@ def test_e2e_apply_edit_confirm_actuates(tmp_path: Path) -> None:
     writer_store.init_schema()
     writer_conn.execute("PRAGMA journal_mode=WAL")
     writer_conn.commit()
+    init_auth_schema(writer_conn)
+    create_user(writer_conn, _TEST_USER, _TEST_PW)
     reader_conn = sqlite3.connect(str(db), check_same_thread=False)
     reader_store = EventStore(reader_conn)
 
@@ -385,7 +399,7 @@ def test_e2e_apply_edit_confirm_actuates(tmp_path: Path) -> None:
     )
     writer_store.append(pending)
 
-    with TestClient(app) as client:
+    with _make_authed_client(app, ctx) as client:
         r = client.post(
             f"/rooms/{rid}/confirm",
             json={"pending_event_id": pending.id, "decision": "approve"},
