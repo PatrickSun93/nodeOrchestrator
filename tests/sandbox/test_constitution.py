@@ -146,29 +146,15 @@ def test_s2_config_parse_failure_is_fail_closed(tmp_path: Path) -> None:
 
 
 def test_rw8_config_absence_real_path_fail_closed(tmp_path: Path) -> None:
-    """RW8-2: no sandbox.yaml → fail_closed via the composition-root code path."""
+    """RW8-2: no sandbox.yaml → fail_closed via the real _resolve_sandbox_posture path."""
     from unittest import mock
 
-    from orchestrator.sandbox.posture import (
-        PostureResolver,
-        SandboxConfigError,
-        load_sandbox_config,
-    )
+    from orchestrator.api.app import _resolve_sandbox_posture
     from orchestrator.tools.local import LocalToolError
     from orchestrator.tools.subprocess_tools import build_subprocess_tool_registry
 
-    config_path = tmp_path / "sandbox.yaml"
-    # config_path does NOT exist — same as _build_context when no sandbox.yaml
-
-    if config_path.exists():
-        try:
-            cfg = load_sandbox_config(config_path)
-            resolver = PostureResolver.from_config(cfg)
-        except SandboxConfigError:
-            resolver = PostureResolver.fail_closed()
-    else:
-        resolver = PostureResolver.fail_closed()
-
+    # tmp_path has no sandbox.yaml — drives the real composition-root branch, not a copy of it
+    resolver = _resolve_sandbox_posture(tmp_path)
     registry = build_subprocess_tool_registry(tmp_path, posture_resolver=resolver)
 
     with (
@@ -181,29 +167,18 @@ def test_rw8_config_absence_real_path_fail_closed(tmp_path: Path) -> None:
 
 
 def test_rw8_config_parse_failure_real_path_fail_closed(tmp_path: Path) -> None:
-    """RW8-2: config parse-failure → fail_closed via the composition-root code path."""
+    """RW8-2: config parse-failure → fail_closed via the real _resolve_sandbox_posture path."""
     from unittest import mock
 
-    from orchestrator.sandbox.posture import (
-        PostureResolver,
-        SandboxConfigError,
-        load_sandbox_config,
-    )
+    from orchestrator.api.app import _resolve_sandbox_posture
     from orchestrator.tools.local import LocalToolError
     from orchestrator.tools.subprocess_tools import build_subprocess_tool_registry
 
     config_path = tmp_path / "sandbox.yaml"
     config_path.write_text("runtime: nsjail\nimage: test\n")  # invalid runtime
 
-    if config_path.exists():
-        try:
-            cfg = load_sandbox_config(config_path)
-            resolver = PostureResolver.from_config(cfg)
-        except SandboxConfigError:
-            resolver = PostureResolver.fail_closed()
-    else:
-        resolver = PostureResolver.fail_closed()
-
+    # Drives the real parse-fail branch; a revert of app.py's except→fail_closed() would break this
+    resolver = _resolve_sandbox_posture(tmp_path)
     registry = build_subprocess_tool_registry(tmp_path, posture_resolver=resolver)
 
     with (
@@ -219,26 +194,12 @@ def test_rw8_web_fetch_config_absence_fail_closed(tmp_path: Path) -> None:
     """RW8-2: web_fetch also fails closed on config-absence (not just subprocess)."""
     from unittest import mock
 
-    from orchestrator.sandbox.posture import (
-        PostureResolver,
-        SandboxConfigError,
-        load_sandbox_config,
-    )
+    from orchestrator.api.app import _resolve_sandbox_posture
     from orchestrator.tools.local import LocalToolError
     from orchestrator.tools.network_tools import build_network_tool_registry
 
-    config_path = tmp_path / "sandbox.yaml"
-    # does NOT exist
-
-    if config_path.exists():
-        try:
-            cfg = load_sandbox_config(config_path)
-            resolver = PostureResolver.from_config(cfg)
-        except SandboxConfigError:
-            resolver = PostureResolver.fail_closed()
-    else:
-        resolver = PostureResolver.fail_closed()
-
+    # tmp_path has no sandbox.yaml — drives the real absence branch for the web_fetch path
+    resolver = _resolve_sandbox_posture(tmp_path)
     registry = build_network_tool_registry(posture_resolver=resolver, sandbox_root=tmp_path)
 
     with (

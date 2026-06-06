@@ -16,7 +16,6 @@ from orchestrator.sandbox.egress import (
     container_network_args,
 )
 
-
 # ---------------------------------------------------------------------------
 # build_egress_spec: always PROXY mechanism (RW1 — nftables withdrawn)
 # ---------------------------------------------------------------------------
