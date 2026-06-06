@@ -514,7 +514,7 @@ def test_g10_gate_not_referenced_in_plugin_loader() -> None:
     """
     loader_path = _PLUGINS_PKG / "loader.py"
     source = loader_path.read_text(encoding="utf-8")
-    # _apply_reversibility_cap is called in loader.py (correct) �� assert it IS there
+    # _apply_reversibility_cap is called in loader.py (correct) — assert it IS there
     assert "_apply_reversibility_cap" in source, (
         "g10: _apply_reversibility_cap missing from loader.py — unexpected removal"
     )
@@ -524,3 +524,47 @@ def test_g10_gate_not_referenced_in_plugin_loader() -> None:
             f"g10: gate decision symbol {sym!r} found in loader.py — "
             "reversibility cap must be deterministic, not gated"
         )
+
+
+# ---------------------------------------------------------------------------
+# F2: cross-plugin same-name tool_impl coexistence (ADR-038 D4 always-prefix)
+# ---------------------------------------------------------------------------
+
+
+def test_f2_cross_plugin_same_name_tool_impl_coexist(tmp_path: Path) -> None:
+    """Two plugins declaring the same bare tool_impl name coexist as pluginA__echo + pluginB__echo.
+
+    ADR-038 D4: always-prefix (`<plugin_id>__<name>`) means two plugins both declaring
+    `echo` get distinct keys `pluginA__echo` and `pluginB__echo` — no collision, no refusal.
+    This is the direct test of the cross-plugin namespacing coexistence property.
+    """
+    plugins_dir = tmp_path / "plugins"
+
+    for plugin_id in ("pluginA", "pluginB"):
+        pdir = plugins_dir / plugin_id
+        pdir.mkdir(parents=True)
+        from textwrap import dedent
+
+        (pdir / "plugin.yaml").write_text(
+            dedent(f"""\
+                schema_version: 1
+                id: {plugin_id}
+                name: '{plugin_id}'
+                version: '0.1.0'
+                contributions:
+                  tool_impls:
+                    echo: 'tools_impl:echo_fn'
+            """),
+            encoding="utf-8",
+        )
+        (pdir / "tools_impl.py").write_text(
+            "from orchestrator.tools.executor import LocalToolOutput\n"
+            f"def echo_fn(params): return LocalToolOutput(content='{plugin_id}')\n",
+            encoding="utf-8",
+        )
+
+    result = _load(plugins_dir)
+    assert "pluginA__echo" in result.local_tools, "pluginA__echo must be present"
+    assert "pluginB__echo" in result.local_tools, "pluginB__echo must be present"
+    # Bare name 'echo' must not appear (always-prefix is unconditional)
+    assert "echo" not in result.local_tools, "bare 'echo' must not appear — always-prefix"
