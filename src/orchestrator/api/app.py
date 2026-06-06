@@ -4,6 +4,8 @@ P3.2-1: AppContext type + endpoint declarations (stub handlers for OpenAPI).
 P3.2-2: create_app factory + read handler implementations.
 P3.2-3: WS live stream + RoomEventBus integration + executor wiring.
 P3.2-4: POST /intent write path + forge-prevention + llm_adapter.
+P4.5-3: fail-closed auth boundary (_configure shared step, login/logout,
+         WS pre-accept check, app.state.ctx for middleware ctx access).
 """
 
 from __future__ import annotations
@@ -124,6 +126,14 @@ class _CreateRoomBody(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: RoomType
+
+
+class _LoginRequest(BaseModel):
+    """Request body for POST /login (ADR-039 D3). extra=forbid is the forge guard."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    user_id: str
+    password: str
 
 
 class _AppendFailedError(Exception):
@@ -251,6 +261,11 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     writer_store.init_schema()
     writer_conn.execute("PRAGMA journal_mode=WAL")
     writer_conn.commit()
+
+    # Initialize auth tables alongside event tables (ADR-039 D2, co-located)
+    from orchestrator.api.auth.users import init_auth_schema as _init_auth_schema
+
+    _init_auth_schema(writer_conn)
 
     # Reader: check_same_thread=False for concurrent reads on the read executor
     reader_conn = sqlite3.connect(str(db_path), check_same_thread=False)
@@ -382,7 +397,62 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
     P3.2-2: read handlers (create/GET rooms, events, snapshot, thread).
     P3.2-3: WS live stream.
     P3.2-4: POST /intent write path.
+    P4.5-3: /login + /logout endpoints.
     """
+
+    # -----------------------------------------------------------------------
+    # POST /login — credential verify → session create → HttpOnly cookie
+    # POST /logout — revoke session + clear cookie
+    # (ADR-039 D3/D4 — public endpoints, exempt from auth middleware)
+    # -----------------------------------------------------------------------
+
+    @app.post("/login")
+    async def _login(body: _LoginRequest, request: Request) -> JSONResponse:
+        from orchestrator.api.auth.session import create_session
+        from orchestrator.api.auth.users import verify_password
+
+        loop = asyncio.get_running_loop()
+
+        # Verify on reader connection (read-only, non-blocking)
+        ok = await loop.run_in_executor(
+            ctx.reader_executor,
+            lambda: verify_password(ctx.reader_store.conn, body.user_id, body.password),
+        )
+        if not ok:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        # Create session on writer connection (ADR-025 D6 / ADR-039 D3)
+        session_id = await loop.run_in_executor(
+            ctx.writer_executor,
+            lambda: create_session(ctx.writer_store.conn, body.user_id),
+        )
+
+        resp = JSONResponse({"user_id": body.user_id})
+        # HttpOnly + Secure + SameSite=Strict (ADR-039 D3, same-origin deployment A-2)
+        resp.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            secure=True,
+            samesite="strict",
+            max_age=86400,
+        )
+        return resp
+
+    @app.post("/logout")
+    async def _logout(request: Request) -> JSONResponse:
+        from orchestrator.api.auth.session import revoke_session
+
+        session_id = request.cookies.get("session_id")
+        if session_id:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                ctx.writer_executor,
+                lambda: revoke_session(ctx.writer_store.conn, session_id),
+            )
+        resp = JSONResponse({"status": "ok"})
+        resp.delete_cookie("session_id")
+        return resp
 
     @app.post("/rooms", response_model=Room, status_code=201)
     async def _create_room(body: _CreateRoomBody) -> Room:
@@ -787,10 +857,57 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                (3) send replay_complete sentinel;
                (4) drain queue, skipping ids already sent in replay (dedup).
         This order guarantees no event is lost between replay and live stream.
+
+        ADR-039 D4: WS auth check is in-handler, BEFORE websocket.accept().
+        BaseHTTPMiddleware does not see WS scopes, so this is necessary and
+        not redundant with the HTTP auth middleware (absorbed A-1/M3).
+        An unauthenticated upgrade is rejected without calling accept()
+        (accept-then-close leaves a half-open-stream window).
         """
         from starlette.websockets import WebSocketDisconnect
 
+        from orchestrator.api.auth.session import validate_session, validate_token
         from orchestrator.api.wire import StreamEventMessage, StreamReplayCompleteMessage
+
+        # --- WS auth: resolve principal before accept() (ADR-039 D4) ---
+        loop = asyncio.get_running_loop()
+        reader_conn = ctx.reader_store.conn
+        principal = None
+
+        # Try session cookie (browsers send cookies on WS upgrade)
+        ws_session_id = websocket.cookies.get("session_id")
+        if ws_session_id:
+            principal = await loop.run_in_executor(
+                ctx.reader_executor,
+                lambda: validate_session(reader_conn, ws_session_id),
+            )
+
+        # Try Bearer token in query param (programmatic clients)
+        if principal is None:
+            ws_token = websocket.query_params.get("token")
+            if ws_token:
+                principal = await loop.run_in_executor(
+                    ctx.reader_executor,
+                    lambda: validate_token(reader_conn, ws_token),
+                )
+
+        # Try Authorization: Bearer header (programmatic clients via header)
+        if principal is None:
+            auth_hdr = websocket.headers.get("Authorization", "")
+            if auth_hdr.startswith("Bearer "):
+                raw_token = auth_hdr[7:]
+                principal = await loop.run_in_executor(
+                    ctx.reader_executor,
+                    lambda: validate_token(reader_conn, raw_token),
+                )
+
+        if principal is None:
+            # Reject BEFORE accept() — no half-open-stream window
+            await websocket.close(code=1008)  # 1008 = Policy Violation
+            return
+
+        # Store principal on websocket state for handlers (mirroring HTTP middleware)
+        websocket.state.principal = principal
 
         await websocket.accept()
         rid = RoomId(room_id)
@@ -836,6 +953,22 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             ctx.bus.unsubscribe(rid, q)
 
 
+def _configure(app: FastAPI) -> None:
+    """Construction-time configure step — registers auth middleware.
+
+    Called by BOTH create_app AND _make_test_app so the fail-closed boundary
+    is wired through the same production middleware the test suite exercises
+    (the 37/37 _make_test_app tests walk through this path — ADR-039 D4 Y1).
+
+    Middleware must be registered at construction, before app.state.ctx is set.
+    The middleware reads request.app.state.ctx at request time (set in lifespan
+    for create_app, or directly on app.state in _make_test_app).
+    """
+    from orchestrator.api.auth.middleware import AuthMiddleware
+
+    app.add_middleware(AuthMiddleware)
+
+
 def create_app(config_dir: Path, db_path: Path) -> FastAPI:
     """Production factory — builds context, registers routes, manages lifecycle.
 
@@ -847,20 +980,28 @@ def create_app(config_dir: Path, db_path: Path) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ctx = _build_context(config_dir, db_path)
+        # Stow ctx on app.state so the auth middleware can read it at
+        # request time without a closure (ADR-039 D4 Y1 absorption).
+        app.state.ctx = ctx
         _register_routes(app, ctx)
         yield
         ctx.shutdown()
 
-    return FastAPI(
+    app = FastAPI(
         title="Orchestrator API",
         version="0.1.0",
         description="HTTP/WS API over the event store and room runtime (ADR-025)",
         lifespan=lifespan,
     )
+    _configure(app)
+    return app
 
 
 def _make_test_app(ctx: AppContext) -> FastAPI:
     """Test helper: creates an app with pre-built context (no lifespan bootstrap)."""
     app = FastAPI(title="Orchestrator API [test]", version="0.1.0")
+    _configure(app)
+    # Stow ctx on app.state immediately (no lifespan in tests — ADR-039 D4 Y1).
+    app.state.ctx = ctx
     _register_routes(app, ctx)
     return app

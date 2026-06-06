@@ -15,6 +15,8 @@ from fastapi.testclient import TestClient
 from orchestrator.agents.dispatch import LLMRouterProtocol
 from orchestrator.agents.schema import TurnResult
 from orchestrator.api.app import AppContext, _make_test_app
+from orchestrator.api.auth.session import create_token
+from orchestrator.api.auth.users import create_user, init_auth_schema
 from orchestrator.api.pubsub import RoomEventBus
 from orchestrator.core.event import generate_event_id
 from orchestrator.core.event_store import EventStore
@@ -25,6 +27,13 @@ from orchestrator.llm.types import (
     RequestId,
     Usage,
 )
+
+# ---------------------------------------------------------------------------
+# Test auth credentials
+# ---------------------------------------------------------------------------
+
+TEST_USER_ID = "testuser"
+TEST_PASSWORD = "test-password-123"
 
 # ---------------------------------------------------------------------------
 # Mock LLM router
@@ -61,12 +70,22 @@ def db_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def ctx(db_path: Path) -> Generator[AppContext, None, None]:
-    """AppContext with two real SQLite connections on a temp file DB."""
+    """AppContext with two real SQLite connections on a temp file DB.
+
+    Auth schema (users/sessions/user_tokens) is initialized so the auth
+    middleware can run. A TEST_USER_ID test account is pre-created.
+    """
     writer_conn = sqlite3.connect(str(db_path), check_same_thread=False)
     writer_store = EventStore(writer_conn)
     writer_store.init_schema()
     writer_conn.execute("PRAGMA journal_mode=WAL")
     writer_conn.commit()
+
+    # Initialize auth tables on writer (co-located in same DB, ADR-039 D2)
+    init_auth_schema(writer_conn)
+
+    # Create a test user for authenticated fixtures
+    create_user(writer_conn, TEST_USER_ID, TEST_PASSWORD)
 
     reader_conn = sqlite3.connect(str(db_path), check_same_thread=False)
     reader_store = EventStore(reader_conn)
@@ -97,9 +116,40 @@ def app(ctx: AppContext) -> FastAPI:
 
 
 @pytest.fixture
-def client(app: FastAPI) -> Generator[TestClient, None, None]:
-    with TestClient(app) as client:
-        yield client
+def client(app: FastAPI, ctx: AppContext) -> Generator[TestClient, None, None]:
+    """Authenticated TestClient — uses a bearer token for TEST_USER_ID.
+
+    Bearer token auth avoids the Secure-cookie/HTTP issue in TestClient.
+    All protected routes are accessible. Tests that want to exercise the
+    401 path should use `unauth_client` instead.
+    """
+    raw_token = create_token(ctx.writer_store.conn, TEST_USER_ID)
+    headers = {"Authorization": f"Bearer {raw_token}"}
+    with TestClient(app, raise_server_exceptions=True, headers=headers) as tc:
+        yield tc
+
+
+@pytest.fixture
+def unauth_client(app: FastAPI) -> Generator[TestClient, None, None]:
+    """Unauthenticated TestClient — for testing 401 behaviour."""
+    with TestClient(app, raise_server_exceptions=True) as tc:
+        yield tc
+
+
+# ---------------------------------------------------------------------------
+# Auth helpers — for tests that create TestClient inline
+# ---------------------------------------------------------------------------
+
+
+def make_auth_headers(ctx: AppContext) -> dict[str, str]:
+    """Return Authorization headers for TEST_USER_ID (bearer token).
+
+    Use in inline TestClient creations:
+        with TestClient(app, headers=make_auth_headers(ctx)) as client:
+    Requires the ctx fixture (which creates the TEST_USER_ID account).
+    """
+    raw_token = create_token(ctx.writer_store.conn, TEST_USER_ID)
+    return {"Authorization": f"Bearer {raw_token}"}
 
 
 # ---------------------------------------------------------------------------

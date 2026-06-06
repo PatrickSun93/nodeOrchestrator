@@ -29,6 +29,7 @@ from orchestrator.core.event import (
     now_ms,
 )
 from orchestrator.core.room import Room, RoomType
+from tests.api.conftest import make_auth_headers
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -122,9 +123,13 @@ class TestMultipleConnections:
         results: list[list[dict[str, Any]]] = [[], []]
         errors: list[Exception] = []
 
+        auth_hdrs = make_auth_headers(ctx)
+
         def _collect(idx: int) -> None:
             try:
-                with TestClient(app).websocket_connect(f"/rooms/{room_id_str}/stream") as ws:
+                with TestClient(app, headers=auth_hdrs).websocket_connect(
+                    f"/rooms/{room_id_str}/stream"
+                ) as ws:
                     results[idx] = _drain_until_replay_complete(ws)
             except Exception as exc:
                 errors.append(exc)
