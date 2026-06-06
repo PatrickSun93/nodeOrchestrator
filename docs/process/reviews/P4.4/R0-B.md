@@ -7,8 +7,32 @@ reviews_acked:
   - architect-briefs/P4.4.md
   - senior-plans/P4.4.md
   - decisions/ADR-038-plugin-registry-lifecycle.md
-verdict: needs_architect
-findings_count: { red: 0, yellow: 2, green: 3 }
+verdict: clean
+findings_count: { red: 0, yellow: 0, green: 3 }
+verdict_history:
+  - round: 1
+    date: 2026-06-05
+    verdict: needs_architect
+    findings_count: { red: 0, yellow: 2, green: 3 }
+    notes: >
+      Y1 (🟡): ADR-038 D2 "refuse-all" overclaim vs impl — empty dict {} meant
+      refuse-all-fetched-only; op-placed loads by presence, re-enabling plugins
+      the operator disabled in the (broken) config. Y2 (🟡): catch clause
+      ConfigError-only, missing yaml.YAMLError for syntax-invalid YAML.
+  - round: 2
+    date: 2026-06-06
+    verdict: clean
+    findings_count: { red: 0, yellow: 0, green: 3 }
+    rework_commits:
+      - "0ed7877 P4.4-RW1: β-fix true sentinel for malformed registry fail-open"
+      - "07d7606 P4.4-RW2: catch yaml.YAMLError in _resolve_plugin_registry"
+    notes: >
+      Y1 resolved: REGISTRY_REFUSE_ALL sentinel distinct from None (absent)
+      and {} (empty); load_plugins receives sentinel → early-returns empty
+      PluginLoadResult before candidate loop — no op-placed presence
+      resurrection, no fetched activation. Y2 resolved: yaml.YAMLError
+      caught alongside ConfigError; unparseable-YAML test added and passes.
+      All 26 P4.4 tests pass.
 ---
 
 # R0-B cross-family review — P4.4 impl stage
@@ -336,13 +360,60 @@ require runtime integration testing:
 
 ---
 
-## Verdict: `needs_architect` (0🔴 2🟡 3🟢)
+## Round 2 — re-verification after RW1+2 rework (2026-06-06)
 
-No admission-bypass, provenance-forge, silent-fail-open on the critical
-`enabled`/`digest` paths, pierced shadow-bypass, or partial-admit atomicity break
-was found. The two 🟡 findings are both on the malformed-registry robustness surface
-(Lens a3) — the ADR-text→implementation gap (Y1) and the narrow catch clause (Y2).
-Neither is a 🔴-severity admission/forge/fail-open, but both warrant architect
-routing before junior merges.
+Junior rework commits:
+- `0ed7877` P4.4-RW1: β-fix true sentinel for malformed registry fail-open (R0-A R1)
+- `07d7606` P4.4-RW2: catch yaml.YAMLError in _resolve_plugin_registry (R0-B Y2)
 
-**Route nothing myself — the architect routes (α absorb / β defer / γ reject / δ later).**
+### Y1 re-verified ✅ (sentinel closes the fail-open)
+
+`_RegistryRefuseAll` sentinel (`provenance.py:212-226`) is distinct from `None`
+(absent registry → today's defaults) and `{}` (empty registry, same absent-defaults
+semantics). `_resolve_plugin_registry` returns `REGISTRY_REFUSE_ALL` on `ConfigError`
+(`app.py:232`). `load_plugins` receives the sentinel check at `loader.py:630-635`:
+`isinstance(plugin_registry, _RegistryRefuseAll)` → return `PluginLoadResult()`
+(empty) — **before** the candidate loop. No op-placed presence resurrection, no
+fetched activation short-circuit. The re-enable-on-presence leak (operator writes
+`enabled: false`, then makes a config typo → disabled plugin resurrected by presence)
+is closed.
+
+Tests trace-confirmed:
+- `test_g2_empty_registry_absent_loads_op_placed`: renamed (was wrong name —
+  asserted LOADS, not refuses); empty dict `{}` → op-placed loads by presence (correct)
+- `test_g2_refuse_all_sentinel_refuses_all_op_placed`: NEW — sentinel → op-placed refused
+- `test_g2_refuse_all_disabled_op_placed_stays_down`: NEW — the exact re-enable
+  scenario blocked
+- `test_rw2_malformed_plugins_yaml_returns_sentinel_and_warns`: updated — asserts
+  `result is REGISTRY_REFUSE_ALL` (not `== {}`)
+
+### Y2 re-verified ✅ (yaml.YAMLError caught)
+
+`_resolve_plugin_registry` (`app.py:232`): `except (ConfigError, yaml.YAMLError)`
+covers both schema errors and syntax errors. `import yaml` added (`app.py:219`).
+Both paths return `REGISTRY_REFUSE_ALL` — the refuse-all guarantee is uniform across
+schema-invalid AND syntax-invalid configs.
+
+Test trace-confirmed: `test_rw2_unparseable_yaml_returns_sentinel_and_warns`
+(`test_wired_whole_registry.py:62-80`) — syntactically broken YAML input
+(`"plugins:\n  - {\n  bad: yaml [syntax\n"`) → `yaml.safe_load` raises
+`ScannerError` → caught → `REGISTRY_REFUSE_ALL` returned + WARNING logged + no
+exception propagates.
+
+### Test run
+
+```
+tests/plugins/test_constitution_p44.py .................... 20 passed
+tests/plugins/test_wired_whole_registry.py ......             6 passed
+Total: 26 passed
+```
+
+---
+
+## Verdict: `clean` (0🔴 0🟡 3🟢)
+
+Y1 and Y2 both resolved by RW1+RW2 rework. The `REGISTRY_REFUSE_ALL` sentinel
+correctly implements ADR-038 D2 refuse-all; the `yaml.YAMLError` catch closes the
+syntax-error crash path. No new findings surfaced during re-verification trace.
+
+**Route nothing.**
