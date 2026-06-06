@@ -6,12 +6,26 @@ date: 2026-06-06
 plan: docs/process/senior-plans/P4.5.md
 impl_branch: claude/P4.5-impl
 impl_commits: [4e34c7b, 21eb0be, 40f7d2a, 5b2729f, 8a0e1ec, bbafa86, a07a932, 7924b36]
-verdict: blocking
-findings_count: { red: 1, yellow: 2, green: 3 }
-gates:
+rework_commits: [7009f2f, 1cf34f9, adf7053, f114522, 5add58b, ca8ca1c]
+verdict: clean
+verdict_history:
+  - round: 1
+    verdict: blocking
+    date: 2026-06-06
+    findings_count: { red: 1, yellow: 2, green: 3 }
+    summary: 4 e2e tests broken by auth boundary (red pytest gate) + WS unauth test absent + flaky concurrent-subscriber test
+  - round: 2
+    verdict: clean
+    date: 2026-06-06
+    summary: >-
+      RC-10 verdict-bump re-review. F1/F2/F3 all resolved by junior rework
+      (RW1 7009f2f, RW2 1cf34f9, RW5 5add58b); CANONICAL gates re-run by senior
+      — ruff pass, mypy pass (275 files), full pytest 2221 passed / exit 0 / 100%.
+findings_count: { red: 1, yellow: 2, green: 3 }   # round-1; all resolved in round-2
+gates:                  # round-2 re-run by senior (full suite, not subdir)
   ruff: pass
   mypy: pass            # Success: no issues found in 275 source files
-  pytest: FAIL          # 4 hard P4.5-introduced regressions in tests/tools/test_e2e.py + 1 flaky
+  pytest: pass          # 2221 passed, exit 0, 100% — F1/F2/F3 all green
 ---
 
 # Senior plan-vs-impl — P4.5 (auth / multi-user / remote-bind)
@@ -160,3 +174,44 @@ Recommended fix round (junior, no product-code change): (1) **F1** re-wire
 `tests/tools/test_e2e.py` to authenticate → full suite green; (2) **F2** add the
 WS unauth-reject-before-`accept()` test; (3) **F3** stabilize the flaky
 concurrent-subscribers test. Then re-run ruff + mypy + **full** pytest.
+
+---
+
+## Round 2 — verdict-bump re-review (RC-10), 2026-06-06
+
+**Trigger:** junior reworked all three round-1 findings on `claude/P4.5-impl`.
+Per RC-10 I re-read the rework diffs and **re-ran the CANONICAL gates myself**
+(ruff + `uv run mypy` files=src,tests + **full** `pytest`, no subdir) — the
+full-suite run is exactly what surfaced F1 in round 1, so I did not shortcut it.
+
+**Rework commits verified:**
+
+| Finding | Round-1 verdict | Rework | Evidence (re-verified) |
+|---|---|---|---|
+| **F1** | 🔴 blocking | RW1 `7009f2f` | `tests/tools/test_e2e.py` now builds an authed client: `_make_authed_client` creates a real user (`init_auth_schema`+`create_user`) and attaches a `create_token` Bearer header; all 4 previously-401'd e2e tests pass under the **full** suite. Pure test change, no product code. ✅ |
+| **F2** | 🟡 needs_architect | RW2 `1cf34f9` | Guard #2's WS half now pinned: `test_ws_unauthenticated_rejected_with_1008` asserts `WebSocketDisconnect` with `code == 1008` on the `unauth_client` (close **before** `accept()`). Bonus `TestLensACookiePath` integration test pins the D3 cookie path. `unauth_client` fixture confirmed at `tests/api/auth/test_constitution.py:126`. ✅ |
+| **F3** | 🟡 flaky | RW5 `5add58b` | Unbounded `_drain_until_replay_complete` replaced by a bounded drain (`len(pre)+10` iterations) in `test_two_concurrent_subscribers_both_see_replay`; test passed in the full run. ✅ |
+
+**Adjacent rework observed (not my findings — R0-A-routed hardening):** RW3
+`adf7053` (tighten middleware + make `/logout` auth-required), RW4 `f114522`
+(`_post_intent` assert principal is not None — fail-closed), RW5b `ca8ca1c`
+(ruff fix). These strengthen the fail-closed boundary and are **consistent with
+the plan's design intent** (no plan-faithfulness regression); they fall under the
+R0-A lens, not plan-vs-impl, and are covered by the green gates I re-ran.
+
+**Round-2 gate evidence (senior re-run):**
+
+```
+ruff check src tests           → All checks passed!
+uv run mypy                     → Success: no issues found in 275 source files
+uv run pytest (full suite)      → exit 0, 100%, 2221 passed, 0 failed/errored
+```
+(The `tests/tools/test_net_trust.py` `hung.example.invalid` DNS-timeout thread-
+exception *warning* persists — environmental, not a counted failure, not
+P4.5-related; same disposition as round 1.)
+
+**Round-2 verdict: `clean`.** All three round-1 findings resolved; the impl
+remains faithful to the plan on all 8 atomics and now ships green canonical
+gates. Per dispatch I route nothing; expected state-machine auto-advance →
+`awaiting_R0_A` (ADR-008 Amendment 1, Route B) once R0-A verdict is likewise
+clean.
