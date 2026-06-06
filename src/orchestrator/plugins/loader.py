@@ -200,61 +200,72 @@ def _collision_check(
     host_tools: dict[str, ToolMeta],
     host_local_tool_names: frozenset[str],
     host_mcp_server_names: frozenset[str],
-    seen_role_ids: set[str],
-    seen_skill_ids: set[str],
-    seen_tool_names: set[str],
-    seen_tool_impl_names: set[str],
-    seen_server_names: set[str],
 ) -> bool:
-    """Check ALL declared contribution names against host registries and cross-plugin.
+    """Check host-collision (bare name, fail-closed) and within-plugin duplicates.
 
-    Returns True (no collision) or False (collision found, plugin refused).
-    Runs BEFORE any importlib call — the fail-closed gauntlet must not be
-    pierced by an early import (ADR-029 D2 step 3; R0-B R1).
+    Cross-plugin collision is resolved by deterministic always-prefix namespacing
+    (<plugin_id>__<name>, ADR-038 D4) — no refusal for cross-plugin duplicates.
+
+    Host-collision and within-plugin dup checks evaluate the BARE declared name
+    (absorbed R0-A Y4 / R0-B b1; ADR-038 D4 order-of-operations):
+      - A plugin tool_impl shadowing a host local_tool (shadow-bypass) → refused
+        on the bare name even though namespacing would de-conflict it.
+      - Within-plugin duplicate names → refused.
+
+    Returns True (pass) or False (refused). Runs BEFORE any importlib call.
     """
     pid = candidate.plugin_id
     c = candidate.manifest.contributions
 
-    # Role ids
+    # Role ids: host-collision + within-plugin dup (bare name)
+    _plugin_roles: set[str] = set()
     for role_id in c.roles:
         if role_id in host_agents:
             _log.warning("plugin %r: role %r collides with host agent — refusing", pid, role_id)
             return False
-        if role_id in seen_role_ids:
-            _log.warning("plugin %r: role %r collides with cross-plugin — refusing", pid, role_id)
+        if role_id in _plugin_roles:
+            _log.warning("plugin %r: role %r duplicate within plugin — refusing", pid, role_id)
             return False
+        _plugin_roles.add(role_id)
 
-    # Skill ids
+    # Skill ids: host-collision + within-plugin dup (bare name)
+    _plugin_skills: set[str] = set()
     for skill_id in c.skills:
         if skill_id in host_skills:
-            _log.warning("plugin %r: skill %r collides with host skill — refusing", pid, skill_id)
+            _log.warning(
+                "plugin %r: skill %r collides with host skill — refusing", pid, skill_id
+            )
             return False
-        if skill_id in seen_skill_ids:
-            _log.warning("plugin %r: skill %r collides with cross-plugin — refusing", pid, skill_id)
+        if skill_id in _plugin_skills:
+            _log.warning(
+                "plugin %r: skill %r duplicate within plugin — refusing", pid, skill_id
+            )
             return False
+        _plugin_skills.add(skill_id)
 
-    # Tool classification names (ToolMeta registry)
+    # Tool classification names: host-collision + within-plugin dup (bare name)
+    # Cross-plugin tool name collisions are resolved by namespacing, not refusal.
+    _plugin_tools: set[str] = set()
     for tool_name in c.tools:
         if tool_name in host_tools:
-            _log.warning("plugin %r: tool %r collides with host tools — refusing", pid, tool_name)
+            _log.warning(
+                "plugin %r: tool %r collides with host tools — refusing", pid, tool_name
+            )
             return False
-        if tool_name in seen_tool_names:
-            _log.warning("plugin %r: tool %r collides with cross-plugin — refusing", pid, tool_name)
+        if tool_name in _plugin_tools:
+            _log.warning(
+                "plugin %r: tool %r duplicate within plugin — refusing", pid, tool_name
+            )
             return False
+        _plugin_tools.add(tool_name)
 
-    # tool_impls names (→ local_tools): two-way check (R0-A Y1 / ADR-029 D6)
-    # (i) host local_tools — closes shadow-bypass (a plugin must not shadow an
-    #     existing host implementation such as the sandboxed read_file).
-    # (ii) cross-plugin — two plugins cannot both provide the same impl name.
-    # NOTE: tool_impls names are intentionally NOT checked against host_tools
-    # (ToolMeta-only classification entries from config/tools.yaml). Operator
-    # may pre-classify a brand-new plugin tool in config/tools.yaml to set the
-    # gate tier (ADR-029 D5/D7); that pre-classification is authoritative but
-    # not an "existing implementation" to shadow. The shadow-bypass is closed by
-    # check (i) which covers all tools with local implementations.
+    # tool_impls names (→ local_tools): host shadow-bypass check (bare name, fail-closed).
+    # ADR-038 D4 / ADR-029 D2: host-collision evaluated on BARE name; a plugin declaring
+    # tool_impl "read_file" is REFUSED even though prefixing would de-conflict it.
+    # NOTE: tool_impls is a dict → no within-plugin dup possible.
+    # NOTE: tool_impls intentionally NOT checked against host_tools (ToolMeta-only
+    # classifications from config/tools.yaml may pre-classify plugin impls, ADR-029 D5/D7).
     for impl_name in c.tool_impls:
-        # (i) host local_tools — closes shadow-bypass (e.g. read_file has a
-        #     sandboxed impl; shadowing it would bypass the path-sandbox).
         if impl_name in host_local_tool_names:
             _log.warning(
                 "plugin %r: tool_impl %r shadows host local_tools (shadow-bypass) — refusing",
@@ -262,16 +273,9 @@ def _collision_check(
                 impl_name,
             )
             return False
-        # (ii) cross-plugin tool_impls
-        if impl_name in seen_tool_impl_names:
-            _log.warning(
-                "plugin %r: tool_impl %r collides with cross-plugin — refusing",
-                pid,
-                impl_name,
-            )
-            return False
 
-    # MCP server names
+    # MCP server names: host-collision + within-plugin dup (bare name)
+    _plugin_servers: set[str] = set()
     for server_name in c.mcp_servers:
         if server_name in host_mcp_server_names:
             _log.warning(
@@ -280,13 +284,14 @@ def _collision_check(
                 server_name,
             )
             return False
-        if server_name in seen_server_names:
+        if server_name in _plugin_servers:
             _log.warning(
-                "plugin %r: mcp_server %r collides with cross-plugin — refusing",
+                "plugin %r: mcp_server %r duplicate within plugin — refusing",
                 pid,
                 server_name,
             )
             return False
+        _plugin_servers.add(server_name)
 
     return True
 
@@ -334,11 +339,6 @@ def _load_plugin(
     host_tools: dict[str, ToolMeta],
     host_local_tool_names: frozenset[str],
     host_mcp_server_names: frozenset[str],
-    seen_role_ids: set[str],
-    seen_skill_ids: set[str],
-    seen_tool_names: set[str],
-    seen_tool_impl_names: set[str],
-    seen_server_names: set[str],
     activation_entry: ActivationEntry | None = None,
     registry_entry: RegistryEntry | None = None,
     posture_resolver: PostureResolver | None = None,
@@ -406,7 +406,8 @@ def _load_plugin(
             return None
         _log.debug("plugin %r (fetched): activation entry present, continuing load", pid)
 
-    # Step 3: Collision-check ALL declared names BEFORE any import
+    # Step 3: Host-collision + within-plugin-dup check BEFORE any import (ADR-029 D2 step 3).
+    # Cross-plugin collision is resolved by namespacing (ADR-038 D4).
     if not _collision_check(
         candidate,
         host_agents,
@@ -414,11 +415,6 @@ def _load_plugin(
         host_tools,
         host_local_tool_names,
         host_mcp_server_names,
-        seen_role_ids,
-        seen_skill_ids,
-        seen_tool_names,
-        seen_tool_impl_names,
-        seen_server_names,
     ):
         return None
 
@@ -622,13 +618,10 @@ def load_plugins(
             )
         )
 
-    # Steps 3-7: Per-plugin collision-check + load + atomic merge (global, cross-root)
+    # Steps 3-7: Per-plugin host-collision-check + load + namespaced merge (global, cross-root).
+    # Cross-plugin collision is resolved by deterministic always-prefix namespacing
+    # (<plugin_id>__<name>, ADR-038 D4). No seen_* sets needed for cross-plugin dedup.
     merged = PluginLoadResult()
-    seen_role_ids: set[str] = set()
-    seen_skill_ids: set[str] = set()
-    seen_tool_names: set[str] = set()
-    seen_tool_impl_names: set[str] = set()
-    seen_server_names: set[str] = set()
 
     for candidate in candidates:
         # enabled-gate: short-circuit disabled plugins BEFORE _load_plugin (ADR-038 D2,
@@ -658,11 +651,6 @@ def load_plugins(
             host_tools=host_tools,
             host_local_tool_names=host_local_tool_names,
             host_mcp_server_names=host_mcp_server_names,
-            seen_role_ids=seen_role_ids,
-            seen_skill_ids=seen_skill_ids,
-            seen_tool_names=seen_tool_names,
-            seen_tool_impl_names=seen_tool_impl_names,
-            seen_server_names=seen_server_names,
             activation_entry=activation,
             registry_entry=r_entry,
             posture_resolver=posture_resolver,
@@ -671,18 +659,15 @@ def load_plugins(
         if result is None:
             continue
 
-        # Atomic per-plugin merge: update seen_* and merged only after full success
-        seen_role_ids.update(candidate.manifest.contributions.roles)
-        seen_skill_ids.update(candidate.manifest.contributions.skills)
-        seen_tool_names.update(candidate.manifest.contributions.tools)
-        seen_tool_impl_names.update(candidate.manifest.contributions.tool_impls.keys())
-        seen_server_names.update(candidate.manifest.contributions.mcp_servers)
-
-        merged.agents.update(result.agents)
+        # Atomic namespaced merge: prefix all contribution names with <plugin_id>__
+        # (ADR-038 D4 deterministic coexistence). regex_registry uses agent.id as key
+        # (not the agents dict key), so it merges bare — consistent with speaking.py lookup.
+        pid = candidate.plugin_id
+        merged.agents.update({f"{pid}__{k}": v for k, v in result.agents.items()})
         merged.regex_registry.update(result.regex_registry)
-        merged.skills.update(result.skills)
-        merged.tools.update(result.tools)
-        merged.local_tools.update(result.local_tools)
-        merged.mcp_sessions.update(result.mcp_sessions)
+        merged.skills.update({f"{pid}__{k}": v for k, v in result.skills.items()})
+        merged.tools.update({f"{pid}__{k}": v for k, v in result.tools.items()})
+        merged.local_tools.update({f"{pid}__{k}": v for k, v in result.local_tools.items()})
+        merged.mcp_sessions.update({f"{pid}__{k}": v for k, v in result.mcp_sessions.items()})
 
     return merged

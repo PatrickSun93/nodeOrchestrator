@@ -99,8 +99,8 @@ def test_two_plugins_merge_without_collision(tmp_path: Path) -> None:
         host_local_tool_names=frozenset(),
         host_mcp_server_names=frozenset(),
     )
-    assert "skill_a" in result.skills
-    assert "skill_b" in result.skills
+    assert "plugin_a__skill_a" in result.skills
+    assert "plugin_b__skill_b" in result.skills
 
 
 # ---------------------------------------------------------------------------
@@ -208,4 +208,4 @@ def test_valid_sibling_survives_failing_plugin(tmp_path: Path) -> None:
         host_mcp_server_names=frozenset(),
     )
     # plugin_a loaded successfully despite plugin_b failing
-    assert "skill_a" in result.skills
+    assert "plugin_a__skill_a" in result.skills

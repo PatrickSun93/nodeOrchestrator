@@ -189,10 +189,13 @@ def _write_activation(
 def test_demo1_demo_posture_b_plugin_loads() -> None:
     """demo_posture_b operator-placed plugin loads using in-process Posture A (ADR-029 D4)."""
     result = _load_plugins_dir()
-    assert "posture_b_echo" in result.local_tools
-    assert "posture_b_env_probe" in result.local_tools
+    assert "demo_posture_b__posture_b_echo" in result.local_tools
+    assert "demo_posture_b__posture_b_env_probe" in result.local_tools
     # Operator-placed → Posture A (in-process): no _is_posture_b_subprocess marker
-    for fn in [result.local_tools["posture_b_echo"], result.local_tools["posture_b_env_probe"]]:
+    for fn in [
+        result.local_tools["demo_posture_b__posture_b_echo"],
+        result.local_tools["demo_posture_b__posture_b_env_probe"],
+    ]:
         assert not bool(getattr(fn, "_is_posture_b_subprocess", False))
 
 
@@ -204,7 +207,7 @@ def test_demo1_demo_posture_b_plugin_loads() -> None:
 def test_demo2_posture_b_echo_executes() -> None:
     """posture_b_echo executes in subprocess → LocalToolOutput with correct content."""
     result = _load_plugins_dir()
-    fn = result.local_tools["posture_b_echo"]
+    fn = result.local_tools["demo_posture_b__posture_b_echo"]
     output = fn({"message": "hello-from-subprocess"})
     assert isinstance(output, LocalToolOutput)
     assert "hello-from-subprocess" in output.content
@@ -216,7 +219,7 @@ def test_demo2_posture_b_echo_via_executor() -> None:
 
     store = _make_store()
     room_id = _make_room(store)
-    tc = _tc_event(room_id, "posture_b_echo", "echo_1", {"message": "demo-echo"})
+    tc = _tc_event(room_id, "demo_posture_b__posture_b_echo", "echo_1", {"message": "demo-echo"})
     store.append(tc)
 
     execute_pending_tool_calls(
@@ -277,10 +280,10 @@ def test_demo3_fetch_activate_execute_e2e(tmp_path: Path) -> None:
         activation_path=activation_path,
     )
 
-    # Execute via subprocess
+    # Execute via subprocess (tool name is namespaced: fetched_demo__demo_tool)
     store = _make_store()
     room_id = _make_room(store)
-    tc = _tc_event(room_id, "demo_tool", "demo_1")
+    tc = _tc_event(room_id, "fetched_demo__demo_tool", "demo_1")
     store.append(tc)
 
     execute_pending_tool_calls(
@@ -313,7 +316,7 @@ def test_demo4_posture_a_tool_sees_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(secret_key, "posture-a-sees-this")
 
     result = _load_plugins_dir()
-    fn = result.local_tools["posture_b_env_probe"]
+    fn = result.local_tools["demo_posture_b__posture_b_env_probe"]
     output = fn({"key": secret_key})
     # Posture A: in-process tool reads os.environ directly
     assert output.content == "posture-a-sees-this", (
@@ -341,7 +344,9 @@ def test_demo5_posture_a_tools_exempt_from_posture_b_cap() -> None:
     n = MAX_SUBPROCESS_CALLS_PER_TURN + 2
     window: list[Event] = []
     for i in range(n):
-        tc = _tc_event(room_id, "posture_b_echo", f"cap_cid_{i}", {"message": f"msg-{i}"})
+        tc = _tc_event(
+            room_id, "demo_posture_b__posture_b_echo", f"cap_cid_{i}", {"message": f"msg-{i}"}
+        )
         store.append(tc)
         window.append(tc)
 
@@ -505,14 +510,14 @@ def test_demo9_fetched_bundle_not_discoverable_as_operator_placed(tmp_path: Path
     op_dir = tmp_path / "op_plugins"
     op_dir.mkdir()
     result_op_only = _load_plugins_dir(plugins_dir=op_dir)
-    assert "demo_tool" not in result_op_only.local_tools
+    assert "launder_test__demo_tool" not in result_op_only.local_tools
 
-    # Load with both roots + activation → loads as fetched
+    # Load with both roots + activation → loads as fetched (namespaced key)
     result_both = _load_plugins_dir(
         plugins_dir=op_dir,
         fetched_dir=fetched_dir,
         activation_path=activation_path,
     )
-    fn = result_both.local_tools.get("demo_tool")
+    fn = result_both.local_tools.get("launder_test__demo_tool")
     assert fn is not None
     assert bool(getattr(fn, "_is_posture_b_subprocess", False))

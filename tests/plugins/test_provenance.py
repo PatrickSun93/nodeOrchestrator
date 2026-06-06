@@ -177,7 +177,7 @@ def test_pv1_operator_placed_loads_unchanged(tmp_path: Path) -> None:
     _minimal_plugin(plugins_dir, "op_plugin", with_tool_impl=True)
 
     result = _load(plugins_dir)
-    assert "echo_tool" in result.local_tools
+    assert "op_plugin__echo_tool" in result.local_tools
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +240,7 @@ def test_pv3_fetched_plugin_with_activation_loads(tmp_path: Path) -> None:
     )
 
     result = _load(plugins_dir, fetched_plugins_dir=fetched_dir, activation_registry_path=reg_path)
-    assert "echo_tool" in result.local_tools
+    assert "my_fetched__echo_tool" in result.local_tools
 
 
 # ---------------------------------------------------------------------------
@@ -293,8 +293,8 @@ def test_pv5_fetched_tool_impls_are_posture_b(tmp_path: Path) -> None:
     )
 
     result = _load(plugins_dir, fetched_plugins_dir=fetched_dir, activation_registry_path=reg_path)
-    assert "echo_tool" in result.local_tools
-    fn = result.local_tools["echo_tool"]
+    assert "fetched_b__echo_tool" in result.local_tools
+    fn = result.local_tools["fetched_b__echo_tool"]
     # Posture B marker present → importlib never called at load time
     assert bool(getattr(fn, "_is_posture_b_subprocess", False)), (
         "pv5: fetched plugin tool impl is NOT Posture-B — "
@@ -312,7 +312,7 @@ def test_pv5_operator_placed_tool_impls_are_posture_a(tmp_path: Path) -> None:
     _minimal_plugin(plugins_dir, "op_a", with_tool_impl=True)
 
     result = _load(plugins_dir)
-    fn = result.local_tools["echo_tool"]
+    fn = result.local_tools["op_a__echo_tool"]
     # Posture A: NOT a subprocess-launching closure (_is_posture_b_subprocess absent)
     assert not bool(getattr(fn, "_is_posture_b_subprocess", False)), (
         "pv5: operator-placed plugin tool impl IS Posture-B — "
@@ -371,7 +371,7 @@ def test_pv8_activation_subprocess_env_passed_to_closure(tmp_path: Path) -> None
     )
 
     result = _load(plugins_dir, fetched_plugins_dir=fetched_dir, activation_registry_path=reg_path)
-    fn = result.local_tools["echo_tool"]
+    fn = result.local_tools["env_plugin__echo_tool"]
     # The _PostureBFn should have the activation's plugin_subprocess_env
     assert getattr(fn, "_plugin_subprocess_env", None) == {"CUSTOM_KEY": "custom_value"}
 
@@ -382,7 +382,7 @@ def test_pv8_operator_placed_uses_posture_a(tmp_path: Path) -> None:
     _minimal_plugin(plugins_dir, "clean_plugin", with_tool_impl=True)
 
     result = _load(plugins_dir)
-    fn = result.local_tools["echo_tool"]
+    fn = result.local_tools["clean_plugin__echo_tool"]
     # Posture A: not a subprocess fn, so no subprocess env attribute
     assert not bool(getattr(fn, "_is_posture_b_subprocess", False))
     assert getattr(fn, "_plugin_subprocess_env", None) is None

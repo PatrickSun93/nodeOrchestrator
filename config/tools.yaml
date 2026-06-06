@@ -48,11 +48,11 @@ tools:
     reversibility: 3    # delivery has external visibility (P1.3)
   git_push:
     reversibility: 1    # public history rewrite cost is high
-  # Demo plugin tool classification (ADR-029 D7 / D5): host-authoritative,
-  # raises word_count above default-0 so the demo reaches AUTO_EXECUTE.
-  word_count:
+  # Demo plugin tool classification (ADR-029 D7/D5; ADR-038 D4 P4.4-3 rebind):
+  # word_count → demo__word_count (always-prefix namespacing). Host-authoritative.
+  demo__word_count:
     reversibility: 10   # pure function, no I/O, fully reversible
-  # Context plugin tool classification (ADR-029 D5/D7): host-authoritative,
-  # raises context_summary above default-0 so it reaches AUTO_EXECUTE.
-  context_summary:
+  # Context plugin tool classification (ADR-029 D5/D7; ADR-038 D4 P4.4-3 rebind):
+  # context_summary → context__context_summary (always-prefix namespacing). Host-authoritative.
+  context__context_summary:
     reversibility: 10   # read-only summarisation, no mutation
