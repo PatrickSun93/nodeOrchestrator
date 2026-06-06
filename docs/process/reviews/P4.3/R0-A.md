@@ -1,7 +1,7 @@
 ---
 task_id: P4.3
 round: R0-A
-verdict: needs_architect
+verdict: clean
 verdict_history:
   - round: 1
     date: 2026-06-05
@@ -31,10 +31,32 @@ verdict_history:
       (fails-closed, https unaffected). Dual-lens convergence: R0-B round 2
       (1abd9d4) also cleared all 4🔴. needs_architect = dispatch the 1-line
       ruff micro-fix (RW9) before merge; NOT a 🔴/design re-route.
+  - round: 3
+    date: 2026-06-06
+    verdict: clean
+    red: 0
+    yellow: 0
+    summary: >-
+      RW9 (d3180f1) resolves BOTH round-2 gating 🟡 with no regression and no
+      fail-open reintroduced. RA1: ruff I001 fixed — `ruff check src tests`
+      (canonical) + `ruff check .` GREEN. RA2: app.py extract-method
+      `_resolve_sandbox_posture(config_dir) -> PostureResolver` — non-Optional
+      return → mypy --strict structurally forbids a fail-open path; present →
+      from_config, parse-fail → log + fail_closed(), absent → fail_closed();
+      resolver threaded into all 3 registries (plugins/subprocess/network),
+      none receives None. The 3 RW8-2 constitution tests now import + call the
+      REAL helper (absence / parse-fail / web_fetch), so a fail-open revert
+      breaks them — the round-2 "test re-implements the branch inline" note is
+      CLOSED. Pure refactor, NOT a RW4 regression (it strengthens the contract).
+      s3 executor byte-frozen still holds (empty diff vs origin/main). Gates
+      green (no live daemon): ruff clean; mypy --strict 262 files; pytest
+      sandbox+integration+tools+plugins exit 0 (~451 tests, zero FAILED/ERROR);
+      constitution 15 passed. Round-2 N2 (CONNECT-only plain-http) remains a
+      non-blocking inscription follow-up — does not gate clean.
 findings_count:
   red: 0
-  yellow: 2
-  green: 16
+  yellow: 0
+  green: 18
 ---
 
 # P4.3 R0-A review (architect-partner lens) — impl-stage, dual-lens
@@ -203,3 +225,32 @@ The proxy handles only `CONNECT` (`egress_proxy.py:140-141` → non-CONNECT → 
 | plugin latency | — | 🟡 NEW (non-blocking) | R0-B-only |
 
 **Both lenses converge: all 4🔴 CLEARED, all round-1 🟡 resolved, no new blocker.** The rework genuinely delivered the enforcing, wired surface ADR-037 claims. Recommended path: **junior RW9 (ruff one-liner) → gates fully green → architect Accept → merge.** Whether N2 (plain-http) warrants a follow-up slice or a one-line inscription correction is a minor call for the architect; it does not gate this merge.
+
+---
+
+# Round 3 re-verification — RW9 (verdict bump) (architect-partner lens)
+
+| Field | Value |
+|---|---|
+| Round | R0-A **round 3** (verdict-bump re-verify; the two round-2 gating 🟡) |
+| Reviewer | architect-partner (Claude Opus 4.8, 1M context), primary session |
+| Reviewed at | `d3180f1` (RW9 HEAD) on `claude/P4.3-impl`. RW9 touches `api/app.py`, `tests/sandbox/test_constitution.py`, `tests/sandbox/test_egress.py` only. |
+| Gates | ruff `src tests` (canonical) **clean** + `ruff check .` **clean**; mypy --strict **clean** (262 files); pytest `tests/sandbox`+`integration`+`tools`+`plugins` **exit 0** (~451 dots, zero FAILED/ERROR); constitution **15 passed**. No live Docker daemon (stubbed). |
+
+**Round-3 verdict: clean.** RW9 resolves both round-2 gating 🟡 and introduces no regression. The `api/app.py +59` change is a **pure extract-method** — not a fail-open reintroduction.
+
+### ✅ RA1 (round-2 N1 — ruff I001 gate-red) → RESOLVED
+`tests/sandbox/test_egress.py:18` lost the one extra blank line after the import block (RW9 diff: single `-` blank line). `ruff check src tests` → *All checks passed!* (exit 0); `ruff check .` likewise. The sole non-green gate from round 2 is now green.
+
+### ✅ RA2 (the wired-whole test drives the real composition root; app.py sound, no fail-open) → RESOLVED
+- **Refactor is sound, fail-closed on both paths.** `_resolve_sandbox_posture(config_dir) -> PostureResolver` (`app.py:172-198`) — return type is **non-Optional**, so mypy --strict *structurally forbids* a `None`/fail-open return (clean gate proves every branch yields a real resolver). Branches: present+valid → `from_config(cfg)`; `SandboxConfigError` → `logging.warning(...)` + `fail_closed()`; absent → `fail_closed()`. Byte-for-logic identical to the RW4 inline block round 2 verified — this is a **strengthening** (contract now enforced at the function boundary), **not a RW4 regression**.
+- **Resolver reaches every sandbox surface, none gets `None`.** `_build_context` calls the helper once (`app.py:245`) and threads the result into all three registries: `load_plugins(..., posture_resolver=...)` (`:265`, Y2 surface), `build_subprocess_tool_registry(..., posture_resolver=...)` (`:283`, Y3 subprocess), `build_network_tool_registry(..., posture_resolver=...)` (`:299`, Y3 web_fetch). No fail-open path exists.
+- **Tests now bind to the real branch.** The three RW8-2 constitution tests (`test_rw8_config_absence_real_path_fail_closed`, `…parse_failure…`, `…web_fetch…`) drop their inline `if exists / try / except` copy and `from orchestrator.api.app import _resolve_sandbox_posture` → call it directly (absence: empty tmp_path; parse-fail: invalid `sandbox.yaml`). A fail-open revert in `app.py` (e.g. `except → None` or `else → None`) flips the resolver to `None` → registry takes the app-level unsandboxed branch → the tool no longer raises `sandbox_unavailable` → these tests fail. The round-2 "test replicates the composition-root branch inline rather than importing it" note is **closed**.
+
+### ✅ s3 (executor byte-frozen, 6th exercise) → holds
+`git diff origin/main -- src/orchestrator/tools/executor.py` empty; the constitution s3 AST test passes. RW9 touches no executor / spawn surface (empty-executor-diff invariant intact).
+
+### Residual (non-gating)
+Round-2 **N2** (CONNECT-only proxy → sandboxed plain-`http://` web_fetch 405s; fails-closed, https unaffected) was an **inscription/follow-up nit**, not a must-fix, and RW9 did not (and was not asked to) touch it. It remains a non-blocking follow-up and **does not gate clean**.
+
+**Both round-2 gating 🟡 cleared; no regression; no fail-open. R0-A → clean.** Dual-lens note: this verdict bump concerns the R0-A-only gate/test items; the shared 4🔴 cluster was already cleared and re-verified at round 2 (converging with R0-B `1abd9d4`).
