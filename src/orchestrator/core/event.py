@@ -205,11 +205,17 @@ class ToolCallMeta(_BaseMeta):
 
     `call_id` ties this call to its eventual `tool_result` or
     `tool_failed` event for replay and audit.
+
+    `approver_user_id` records the authenticated approver (ADR-039 D6,
+    P4.5-5). Nullable for backward-compat: pre-P4.5 events have no approver.
+    The still-pending scan never inspects this field — it keys on type+call_id.
+    The executed TOOL_CALL stays agent-authored; this field records who approved.
     """
 
     tool_name: str = Field(min_length=1)
     call_id: str = Field(min_length=1)
     params: dict[str, Any] = Field(default_factory=dict)
+    approver_user_id: str | None = None
 
 
 class ToolResultMeta(_BaseMeta):
@@ -365,9 +371,13 @@ class ToolCallCancelledMeta(_BaseMeta):
     Appended by the confirm endpoint when the user cancels a pending gated
     call. ``call_id`` ties it to the originating ``TOOL_CALL_PENDING`` for
     the position-anchored still-pending predicate in snapshot + endpoint.
+
+    ``approver_user_id`` records the authenticated canceller (ADR-039 D6,
+    P4.5-5). Nullable for backward-compat (same discipline as ToolCallMeta).
     """
 
     call_id: str = Field(min_length=1)
+    approver_user_id: str | None = None
 
 
 TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {

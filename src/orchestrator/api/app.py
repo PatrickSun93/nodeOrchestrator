@@ -690,20 +690,29 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         response_model=ConfirmResponse,
         responses={422: {"model": ConfirmError}, 500: {"model": ConfirmError}},
     )
-    async def _post_confirm(room_id: str, body: ConfirmRequest) -> ConfirmResponse:
+    async def _post_confirm(
+        room_id: str, body: ConfirmRequest, request: Request
+    ) -> ConfirmResponse:
         """Confirm or cancel a pending gated tool call (ADR-030 D3).
 
         Handler logic (backend-authoritative, atomic on writer_executor):
         1. Resolve room; find the TOOL_CALL_PENDING by pending_event_id.
         2. Room-state gate: closed room → ConfirmError{stage:'append', reason:'room_closed'}.
         3. Still-pending check (layer 1) — position-anchored after the pending event.
-        4. cancel → append TOOL_CALL_CANCELLED, return.
-        5. approve → append agent-authored TOOL_CALL from record, execute, publish.
+        4. cancel → append TOOL_CALL_CANCELLED (with approver_user_id from principal).
+        5. approve → append agent-authored TOOL_CALL from record (with approver_user_id).
 
         No decision surface: gate decision already made; human approval second factor only.
+        ADR-039 D6: approver provenance recorded from the authenticated principal.
+        D5 checkpoint seam #1: authenticated ⇒ allowed; role check would gate here.
         """
         rid = RoomId(room_id)
         loop = asyncio.get_running_loop()
+        # ADR-039 D6: approver_user_id from server-verified principal (NOT request body)
+        _confirm_principal = getattr(request.state, "principal", None)
+        _approver_user_id: str | None = (
+            _confirm_principal.user_id if _confirm_principal is not None else None
+        )
 
         def _confirm_on_writer() -> ConfirmResponse:
             # Step 1: Resolve room and load events.
@@ -756,6 +765,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     content="",
                     metadata=ToolCallCancelledMeta(
                         call_id=pending_meta.call_id,
+                        approver_user_id=_approver_user_id,  # ADR-039 D6
                     ).model_dump(),
                 )
                 try:
@@ -769,6 +779,8 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
 
             # Step 5: Approve — reconstruct TOOL_CALL from persisted record (backend-authoritative).
             # tool_name/params/author come from the gate-produced record, NEVER from the request.
+            # TOOL_CALL stays agent-authored (ADR-030 D3/ADR-039 D6 unchanged).
+            # approver_user_id records who approved (provenance, not authorship).
             tool_call_event = Event(
                 id=generate_event_id(),
                 room_id=rid,
@@ -780,6 +792,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     tool_name=pending_meta.tool_name,
                     call_id=pending_meta.call_id,
                     params=pending_meta.params,
+                    approver_user_id=_approver_user_id,  # ADR-039 D6
                 ).model_dump(),
             )
             try:
