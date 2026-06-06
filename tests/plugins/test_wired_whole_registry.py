@@ -97,6 +97,7 @@ def test_rw3_valid_plugins_yaml_entries_applied(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     result = _resolve_plugin_registry(config_dir)
+    assert isinstance(result, dict)  # valid config → real registry, not refuse-all sentinel
     assert "my_plugin" in result
     assert result["my_plugin"].enabled is True
     assert result["my_plugin"].version == "1.0.0"
@@ -111,6 +112,7 @@ def test_rw3_disabled_entry_present(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     result = _resolve_plugin_registry(config_dir)
+    assert isinstance(result, dict)  # valid config → real registry, not refuse-all sentinel
     assert "disabled_plugin" in result
     assert result["disabled_plugin"].enabled is False
 
@@ -161,6 +163,7 @@ def test_rw4_load_plugins_receives_real_registry(tmp_path: Path) -> None:
 
     # Drive the real _resolve_plugin_registry
     registry = _resolve_plugin_registry(config_dir)
+    assert isinstance(registry, dict)  # valid config → real registry, not refuse-all sentinel
     assert "testplugin" in registry
     assert registry["testplugin"].enabled is False
 
