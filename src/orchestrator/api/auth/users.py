@@ -179,8 +179,8 @@ def verify_password(conn: sqlite3.Connection, user_id: str, password: str) -> bo
     """Verify password for a user.
 
     Returns False if user not found, disabled, or password wrong.
-    Uses constant-time comparison — timing leak is minimised even on miss
-    (the scrypt call runs regardless when the row exists).
+    Runs a dummy-scrypt call on the miss path so response time does not
+    reveal whether the user_id exists (timing side-channel mitigation).
 
     The password hash is fetched from the DB row and discarded here;
     it NEVER appears in return values, logs, or exceptions.
@@ -190,6 +190,12 @@ def verify_password(conn: sqlite3.Connection, user_id: str, password: str) -> bo
         (user_id,),
     ).fetchone()
     if row is None:
+        # Dummy scrypt: normalise timing regardless of user existence.
+        _dummy_salt = b"\x00" * 16
+        hashlib.scrypt(
+            password.encode(), salt=_dummy_salt,
+            n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN,
+        )
         return False
     stored_hash, stored_salt, disabled = row
     if disabled:

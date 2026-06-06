@@ -130,7 +130,16 @@ class TestMultipleConnections:
                 with TestClient(app, headers=auth_hdrs).websocket_connect(
                     f"/rooms/{room_id_str}/stream"
                 ) as ws:
-                    results[idx] = _drain_until_replay_complete(ws)
+                    # Bounded drain: at most len(pre)+10 messages to avoid
+                    # an infinite hang if replay_complete is delayed.
+                    collected: list[dict[str, Any]] = []
+                    for _ in range(len(pre) + 10):
+                        msg = ws.receive_json()
+                        if msg["kind"] == "replay_complete":
+                            break
+                        if msg["kind"] == "event":
+                            collected.append(msg)
+                    results[idx] = collected
             except Exception as exc:
                 errors.append(exc)
 

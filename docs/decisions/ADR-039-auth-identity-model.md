@@ -112,6 +112,8 @@ ADR-038 D5 froze `GET /plugins` / `POST /plugins/{id}/enable·disable·admit` / 
 - **Credential posture** (DP1b) — **not** built: password reset / rotation / MFA / session-revocation-UX / account lockout / self-service signup. The real surface, inscribed.
 - **First-account bootstrap** — the initial operator is provisioned out-of-band (D2 admin CLI); no in-product first-run onboarding.
 - **React GUI login** — the integration contract is pinned (D3 cookie semantics + the `401` handling ADR-026 carries); no `ui/` code this slice (frontend-track follow-on, the P4.7 precedent).
+- **Bearer-token-no-expiry** — per-user static bearer tokens have **no expiry date**, only revoke-on-request. A compromised token lives until explicitly revoked. Expiry (TTL + auto-rotation) is additive via the token schema (a new column); named residual, architect-ratified not-built-this-cycle.
+- **Session-no-idle-expiry** — sessions carry a 24-hour **absolute TTL** (`expires_at`) but no idle/inactivity expiry. A session remains valid for 24 h regardless of use; the sliding-window expiry pattern (reset `expires_at` on each validated request) is additive. Named residual, same class as reset/rotation/MFA above.
 
 ## Considered alternatives
 

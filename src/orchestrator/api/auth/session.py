@@ -2,10 +2,12 @@
 
 P4.5-2: sessions SQLite table (co-located in the main DB).
 Session create/revoke on the writer connection; validate on the reader.
-Per-user static bearer token stored hashed (same scrypt discipline).
+Per-user static bearer token stored as SHA-256 hex (NOT scrypt — the
+token is a 32-byte random value with 256-bit entropy; SHA-256 is
+sufficient and fast for high-entropy tokens; scrypt is for passwords).
 
 SECURITY: session_id is cryptographically random (secrets.token_urlsafe).
-          Bearer token is stored hashed; raw token never persisted.
+          Bearer token is stored SHA-256 hashed; raw token never persisted.
           session_id / raw token never logged / wired / evented.
 """
 
