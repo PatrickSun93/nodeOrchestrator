@@ -36,13 +36,12 @@ _NAT64_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
 
 _ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
-# Bounded-growth DNS pool — R5 head-of-line fix (ADR-035 impl-degradation ¶; P4.3-11).
-# Replaced the former max_workers=1 pool (which queued subsequent resolves behind a hung
-# getaddrinfo): each submit gets its own slot; on timeout the future is abandoned
-# independently and the thread left to die without blocking the next caller.
-# max_workers=8: handles bursts; the 5s per-call deadline still bounds each individual
-# resolve (DNS_RESOLVE_TIMEOUT_S). A hung resolve consumes one slot but does not
-# head-of-line-block a concurrent resolve in a different slot.
+# Fixed 8-slot DNS pool — R5 head-of-line fix (ADR-035 impl-degradation ¶; P4.3-11).
+# Raises the head-of-line threshold 1→8: a hung getaddrinfo consumes one slot but does
+# not queue subsequent resolves in the other 7 slots. A permanently-hung getaddrinfo
+# consumes a slot until the thread pool is GC'd (the abandonable-per-call-thread is the
+# deferred-stronger tail, ADR-037 D5). max_workers=8 handles typical bursts; the
+# DNS_RESOLVE_TIMEOUT_S per-call deadline still bounds each individual future.
 _DNS_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="net-dns")
 
 

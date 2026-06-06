@@ -104,7 +104,7 @@ def sandboxed_run(
 
     full_argv = [runtime.cli, *container_args]
 
-    t_start = time.monotonic()
+    t_setup_start = time.monotonic()
     network_created = False
 
     try:
@@ -112,13 +112,15 @@ def sandboxed_run(
             _create_network(runtime, egress_spec.network_name)
             network_created = True
 
-        t_setup = time.monotonic()
-        setup_s = t_setup - t_start
+        # setup_s = host-side setup overhead (network create; proxy start added by RW1).
+        # The in-container startup is NOT separable in the subprocess.run blocking shape.
+        setup_s = time.monotonic() - t_setup_start
         if setup_s > SETUP_TEARDOWN_P95_TARGET_S:
             _log.warning(
-                "sandbox: setup exceeded p95 target: %.2fs > %.2fs",
+                "sandbox: setup overhead exceeded p95 target: %.2fs > %.2fs (call_id=%s)",
                 setup_s,
                 SETUP_TEARDOWN_P95_TARGET_S,
+                call_id,
             )
 
         result = _run_container(full_argv, cwd=cwd, timeout_s=timeout_s, max_bytes=max_bytes)
@@ -132,19 +134,21 @@ def sandboxed_run(
         _safe_kill(runtime, container_name)
         if network_created and egress_spec is not None and egress_spec.network_name:
             _remove_network(runtime, egress_spec.network_name)
+        # teardown_s = host-side teardown overhead (kill + rm + net rm; proxy stop added by RW1).
         teardown_s = time.monotonic() - t_teardown_start
-        total_s = time.monotonic() - t_start
+        overhead_s = setup_s + teardown_s
         _log.debug(
-            "sandbox: call_id=%s setup+teardown=%.3fs (teardown=%.3fs) p95_target=%.1fs",
+            "sandbox: call_id=%s overhead=%.3fs (setup=%.3fs teardown=%.3fs) p95_target=%.1fs",
             call_id,
-            total_s,
+            overhead_s,
+            setup_s,
             teardown_s,
             SETUP_TEARDOWN_P95_TARGET_S,
         )
-        if total_s > SETUP_TEARDOWN_P95_TARGET_S:
+        if overhead_s > SETUP_TEARDOWN_P95_TARGET_S:
             _log.warning(
-                "sandbox: total call time %.2fs exceeds p95 target %.2fs (call_id=%s)",
-                total_s,
+                "sandbox: host-side overhead %.2fs exceeds p95 target %.2fs (call_id=%s)",
+                overhead_s,
                 SETUP_TEARDOWN_P95_TARGET_S,
                 call_id,
             )

@@ -405,7 +405,10 @@ def _load_email_config(config_path: Path | None) -> dict[str, Any] | None:
         return None
 
 
-def _make_send_email(provider_config: dict[str, Any] | None) -> _NetworkToolFn:
+def _make_send_email(
+    provider_config: dict[str, Any] | None,
+    posture_resolver: PostureResolver | None = None,
+) -> _NetworkToolFn:
     """Build a send_email impl using config-driven HTTP (ADR-036 D3-ii).
 
     Reads endpoint + api_key_env + from_addr + allowed_domains from provider_config.
@@ -413,6 +416,8 @@ def _make_send_email(provider_config: dict[str, Any] | None) -> _NetworkToolFn:
     Domain-allowlist (primary) + optional explicit recipient list.
     Unconfigured allowlist -> fail-closed (cannot send to unbounded recipient set).
     SSRF N/A: endpoint is operator-trusted config, NOT in the param allowlist.
+    When posture_resolver is set, logs a per-call WARNING that send_email runs unsandboxed
+    by design (R9 DLP tail, ADR-037 D5) — execution unchanged, warning is the transparency.
     """
     allowed: frozenset[str] = frozenset({"to", "subject", "body"})
 
@@ -437,6 +442,17 @@ def _make_send_email(provider_config: dict[str, Any] | None) -> _NetworkToolFn:
 
     def _impl(params: dict[str, Any]) -> LocalToolOutput:
         _check_disallowed(params, allowed, "send_email")
+
+        # Transparency warning: send_email runs unsandboxed by design (R9 DLP tail,
+        # ADR-037 D5). Log on every call when a sandbox posture is configured so the
+        # operator knows the container boundary does not cover the recipient field.
+        if posture_resolver is not None:
+            _log.warning(
+                "sandbox: send_email is running UNSANDBOXED by design — "
+                "R9 (recipient-exfil DLP tail) is NOT retired by ADR-037 D5. "
+                "Within-allowed-domain exfil persists. Sandbox posture: %s",
+                posture_resolver.resolve().value,
+            )
 
         to_addr = str(params.get("to", ""))
         subject = str(params.get("subject", ""))
@@ -543,5 +559,5 @@ def build_network_tool_registry(
     return {
         "web_fetch": _make_web_fetch(posture_resolver=posture_resolver, sandbox_root=sandbox_root),
         "web_search": _make_web_search(provider_config),
-        "send_email": _make_send_email(email_config),
+        "send_email": _make_send_email(email_config, posture_resolver=posture_resolver),
     }
