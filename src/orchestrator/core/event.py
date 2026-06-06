@@ -402,13 +402,23 @@ PENDING_RESOLUTION_TYPES: frozenset[EventType] = frozenset(
 # Author format
 # ---------------------------------------------------------------------------
 
-_AUTHOR_PATTERN = re.compile(r"^(user|system|agent:[a-zA-Z0-9_-]+)$")
+# ADR-039 D1: generalised to include user:<id> (P4.5-4).
+# bare "user" stays valid (backward-compat for stored events + system default).
+_AUTHOR_PATTERN = re.compile(
+    r"^(user|user:[a-zA-Z0-9_-]+|system|agent:[a-zA-Z0-9_-]+)$"
+)
 
 
 def is_valid_author(author: str) -> bool:
-    """True if `author` matches `user` | `agent:<id>` | `system`.
+    """True if `author` matches the valid author set.
 
-    `<id>` is one or more of `[a-zA-Z0-9_-]`.
+    Valid forms (ADR-039 D1, P4.5-4):
+      ``user``                  — bare legacy / system-default (backward-compat)
+      ``user:<id>``             — authenticated user (P4.5+)
+      ``agent:<id>``            — agent
+      ``system``                — system
+
+    ``<id>`` is one or more of ``[a-zA-Z0-9_-]``.
     """
     return bool(_AUTHOR_PATTERN.fullmatch(author))
 
@@ -424,6 +434,18 @@ def build_author(agent_id: str) -> str:
     if not agent_id:
         raise ValueError("agent_id must be non-empty")
     return f"agent:{agent_id}"
+
+
+def build_user_author(user_id: str) -> str:
+    """Return the canonical Event.author string for an authenticated user.
+
+    Single point of truth for the ``user:<id>`` format (ADR-039 D1/D7).
+    Stamped server-side from the verified Principal — never from the request.
+    Raises ``ValueError`` on empty ``user_id``.
+    """
+    if not user_id:
+        raise ValueError("user_id must be non-empty")
+    return f"user:{user_id}"
 
 
 # ---------------------------------------------------------------------------

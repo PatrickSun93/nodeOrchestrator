@@ -55,6 +55,7 @@ from orchestrator.core.event import (
     ToolCallMeta,
     ToolCallPendingMeta,
     build_author,
+    build_user_author,
     generate_event_id,
     generate_room_id,
     now_ms,
@@ -513,11 +514,11 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         response_model=IntentResponse,
         responses={422: {"model": IntentError}, 500: {"model": IntentError}},
     )
-    async def _post_intent(room_id: str, body: IntentRequest) -> IntentResponse:
+    async def _post_intent(room_id: str, body: IntentRequest, request: Request) -> IntentResponse:
         """Write path: forge-check → append → run_turn → cursor-diff → publish.
 
-        Security spine (ADR-025 D4):
-          - author hardcoded "user" — cannot be forged by client
+        Security spine (ADR-025 D4 / ADR-039 D1/D7):
+          - author stamped server-side from the verified principal (P4.5-3)
           - id + timestamp server-stamped
           - type allowlist enforced before any append (fail-closed)
           - metadata validated by validate_metadata (shape-only, not authority)
@@ -547,13 +548,19 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         except MetadataValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        # Server-stamp: author/id/timestamp — client cannot set these (D4)
+        # Server-stamp: author/id/timestamp — client cannot set these (D4/D7)
+        # ADR-039 D1/D7: author stamped from the verified principal (P4.5-3),
+        # never from the request body. principal is on request.state after auth.
+        _principal = getattr(request.state, "principal", None)
+        _author = (
+            build_user_author(_principal.user_id) if _principal is not None else "user"
+        )
         user_event = Event(
             id=generate_event_id(),
             parent_id=body.parent_id,
             room_id=rid,
             type=body.type,
-            author="user",  # HARDCODED — never read from request
+            author=_author,  # server-derived from principal — never from request
             timestamp=now_ms(),
             content=body.content,
             metadata=validated_meta,

@@ -29,6 +29,7 @@ from orchestrator.core.event import (
     ToolCallMeta,
     ToolCallPendingMeta,
     ToolResultMeta,
+    build_user_author,
     is_valid_author,
     now_ms,
     validate_metadata,
@@ -43,8 +44,15 @@ class TestIsValidAuthor:
     @pytest.mark.parametrize(
         "valid",
         [
+            # bare user (backward-compat, ADR-039 D1)
             "user",
+            # authenticated user forms (P4.5-4)
+            "user:alice",
+            "user:1",
+            "user:user-1_OK",
+            # system
             "system",
+            # agent forms
             "agent:operator",
             "agent:skeptic",
             "agent:my-custom_agent_v2",
@@ -66,11 +74,30 @@ class TestIsValidAuthor:
             "agent:bad/name",
             "agent: trailing",
             "human",
-            "user:1",
+            # user:<id> invalid ids
+            "user:",
+            "user:bad space",
+            "user:bad@sym",
+            "user:bad/slash",
         ],
     )
     def test_invalid(self, invalid: str) -> None:
         assert not is_valid_author(invalid)
+
+
+class TestBuildUserAuthor:
+    def test_returns_user_prefix(self) -> None:
+        assert build_user_author("alice") == "user:alice"
+
+    def test_valid_result(self) -> None:
+        assert is_valid_author(build_user_author("alice"))
+
+    def test_empty_raises(self) -> None:
+        with pytest.raises(ValueError):
+            build_user_author("")
+
+    def test_result_differs_from_bare_user(self) -> None:
+        assert build_user_author("alice") != "user"
 
 
 # ---------------------------------------------------------------------------
