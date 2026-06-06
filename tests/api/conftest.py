@@ -91,7 +91,11 @@ def ctx(db_path: Path) -> Generator[AppContext, None, None]:
     reader_store = EventStore(reader_conn)
 
     writer_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-writer")
-    reader_exec = ThreadPoolExecutor(max_workers=2, thread_name_prefix="test-reader")
+    # max_workers=1: reader_conn is a single SQLite connection; concurrent
+    # executor threads sharing it cause undefined behaviour (check_same_thread=False
+    # suppresses the guard but does NOT add thread safety).  Serialising reads
+    # via a single worker is correct for tests and fixes the concurrent-WS hang.
+    reader_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-reader")
     bus = RoomEventBus()
 
     context = AppContext(

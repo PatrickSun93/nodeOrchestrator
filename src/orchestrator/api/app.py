@@ -16,7 +16,7 @@ import sqlite3
 import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -894,31 +894,37 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         principal = None
 
         # Try session cookie (browsers send cookies on WS upgrade)
-        ws_session_id = websocket.cookies.get("session_id")
-        if ws_session_id:
-            principal = await loop.run_in_executor(
-                ctx.reader_executor,
-                lambda: validate_session(reader_conn, ws_session_id),
-            )
-
-        # Try Bearer token in query param (programmatic clients)
-        if principal is None:
-            ws_token = websocket.query_params.get("token")
-            if ws_token:
+        try:
+            ws_session_id = websocket.cookies.get("session_id")
+            if ws_session_id:
                 principal = await loop.run_in_executor(
                     ctx.reader_executor,
-                    lambda: validate_token(reader_conn, ws_token),
+                    lambda: validate_session(reader_conn, ws_session_id),
                 )
 
-        # Try Authorization: Bearer header (programmatic clients via header)
-        if principal is None:
-            auth_hdr = websocket.headers.get("Authorization", "")
-            if auth_hdr.startswith("Bearer "):
-                raw_token = auth_hdr[7:]
-                principal = await loop.run_in_executor(
-                    ctx.reader_executor,
-                    lambda: validate_token(reader_conn, raw_token),
-                )
+            # Try Bearer token in query param (programmatic clients)
+            if principal is None:
+                ws_token = websocket.query_params.get("token")
+                if ws_token:
+                    principal = await loop.run_in_executor(
+                        ctx.reader_executor,
+                        lambda: validate_token(reader_conn, ws_token),
+                    )
+
+            # Try Authorization: Bearer header (programmatic clients via header)
+            if principal is None:
+                auth_hdr = websocket.headers.get("Authorization", "")
+                if auth_hdr.startswith("Bearer "):
+                    raw_token = auth_hdr[7:]
+                    principal = await loop.run_in_executor(
+                        ctx.reader_executor,
+                        lambda: validate_token(reader_conn, raw_token),
+                    )
+        except Exception:
+            # Auth executor raised — close cleanly so client is never left hanging.
+            with suppress(Exception):
+                await websocket.close(code=1011)  # 1011 = Internal Error
+            return
 
         if principal is None:
             # Reject BEFORE accept() — no half-open-stream window

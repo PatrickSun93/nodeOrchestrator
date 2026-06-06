@@ -143,7 +143,7 @@ class TestMultipleConnections:
             except Exception as exc:
                 errors.append(exc)
 
-        threads = [threading.Thread(target=_collect, args=(i,)) for i in range(2)]
+        threads = [threading.Thread(target=_collect, args=(i,), daemon=True) for i in range(2)]
         for t in threads:
             t.start()
         for t in threads:
