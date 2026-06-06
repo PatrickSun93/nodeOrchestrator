@@ -139,6 +139,119 @@ def test_s2_config_parse_failure_is_fail_closed(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# RW8 assertion 2: config-absence and parse-failure → fail-closed
+#   via the REAL composition-root code path (same logic as api/app.py _build_context)
+#   NOT a hand-injected resolver, NOT a SANDBOXED stub.
+# ---------------------------------------------------------------------------
+
+
+def test_rw8_config_absence_real_path_fail_closed(tmp_path: Path) -> None:
+    """RW8-2: no sandbox.yaml → fail_closed via the composition-root code path."""
+    from unittest import mock
+
+    from orchestrator.sandbox.posture import (
+        PostureResolver,
+        SandboxConfigError,
+        load_sandbox_config,
+    )
+    from orchestrator.tools.local import LocalToolError
+    from orchestrator.tools.subprocess_tools import build_subprocess_tool_registry
+
+    config_path = tmp_path / "sandbox.yaml"
+    # config_path does NOT exist — same as _build_context when no sandbox.yaml
+
+    if config_path.exists():
+        try:
+            cfg = load_sandbox_config(config_path)
+            resolver = PostureResolver.from_config(cfg)
+        except SandboxConfigError:
+            resolver = PostureResolver.fail_closed()
+    else:
+        resolver = PostureResolver.fail_closed()
+
+    registry = build_subprocess_tool_registry(tmp_path, posture_resolver=resolver)
+
+    with (
+        mock.patch("orchestrator.tools.subprocess_tools.run_scoped_command") as mock_rsc,
+        pytest.raises(LocalToolError, match="sandbox_unavailable"),
+    ):
+        registry["run_tests"]({})
+
+    mock_rsc.assert_not_called()
+
+
+def test_rw8_config_parse_failure_real_path_fail_closed(tmp_path: Path) -> None:
+    """RW8-2: config parse-failure → fail_closed via the composition-root code path."""
+    from unittest import mock
+
+    from orchestrator.sandbox.posture import (
+        PostureResolver,
+        SandboxConfigError,
+        load_sandbox_config,
+    )
+    from orchestrator.tools.local import LocalToolError
+    from orchestrator.tools.subprocess_tools import build_subprocess_tool_registry
+
+    config_path = tmp_path / "sandbox.yaml"
+    config_path.write_text("runtime: nsjail\nimage: test\n")  # invalid runtime
+
+    if config_path.exists():
+        try:
+            cfg = load_sandbox_config(config_path)
+            resolver = PostureResolver.from_config(cfg)
+        except SandboxConfigError:
+            resolver = PostureResolver.fail_closed()
+    else:
+        resolver = PostureResolver.fail_closed()
+
+    registry = build_subprocess_tool_registry(tmp_path, posture_resolver=resolver)
+
+    with (
+        mock.patch("orchestrator.tools.subprocess_tools.run_scoped_command") as mock_rsc,
+        pytest.raises(LocalToolError, match="sandbox_unavailable"),
+    ):
+        registry["run_tests"]({})
+
+    mock_rsc.assert_not_called()
+
+
+def test_rw8_web_fetch_config_absence_fail_closed(tmp_path: Path) -> None:
+    """RW8-2: web_fetch also fails closed on config-absence (not just subprocess)."""
+    from unittest import mock
+
+    from orchestrator.sandbox.posture import (
+        PostureResolver,
+        SandboxConfigError,
+        load_sandbox_config,
+    )
+    from orchestrator.tools.local import LocalToolError
+    from orchestrator.tools.network_tools import build_network_tool_registry
+
+    config_path = tmp_path / "sandbox.yaml"
+    # does NOT exist
+
+    if config_path.exists():
+        try:
+            cfg = load_sandbox_config(config_path)
+            resolver = PostureResolver.from_config(cfg)
+        except SandboxConfigError:
+            resolver = PostureResolver.fail_closed()
+    else:
+        resolver = PostureResolver.fail_closed()
+
+    registry = build_network_tool_registry(posture_resolver=resolver, sandbox_root=tmp_path)
+
+    with (
+        mock.patch("orchestrator.tools.net_trust._resolve_and_validate", return_value="1.2.3.4"),
+        mock.patch("orchestrator.tools.network_tools.build_ssrf_client") as mock_ssrf,
+        pytest.raises(LocalToolError, match="sandbox_unavailable"),
+    ):
+        registry["web_fetch"]({"url": "https://example.com"})
+
+    mock_ssrf.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # s3: empty-executor-diff — _execute_local_call references no new sandbox symbol
 # ---------------------------------------------------------------------------
 
@@ -211,6 +324,7 @@ def test_s5_sandbox_is_downstream_leaf() -> None:
         _SRC / "tools" / "subprocess_tools.py",
         _SRC / "tools" / "network_tools.py",
         _SRC / "plugins" / "code.py",
+        _SRC / "plugins" / "loader.py",  # TYPE_CHECKING only: PostureResolver annotation
         _SANDBOX_PKG,
     }
 

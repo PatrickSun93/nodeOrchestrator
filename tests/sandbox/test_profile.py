@@ -183,6 +183,59 @@ def test_seccomp_arg_present_in_build_args(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# RW3 / RW8 assertion 4: seccomp asset is ALLOW-default (not ERRNO-default)
+# ---------------------------------------------------------------------------
+
+
+def test_rw8_seccomp_default_action_is_allow() -> None:
+    """RW8-4: defaultAction must be SCMP_ACT_ALLOW (not SCMP_ACT_ERRNO which bricks container)."""
+    import json
+    from pathlib import Path as _Path
+
+    seccomp_path = (
+        _Path(__file__).parent.parent.parent
+        / "src" / "orchestrator" / "sandbox" / "seccomp.json"
+    )
+    data = json.loads(seccomp_path.read_text(encoding="utf-8"))
+    assert data["defaultAction"] == "SCMP_ACT_ALLOW", (
+        "seccomp.json defaultAction must be SCMP_ACT_ALLOW (not ERRNO — that bricks the "
+        "container via --security-opt seccomp= which replaces, not merges)"
+    )
+
+
+def test_rw8_seccomp_no_errno_default_action() -> None:
+    """RW8-4: ensure the OLD broken defaultAction=SCMP_ACT_ERRNO is absent."""
+    import json
+    from pathlib import Path as _Path
+
+    seccomp_path = (
+        _Path(__file__).parent.parent.parent
+        / "src" / "orchestrator" / "sandbox" / "seccomp.json"
+    )
+    data = json.loads(seccomp_path.read_text(encoding="utf-8"))
+    assert data.get("defaultAction") != "SCMP_ACT_ERRNO", (
+        "defaultAction must not be SCMP_ACT_ERRNO (bricks all syscalls in container)"
+    )
+
+
+def test_rw8_seccomp_denylist_superset_of_p4_3_set() -> None:
+    """RW8-4: denylist ⊇ the P4.3 enumerated additional denials."""
+    syscalls = set(get_additional_deny_syscalls())
+    p4_3_required = {
+        "unshare", "clone", "bpf", "io_uring_setup",
+        "add_key", "request_key", "keyctl", "ptrace", "mount",
+    }
+    # Also check Docker default-blocked set is represented
+    docker_default_sample = {
+        "acct", "kexec_load", "pivot_root", "reboot", "settimeofday", "sysfs",
+    }
+    missing_p4_3 = p4_3_required - syscalls
+    missing_docker = docker_default_sample - syscalls
+    assert not missing_p4_3, f"Seccomp missing P4.3 enumerated denials: {sorted(missing_p4_3)}"
+    assert not missing_docker, f"Seccomp missing Docker default sample: {sorted(missing_docker)}"
+
+
+# ---------------------------------------------------------------------------
 # Proc masking
 # ---------------------------------------------------------------------------
 

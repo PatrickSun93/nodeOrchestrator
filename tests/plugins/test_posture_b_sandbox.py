@@ -148,6 +148,75 @@ def test_no_resolver_has_no_sandbox_routing(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# RW8 assertion 3: plugin route reaches the container via load_plugin_code
+#   - resolver IS forwarded from load_plugin_code to _PostureBFn
+#   - -i flag present
+#   - profile flags (--cap-drop, --network none, --read-only) present
+# ---------------------------------------------------------------------------
+
+
+def test_rw8_load_plugin_code_sets_resolver(tmp_path: Path) -> None:
+    """RW8-3: load_plugin_code forwards posture_resolver to _PostureBFn."""
+    from orchestrator.plugins.code import _PostureBFn, load_plugin_code
+    from orchestrator.sandbox.posture import PostureResolver, SandboxConfig
+
+    module_file = tmp_path / "tools_impl.py"
+    module_file.write_text("def my_tool(args): return 'ok'\n")
+
+    resolver = PostureResolver(config=SandboxConfig(image="test:latest"), runtime=None)
+
+    result = load_plugin_code(
+        tmp_path, "test-plugin",
+        {"test_tool": "tools_impl:my_tool"},
+        provenance="fetched",
+        posture_resolver=resolver,
+        sandbox_root=tmp_path,
+    )
+
+    fn = result["test_tool"]
+    assert isinstance(fn, _PostureBFn), "load_plugin_code must return _PostureBFn for fetched"
+    assert fn._posture_resolver is resolver, "_PostureBFn must have resolver set (not None)"
+    assert fn._sandbox_root == tmp_path, "_PostureBFn must have sandbox_root set"
+
+
+def test_rw8_sandboxed_params_have_i_flag(tmp_path: Path) -> None:
+    """RW8-3: container params for plugin spawn include -i (MCP-stdio stdin)."""
+    resolver = _make_resolver(available=True)
+    fn = _make_fn(tmp_path, resolver=resolver)
+
+    rt = SandboxRuntime(kind="docker", cli="/usr/bin/docker")
+    params, _cname = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
+
+    assert "-i" in params.args, "Container args must include -i for MCP-stdio stdin"
+
+
+def test_rw8_sandboxed_params_have_profile_flags(tmp_path: Path) -> None:
+    """RW8-3: container params include isolation profile flags."""
+    resolver = _make_resolver(available=True)
+    fn = _make_fn(tmp_path, resolver=resolver)
+
+    rt = SandboxRuntime(kind="docker", cli="/usr/bin/docker")
+    params, _cname = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
+
+    args_str = " ".join(params.args)
+    assert "--cap-drop" in args_str, "Profile must include --cap-drop"
+    assert "--read-only" in args_str, "Profile must include --read-only rootfs"
+    assert "--network" in args_str, "Profile must include network isolation"
+    assert "none" in args_str, "Plugin spawn uses deny-default network"
+
+
+def test_rw8_container_name_returned_from_params(tmp_path: Path) -> None:
+    """RW8-3: _build_sandboxed_harness_params returns a non-empty container name."""
+    resolver = _make_resolver(available=True)
+    fn = _make_fn(tmp_path, resolver=resolver)
+
+    rt = SandboxRuntime(kind="docker", cli="/usr/bin/docker")
+    _params, cname = fn._build_sandboxed_harness_params(runtime=rt, scoped={})
+
+    assert cname, "Container name must be non-empty (for targeted kill in finally)"
+
+
+# ---------------------------------------------------------------------------
 # pb6 still passes (executor byte-frozen — _execute_local_call unchanged)
 # ---------------------------------------------------------------------------
 
