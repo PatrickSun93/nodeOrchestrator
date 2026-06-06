@@ -1,7 +1,17 @@
 task_id: P4.3
-state: awaiting_architect_accept
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-06T00:26:48.613191Z'
+last_transition_at: '2026-06-06T01:11:23.179135Z'
 cycle_started_at: '2026-06-05T23:48:20.009713Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-06T01:11:23.179135Z'
+  actor: architect
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: ADR-037 Accepted (container syscall/egress sandbox) by architect after plan-stage
+    dual-lens cleared ROUND-2 (R0-A clean + R0-B round-2 clean; R0-B round-1 BLOCKING
+    R1 egress-mechanism RESOLVED by parent-pinned-IP per-call egress + DNS-disabled
+    + cross-platform-honest fail-closed; all 5 yellows resolved). Plan merged to main.
+    requires_cross_family_review=true (impl-stage dual-lens). Container sandbox retires
+    R1-R9. Advancing to junior impl (P4.3-0..13 serial).
 requires_cross_family_review: true
