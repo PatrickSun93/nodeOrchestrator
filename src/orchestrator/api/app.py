@@ -552,9 +552,8 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         # ADR-039 D1/D7: author stamped from the verified principal (P4.5-3),
         # never from the request body. principal is on request.state after auth.
         _principal = getattr(request.state, "principal", None)
-        _author = (
-            build_user_author(_principal.user_id) if _principal is not None else "user"
-        )
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+        _author = build_user_author(_principal.user_id)
         user_event = Event(
             id=generate_event_id(),
             parent_id=body.parent_id,
