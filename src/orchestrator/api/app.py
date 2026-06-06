@@ -216,6 +216,8 @@ def _resolve_plugin_registry(
     """
     import logging
 
+    import yaml
+
     from orchestrator.llm.exceptions import ConfigError
     from orchestrator.plugins.provenance import (
         REGISTRY_REFUSE_ALL,
@@ -227,7 +229,7 @@ def _resolve_plugin_registry(
     if config_path.exists():
         try:
             return load_plugin_registry(config_path)
-        except ConfigError as exc:
+        except (ConfigError, yaml.YAMLError) as exc:
             logging.getLogger("orchestrator.api.app").warning(
                 "plugins.yaml parse failed → refuse-all sentinel (ADR-038 D2): %s", exc
             )

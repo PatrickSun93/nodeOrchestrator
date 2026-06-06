@@ -59,6 +59,27 @@ def test_rw2_malformed_plugins_yaml_returns_sentinel_and_warns(
     assert any("parse failed" in r.message for r in caplog.records)
 
 
+def test_rw2_unparseable_yaml_returns_sentinel_and_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Unparseable YAML syntax (yaml.YAMLError) → sentinel + WARNING, no crash (RW2/R0-B Y2).
+
+    yaml.safe_load raises yaml.YAMLError (e.g. ScannerError) on invalid syntax,
+    NOT ConfigError.  _resolve_plugin_registry must catch yaml.YAMLError too so a
+    syntactically broken plugins.yaml does not propagate uncaught through _build_context.
+    """
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    # Mix block-sequence and flow-mapping — yaml.safe_load raises ScannerError
+    (config_dir / "plugins.yaml").write_text(
+        "plugins:\n  - {\n  bad: yaml [syntax\n", encoding="utf-8"
+    )
+    with caplog.at_level(logging.WARNING, logger="orchestrator.api.app"):
+        result = _resolve_plugin_registry(config_dir)
+    assert result is REGISTRY_REFUSE_ALL
+    assert any("parse failed" in r.message for r in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # rw3: valid plugins.yaml → entries applied
 # ---------------------------------------------------------------------------
