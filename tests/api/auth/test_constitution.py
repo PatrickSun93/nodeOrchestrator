@@ -245,9 +245,11 @@ class TestLensAFailClosed:
         """
         from starlette.websockets import WebSocketDisconnect
 
-        with pytest.raises(WebSocketDisconnect) as exc_info:
-            with unauth_client.websocket_connect("/rooms/any-room/stream"):
-                pass
+        with (
+            pytest.raises(WebSocketDisconnect) as exc_info,
+            unauth_client.websocket_connect("/rooms/any-room/stream"),
+        ):
+            pass
         assert exc_info.value.code == 1008, (
             f"expected close 1008 (Policy Violation), got {exc_info.value.code}"
         )
