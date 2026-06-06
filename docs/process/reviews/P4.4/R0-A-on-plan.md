@@ -1,0 +1,68 @@
+---
+task_id: P4.4
+round: R0-A-on-plan
+reviewer_role: architect-partner
+reviews_acked:
+  - architect-briefs/P4.4.md
+  - senior-plans/P4.4.md
+  - decisions/ADR-038-plugin-registry-lifecycle.md
+  - reviews/P4.4/external-r0b-prompt.md
+verdict: needs_architect
+findings_count: { red: 0, yellow: 5, green: 4 }
+---
+
+# R0-A-on-plan — P4.4 (plugin registry + lifecycle + admission + namespacing)
+
+**Scope of this review:** the senior plan (`senior-plans/P4.4.md`, atomics P4.4-0..6 + §5) + ADR-038 (Proposed), verify-cited against the live substrate (`plugins/{provenance,loader,schema,code,fetch}.py`, `api/app.py:240-328`, `config/tools.yaml`, the four live plugin manifests). I probed the six dispatch lenses; I did **not** relitigate the five ratified DPs (config-file / boot-only / digest-floor / per-call / namespace-always) — only whether the design **honors** them.
+
+**Bottom line — `needs_architect`.** The plan + ADR-038 are high-quality and honor all five DPs; provenance-un-forgeability, malformed→refuse-all, and no-LLM-judgment/no-gate-bypass are designed correctly. **No 🔴** — I found no traced admission-bypass, provenance-forge, silent fail-open, or pierced shadow-bypass gauntlet in the **design**. The five 🟡 are precision / placement / sizing refinements; the architect routes (most read α-absorb, but two — Y1 disabled-MCP placement, Y3 namespacing ripple — are substantive enough to tighten **before** junior dispatch). I route nothing.
+
+---
+
+## Lens 1 — provenance / posture un-forgeable → 🟢 (sound) + one fail-closed edge
+
+The design is correct: `RegistryEntry` carries **no** `provenance`/`posture` field (ADR-038 D1 "Provenance is NOT a field"; plan P4.4-1 "no provenance/posture field is accepted from the YAML, test-asserted"). Provenance stays host-derived-by-root (ADR-031 D3, `loader.py:531-550` disjoint-root guard, un-launderable). The **shape↔root coherence guard** (plan P4.4-2: a digest-bearing entry for a `plugins/` plugin, or a bare entry for a `fetched_plugins/` plugin → refuse) is a genuine added defense, fail-closed. An entry can neither turn fetched→operator-placed (the Posture-A-imports-fetched-code worst case) nor declare posture. **Honored.**
+
+**Edge (fail-closed, note-only):** the registry is keyed by `plugin_id`, but a subdir of the same name can exist under **both** roots (the disjoint-root guard forbids nested roots, not same-named children). One entry then applies to both candidates; the coherence guard refuses the shape-mismatched one — so it **fails closed**, not open. Worth the junior asserting `plugin_id` uniqueness across roots (or root-qualifying the lookup) so the failure is a clear refusal rather than an incidental coherence-mismatch. Not a finding.
+
+## Lens 2 — fetched admission floor → 🟢 (not weakened) + 🟡 Y2 (two trust-claim imprecisions)
+
+**Floor intact (🟢):** the generalisation keeps `check_fetched_activation` semantics — a fetched plugin still requires a digest-bearing entry (plan P4.4-1/-2 acceptance: "a fetched entry missing `digest` or `source_url` raises"; "fetched-no-entry still refused"). The old parse-time guarantee "every activation entry has a digest" is replaced by the **shape-coherence guard** (Lens 1), which is what now enforces "fetched ⇒ digest-bearing entry." An `enabled:true` bare entry for a fetched plugin → shape-mismatch → refused. **Honored.**
+
+**🟡 Y2 — "the digest floor re-runs at boot" over-claims; align with where integrity is actually established.** ADR-038 D2 (update bullet, L63) and the r0b-prompt lens b.5 (L47) both state the digest-before-extract floor **re-runs at boot**. It does **not**: `fetch.py::fetch_plugin_bundle` hashes + verifies the compressed bytes **at fetch time** (a separate action, never called from `_build_context`); `load_plugins` at boot re-evaluates only the **digest-bearing-entry requirement**, not the on-disk bundle's bytes (no re-hash exists in `loader.py`). Honest-inscription is constitutional (roadmap §10) and this is the trust ADR — it should claim only what holds: byte-integrity is established **once, at fetch** (ADR-031 D5); boot re-checks the *entry requirement* + version-coherence. A post-fetch on-disk tamper is **out of scope** (bounded by the same host-FS-trust as operator-placed plugins — an attacker who can rewrite `fetched_plugins/` can equally drop an operator-placed plugin needing no digest). **Lean α — wording fix in D2 + r0b-prompt b.5; not new code** (boot re-verification is low marginal value given the threat model). If the architect *wants* boot-time re-verification as hardening, that is a new atomic — but I'd flag it as low-value.
+
+**🟡 Y2b — version-coherence is operator-coherence, not a security control (frame it so R0-B doesn't mis-flag).** §5 #4 / ADR-038 D2 introduce `registry.version == manifest.version` (fetched) and frame the mismatch refusal as "fail-closed." But `manifest.version` is **plugin-self-asserted** (an untrusted fetched bundle can claim any version); the **digest** is the integrity anchor that binds bytes. So version-coherence catches operator *mistakes* (pinned the wrong version), not *attacks*, and "version omitted → no check" is **fail-safe** (the digest still binds), not a hole. The r0b-prompt lens a.2 ("version omitted → check bypassed → is that a hole?") will mis-prime R0-B unless the ADR states the check's true weight. **Lean α — clarify in D2 that version-coherence is an operator-intent/update-coherence check (digest is the integrity anchor), so version-absent is fail-safe.** *(Y2 + Y2b are the same class — trust-claim precision in D2 — counted as one 🟡.)*
+
+## Lens 3 — malformed-registry refuse-all, no fail-open re-enabling disabled → 🟢
+
+Correct and fail-closed. Plan P4.4-2 + ADR-038 D2: **malformed `config/plugins.yaml` → load zero plugins (refuse-all, loud)**; **absent → today's shipped defaults** (operator-placed by presence, fetched none). The absent-vs-malformed distinction is the right one (the P4.3 `_resolve_sandbox_posture` precedent) and explicitly avoids the dangerous path the dispatch named — there is **no** "malformed → ignore registry → presence-default" fall-through that would re-enable an operator-disabled plugin. The blast radius is real and **surfaced** (§5 #2): a typo in `config/plugins.yaml` also refuses the four live operator-placed plugins (`context`/`demo`/`demo_posture_b`/`insights`) — the senior correctly flagged this as the operationally-brittle cost of refuse-all and routed it to architect-confirm. **Honored.** *(Confirming refuse-all is a §5 architect-confirm item, not a finding.)*
+
+## Lens 4 — disabled truly unreachable incl. MCP session → 🟡 Y1 (pin gate placement)
+
+The **intent** is correct (plan P4.4-2: "skip (do not load) any plugin whose entry sets `enabled:false`" → absent from merged result). But the dispatch specifically flags **"含 MCP session,"** and that property is **placement-sensitive and not pinned**. In `loader.py`, `_load_plugin` builds the plugin's **MCP sessions at step 4** (`build_mcp_tool_registry_and_sessions_from_config` — a live stdio subprocess) *before* the result is returned/merged. Two of the four live plugins ship MCP servers (`demo` → `demo_filesystem`, `insights` → `insights_db`). **If the enabled-gate is placed after step 4 (i.e. "built then not merged"), disabling `demo` still spawns the `demo_filesystem` subprocess — a started/leaked session, not "unreachable."** The plan's "Where: `loader.py` (`load_plugins` + `_load_plugin` gate)" is ambiguous, and test (5) "disabled → not loaded" asserts only absence-from-merge.
+
+**Lean α — pin the placement + strengthen the test:** the enabled-gate must short-circuit in the `load_plugins` **loop, before `_load_plugin` is called** (i.e. resolve the entry → `continue` on `enabled:false`), so **no** non-code surface (esp. an MCP session) is ever constructed for a disabled plugin; P4.4-5 test (5) should assert **no MCP session / no subprocess** for a disabled plugin carrying `mcp_servers`, not merely absence from `merged`. This is the highest-value tightening — it converts the dispatch's lens-4 invariant from "implied" to "guaranteed."
+
+## Lens 5 — namespacing keeps host-collision/shadow-bypass fail-closed → 🟡 Y3 (ripple sizing) + 🟡 Y4 (order-of-ops)
+
+**Shadow-bypass acceptance is correct** (plan P4.4-3 / ADR-038 D4: host-collision + within-plugin duplicate stay fail-closed; only the cross-plugin branch namespaces; "a plugin `tool_impl` shadowing a host `local_tool` is still **refused**"). Cross-plugin collisions become structurally impossible under always-prefix. **Two refinements:**
+
+**🟡 Y3 — the namespacing ripple is multi-plugin and functionally-loaded, not "light / UX-only."** The plan frames A5 as "Light/single-lens — purely registry/dispatch naming" and "(content/UX ripple, not trust)." The live substrate shows the ripple is larger: **always-prefix orphans the host-pre-classification.** `config/tools.yaml:53` classifies bare `word_count` (rev-10 → AUTO) — the ADR-029 D5/D7 + Amendment-1 **name-adoption** path; under namespacing the plugin's tool becomes `demo__word_count`, the bare classification is orphaned, and the demo's documented **AUTO_EXECUTE path silently downgrades to default-0 → HARD_CONFIRM**. The same pattern is claimed for `context`'s `context_summary` (its manifest comment asserts a host-pre-classify path). All four plugins + their host-pre-classifications + the end-to-end demo test fixtures are in the ripple. The fail **direction is safe** (orphan → more gating, never less) so this is **not a trust finding** — but it is a functional regression + a plan-sizing miss. **Lean α — P4.4-3 acceptance should (i) name the host-pre-classification re-binding (`config/tools.yaml` `word_count`→`demo__word_count`, `context_summary`→`context__context_summary` if classified) as part of the promotion-impact grep, and (ii) assert each demo's documented gate path still resolves post-namespacing (AUTO for the host-classified tool, HARD for the plugin-classified `text_stats`).** Re-characterise the ripple as "gate-tier re-binding (fail-safe) + UX," not "UX-only."
+
+**🟡 Y4 — pin the order-of-operations so the junior can't implement namespace-first.** "Always-prefix" + "host-collision still refused" only co-hold if the host/within-plugin collision check runs on the **bare** name (and refuses) *before/independent-of* the cross-plugin prefixing. The alternative impl — prefix first, then check — would turn a plugin's `tool_impl: read_file` into `plugin__read_file`, which **never collides** with host `read_file`, silently **coexisting** as a default-0 tool instead of the intended **loud refusal**. The plan's acceptance says "refused," which is right, but the **mechanism** is not spelled out and the test should assert plugin **refusal** (not merely "host `read_file` unchanged"). **Lean α — ADR-038 D4 / P4.4-3 inscribe: host-collision (incl. shadow-bypass, `loader.py:253-262`) + within-plugin checks evaluate bare names and refuse; namespacing applies only to the cross-plugin merge; the shadow test asserts the plugin is rejected.**
+
+## Lens 6 — no new LLMPurpose / admission not gated / executor byte-frozen → 🟢 + 🟡 Y5 (name the empty-diff invariant)
+
+**🟢** No new `LLMPurpose` and admission-not-gated are test-pinned (P4.4-5 tests 8/9); admission is operator config, not an agent op (ADR-038 carry-forward / DP2c). The reversibility cap is untouched (`_apply_reversibility_cap` host-authoritative-or-default-0 — enabling a plugin cannot lower a tier). Atomic per-plugin merge is preserved by design (the new refusal points return before the `seen_*`/`merged` update in `load_plugins`) — the junior must keep every new refusal (enabled-skip, version/shape-coherence) **before** the `seen_*.update(...)` block.
+
+**🟡 Y5 — carry the empty-gate-diff + empty-executor-diff invariant explicitly.** The dispatch names "executor 字节冻结," and ADR-029 D2 / ADR-031 HR#2 / ADR-037 D3 each carried "empty-gate-diff + empty-executor-diff" as a **named, test-pinned** invariant. ADR-038 + the plan honor it **by omission** (no edits to `_execute_local_call` / the gate; namespacing changes dict *keys*, both consumers name-agnostic) but neither **names** it nor adds the regression assertion. **Lean α — ADR-038 (Constitutional carry-forward) + P4.4-5 add the explicit `_execute_local_call` + gate byte-frozen invariant + a guard test**, matching the 029/031/037 lineage.
+
+---
+
+## On the five §5 sub-decisions (architect-confirm)
+
+All five are clean architect-confirm forks; the senior drafted the conservative, shipped-posture-preserving option for each. My correctness refinements attach where relevant: **#3 (always-prefix)** → Y3 (ripple sizing) + Y4 (order-of-ops); **#4 (version-coherence)** → Y2b (it's coherence, not a security control); **#2 (refuse-all)** → Lens 3 (correct; blast-radius surfaced). **#1 (preserve presence=opt-in, option A)** is correctly backward-compatible (does not reverse ADR-029 D5; the four live operator-placed plugins keep loading by presence) — no correctness problem. **#5 (contract-only endpoints)** honors DP4c — no correctness problem. None blocks; I record no routing.
+
+## Verdict
+
+**`needs_architect`** — 0🔴 / 5🟡 / 4🟢. The design honors all five ratified DPs and the constitutional spine; the 🟡 are precision (Y2 trust-claim wording, Y4 namespacing order-of-ops, Y5 empty-diff invariant), placement (Y1 disabled-MCP gate), and sizing (Y3 namespacing ripple). **Y1 and Y3 are the substantive ones** (a real disabled-MCP reachability risk; a real demo-AUTO-path regression + under-sizing) and warrant tightening before junior dispatch; the rest read α-absorb. The architect routes (α/β/γ/δ); per my role I surface and record nothing.
