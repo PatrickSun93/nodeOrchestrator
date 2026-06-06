@@ -30,10 +30,9 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from mcp.client.stdio import StdioServerParameters
-from mcp.types import TextContent
 
 from mcp import ClientSession
 from orchestrator.mcp._async_bridge import run_sync
@@ -41,6 +40,9 @@ from orchestrator.mcp.config import MCPServerConfig
 from orchestrator.mcp.subprocess_trust import build_scoped_env, subprocess_mcp_stdio
 from orchestrator.plugins.provenance import PluginProvenance
 from orchestrator.tools.executor import LocalToolFn, LocalToolOutput
+
+if TYPE_CHECKING:
+    from orchestrator.sandbox.posture import PostureResolver
 
 # Absolute path to the harness script — launched once per call_tool (Posture B only).
 _HARNESS_PATH: Path = Path(__file__).parent / "_harness.py"
@@ -54,12 +56,17 @@ class PluginCodeLoadError(Exception):
 
 
 class _PostureBFn:
-    """Subprocess-launching Posture-B LocalToolFn (ADR-031 D1/D2).
+    """Subprocess-launching Posture-B LocalToolFn (ADR-031 D1/D2; ADR-037 D2/D3 P4.3-7).
 
     Each instance is created at load time (not at call time) and reused across calls.
     Per-call invocation spawns a fresh child subprocess (per-op connection pattern,
     same as stdio MCPTransport), communicates via the MCP stdio protocol, then tears
     down.  The child executes the plugin callable; the host never imports plugin code.
+
+    When posture_resolver is set and sandbox is available, the harness runs inside a
+    container (FS/net/syscall isolated) via a sandboxed subprocess_mcp_stdio call.
+    FAIL_CLOSED: raises LocalToolError(sandbox_unavailable:…) when unavailable + no opt-in.
+    DEGRADED opt-in: falls through to app-level subprocess_mcp_stdio (warning logged).
 
     The _is_posture_b_subprocess ClassVar marker lets executor.py identify this as
     a subprocess-launching local tool for the per-turn cap (MAX_SUBPROCESS_CALLS_PER_TURN).
@@ -74,11 +81,15 @@ class _PostureBFn:
         callable_name: str,
         plugin_id: str,
         plugin_subprocess_env: dict[str, str],
+        posture_resolver: PostureResolver | None = None,
+        sandbox_root: Path | None = None,
     ) -> None:
         self._module_file = module_file
         self._callable_name = callable_name
         self._plugin_id = plugin_id
         self._plugin_subprocess_env = plugin_subprocess_env
+        self._posture_resolver = posture_resolver
+        self._sandbox_root = sandbox_root
 
     def __call__(self, tool_args: dict[str, Any]) -> LocalToolOutput:
         return run_sync(
@@ -91,28 +102,98 @@ class _PostureBFn:
         )
 
     async def _async_call(self, tool_args: dict[str, Any]) -> LocalToolOutput:
+        from orchestrator.tools.local import LocalToolError
+
         harness_cfg = MCPServerConfig(
             transport="stdio",
             command=sys.executable,
             env=self._plugin_subprocess_env,
         )
+        scoped = build_scoped_env(harness_cfg)
+
+        # Sandbox routing (ADR-037 D2/D3; P4.3-7).
+        if self._posture_resolver is not None:
+            from orchestrator.sandbox.runtime import SandboxUnavailableError
+
+            try:
+                runtime = self._posture_resolver.assert_sandboxed_or_raise(
+                    f"plugin:{self._plugin_id}"
+                )
+            except SandboxUnavailableError as exc:
+                if self._posture_resolver.is_degraded_opted_in():
+                    # DEGRADED: fall through to app-level subprocess_mcp_stdio.
+                    pass
+                else:
+                    raise LocalToolError(
+                        f"sandbox_unavailable: plugin:{self._plugin_id}: {exc}"
+                    ) from exc
+            else:
+                # SANDBOXED: run harness inside a container.
+                harness_params = self._build_sandboxed_harness_params(runtime, scoped)
+                return await self._run_mcp_session(harness_params, tool_args)
+
         harness_params = StdioServerParameters(
             command=sys.executable,
             args=[str(_HARNESS_PATH), str(self._module_file), self._callable_name],
-            env=build_scoped_env(harness_cfg),
+            env=scoped,
         )
+        return await self._run_mcp_session(harness_params, tool_args)
+
+    def _build_sandboxed_harness_params(
+        self,
+        runtime: object,
+        scoped: dict[str, str],
+    ) -> StdioServerParameters:
+        """Build StdioServerParameters that launch the harness inside a container."""
+        from orchestrator.sandbox.egress import build_deny_default_spec
+        from orchestrator.sandbox.profile import SandboxProfile, build_container_args
+
+        sandbox_root = self._sandbox_root or _HARNESS_PATH.parent
+        image = getattr(
+            getattr(self._posture_resolver, "_config", None), "image", "sandbox:latest"
+        )
+
+        profile = SandboxProfile(
+            sandbox_root=sandbox_root,
+            image=image,
+        )
+        # Plugin spawn: deny-default network (no egress needed for plugin execution).
+        _egress = build_deny_default_spec()
+        container_args = build_container_args(
+            profile,
+            [sys.executable, str(_HARNESS_PATH), str(self._module_file), self._callable_name],
+        )
+
+        cli: str = getattr(runtime, "cli", "docker")
+
+        return StdioServerParameters(
+            command=cli,
+            args=container_args,  # full ["run", "--rm", ..., image, harness_argv]
+            env=scoped,
+        )
+
+    async def _run_mcp_session(
+        self, params: StdioServerParameters, tool_args: dict[str, Any]
+    ) -> LocalToolOutput:
+        """Run the MCP session against the given subprocess parameters."""
+        from mcp.types import TextContent as _TextContent
+
         async with (
-            subprocess_mcp_stdio(harness_params) as (read, write),
+            subprocess_mcp_stdio(params) as (read, write),
             ClientSession(read, write) as session,
         ):
             await session.initialize()
             result = await session.call_tool("invoke", dict(tool_args))
             if result.isError:
                 error_parts = [
-                    c.text if isinstance(c, TextContent) else repr(c) for c in result.content
+                    c.text if isinstance(c, _TextContent) else repr(c)
+                    for c in result.content
                 ]
                 raise RuntimeError(f"plugin callable raised: {'; '.join(error_parts)}")
-            parts = [c.text if isinstance(c, TextContent) else repr(c) for c in result.content]
+            parts = [
+                c.text if isinstance(c, _TextContent) else repr(c)
+                for c in result.content
+            ]
             return LocalToolOutput(content="\n".join(parts))
 
 
