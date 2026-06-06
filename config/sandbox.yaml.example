@@ -1,0 +1,34 @@
+# Sandbox configuration example (ADR-037 D4; P4.3-5).
+# Copy to config/sandbox.yaml and adjust for your deployment.
+#
+# IMPORTANT: The sandbox is fail-closed by default.
+# When the container runtime is unavailable, all sandboxed tools fail with
+# sandbox_unavailable (TOOL_FAILED). To run unsandboxed (re-exposing the
+# RB-FS/NET residual), set degraded_app_level: true and accept the consequence.
+# This is a CONSCIOUS OPERATOR CHOICE, not a silent fallback.
+
+# Container runtime to use. Options: auto, docker, podman.
+# "auto" detects podman first, then docker (prefer rootless/podman userns).
+runtime: auto
+
+# Container image with the full toolchain (python + pytest + ruff + workspace deps).
+# An incomplete image fails the tool loudly (fail-closed on toolchain gap).
+# Build your own: docker build -t sandbox:latest .
+image: sandbox:latest
+
+# Egress allowlist: hosts the sandbox is allowed to reach via web_fetch / git_push.
+# Entries are validated against the SSRF floor (denied IPs are always blocked).
+# Empty list = deny-default for all egress (pytest/ruff/git-history tools are always deny-default).
+egress_allowlist: []
+
+# Degraded app-level posture: opt-in to running WITHOUT the container sandbox.
+#
+# WARNING: Setting this to true RE-EXPOSES the RB-FS/NET residuals (R1-R4/R7/R8)
+# that P4.3 was designed to retire. The orchestrator WILL LOG A WARNING on every
+# unsandboxed call. Use only when the container runtime is unavailable and you
+# accept the risk of running with only app-level scoping (scoped-env + SSRF floor
+# + _check_path) as the security boundary.
+#
+# This is the equivalent of consciously activating a fetched plugin (ADR-031 D4):
+# the operator explicitly acknowledges the reduced security posture.
+degraded_app_level: false
