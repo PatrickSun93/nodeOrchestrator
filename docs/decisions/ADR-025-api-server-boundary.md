@@ -41,7 +41,7 @@ The one LLM-touching glue P3.2 must add — the missing concrete **`llm_router`*
 ### D4. Write-surface forge-prevention (HR#2) — the security crux
 
 The wire **`IntentRequest`** carries **only** `{type, content, metadata?, parent_id?}` — **no `author`, no `id`, no `timestamp`, no agent fields**. The server constructs the `Event` itself:
-- `author` is **hardcoded to `"user"`** (never read from the request — a client literally cannot set it).
+- `author` is **server-stamped from the authenticated principal** (never read from the request — a client literally cannot set it). **[Annotated P4.5 → ADR-039, Accepted 2026-06-06: generalised from hardcoded `"user"` to `build_user_author(principal.user_id)` = `"user:<id>"`; bare `"user"` stays valid as the system-default/backward-compat form; `is_valid_author` regex generalised to include `user:<id>`.]**
 - `id = generate_event_id()`, `timestamp = now_ms()` — server-stamped.
 - `type` must be in the **intent-type allowlist** (D4a); anything else → **`422`** (fail-closed), *before* any append.
 - `metadata` is validated via `validate_metadata(type, metadata)` (fail-closed `422` on a typed-metadata violation).
@@ -89,6 +89,8 @@ So `IntentError = {stage: "append" | "turn", appended_event_id: EventId | None, 
 
 - **Bind** `127.0.0.1` only (the GUI is a local app). **Auth: none** (localhost-trust). Input validation + fail-closed (D4) + a **payload size limit** on intent bodies. CORS restricted to the local GUI origin.
 - **Remote hardening is a forward hook** (auth tokens, TLS, rate-limiting, network bind) — explicitly out of MVP scope, recorded so the boundary can be hardened without re-architecting (the forge-prevention + no-decision-surface invariants already hold regardless of bind scope).
+
+**[Annotated P4.5 → ADR-039, Accepted 2026-06-06: localhost-trust posture superseded by authenticated posture. A per-request authenticated `Principal` (cookie-session or bearer token) is now required for every non-public route. Remote bind (`--host` beyond loopback) is fail-closed at startup when no users are provisioned (ADR-039 D8 M1: loopback = 127.0.0.0/8 + ::1 + "localhost"). TLS terminated at the deployment/reverse-proxy layer (`TLS-at-deployment` residual). CORS: NOT a GUI dependency under same-origin deployment (ADR-039 D3 A-2) — a future cross-origin affordance only, never `*`-with-credentials. The "CORS restricted to the local GUI origin" promise was never built and is now superseded by the same-origin assumption (no CORS middleware needed for the GUI). Rate-limiting deferred as named residual (ADR-039 D10). Still deferred: `RB-AUTHZ` (any authenticated account is full operator); in-app TLS; a role model (DP3b).]**
 
 ## Considered alternatives
 
