@@ -7,8 +7,8 @@ branch: claude/P4.3-impl
 reviewed_commits: 2d5b163..311f4ca (P4.3-1..13)
 author: senior planner
 date: 2026-06-05
-verdict: needs_architect
-findings: {blocking: 0, needs_architect: 2, nits: 1}
+verdict: clean
+findings: {blocking: 0, needs_architect: 0, nits: 1}
 verdict_history:
 - round: 1
   verdict: blocking
@@ -20,6 +20,14 @@ verdict_history:
   summary: B1 CLEARED (egress proxy live). Rework substantially plan-faithful. Two routable
     items, neither a delivered-code security hole — RA1 (ruff gate RED at HEAD, trivial 1-line)
     + RA2 (RW8-2 composition-root tests re-implement the branch instead of driving _build_context).
+- round: 3
+  verdict: clean
+  reviewed_commits: f248a69..d3180f1 (P4.3-RW9)
+  summary: RA1 CLEARED (ruff green at HEAD). RA2 CLEARED — `_resolve_sandbox_posture(config_dir)`
+    extracted from `_build_context`; the 3 RW8-2 tests now drive the REAL function (no duplicated
+    branch), so a fail-open regression in app.py breaks them. app.py change is a clean extract-method
+    (both absence + parse-fail → fail_closed(); no `resolver=None` path; RW4 holds). All gates green
+    stubbed (ruff + mypy --strict 262 + pytest 517 passed; no live daemon). No routable items remain.
 ---
 
 # Senior plan-vs-impl — P4.3 (container syscall/egress sandbox)
@@ -285,3 +293,60 @@ clean; pytest green stubbed without a daemon.
 **Expected next:** state advances to `awaiting_R0_A` (Route B). Architect routes RA1 (ruff red —
 trivial α) + RA2 (RW8-2 composition-root test fidelity) alongside the impl-stage dual-lens
 re-run. B1 needs no further action.
+
+---
+
+# Round 3 — verdict bump → clean (P4.3-RW9, commit d3180f1)
+
+Re-verified `f248a69..d3180f1` against my round-2 RA1 + RA2. Same plan-vs-impl lens. Daemon
+NOT reachable — gates exercised stubbed.
+
+## Verdict: **clean** (was: needs_architect)
+
+Both routable items are resolved; the delivered production behavior is unchanged-correct and the
+one weak regression-guard is now genuinely wired. No routable items remain.
+
+## ✅ RA1 cleared — ruff green at HEAD
+
+`uv run ruff check src tests` → **All checks passed!** The extra blank line in
+`tests/sandbox/test_egress.py:7` is gone (auto-fixed in RW9). Per-commit-green discipline met.
+
+## ✅ RA2 cleared — RW8-2 tests now drive the REAL composition-root branch
+
+RW9 extracts `_resolve_sandbox_posture(config_dir) -> PostureResolver` from `_build_context`
+(`app.py:172-198`) and `_build_context` now **calls** it (`app.py:245`). The 3 RW8-2 tests
+(`test_constitution.py`) replace their inline `if exists/try/except/else` copy with a direct call
+to `_resolve_sandbox_posture(tmp_path)` — they now drive the **same function** production uses, so
+a fail-open regression in app.py (e.g. a revert of `except→fail_closed()` or the `else` branch)
+**breaks the tests**. This is exactly the α-fix RA2 named ("extract a `_resolve_sandbox_posture`
+helper used by both `app.py` and the test"). The copy-of-control-flow anti-pattern is gone.
+
+## app.py change is a sound fail-closed refactor (RW4 still holds)
+
+I read the full `app.py` diff (+59/−). It is a pure **extract-method**, not a behavior change:
+
+- `_resolve_sandbox_posture` reproduces the old control flow byte-for-byte:
+  `config_dir/"sandbox.yaml"` exists → `load_sandbox_config` + `from_config`; on
+  `SandboxConfigError` → `fail_closed()`; **else** (absence) → `fail_closed()`. Both the
+  **absence** AND **parse-fail** legs return `fail_closed()` — neither fails open.
+- **No `resolver=None` path reintroduced.** Grep of `app.py` shows the only resolver origins are
+  the two `fail_closed()` returns (+ `from_config` on a valid config); the single resolver is
+  threaded into all three registries (local `:265`, subprocess `:283`, network `:299`) — never
+  `None`. RW4's "composition root never None / no fail-open" invariant holds.
+- Docstring + comment correctly cite ADR-037 D4 / A1-3 and label it the sole injection point.
+
+## Gate status (all green, no live daemon)
+
+- **ruff** `src tests`: All checks passed.
+- **mypy --strict** `src tests`: Success, no issues in 262 source files.
+- **pytest** touched surface (`sandbox tools plugins mcp`): **517 passed**, 3 warnings, exit 0.
+  RW8-2 subset (`-k rw8`): **3 passed**. Warnings are the known round-1 Y2 R5 thread-leak
+  (`test_net_trust.py:448`, non-fatal). Docker daemon NOT reachable → confirms stubbed pass.
+- **executor byte-frozen:** `git diff b68d59b..HEAD -- tools/executor.py` empty. Invariant holds.
+
+## Round-3 confirmed faithful (positive record)
+
+RA1 cleared (ruff green); RA2 cleared (`_resolve_sandbox_posture` extracted + tests drive the real
+function); app.py is a clean extract-method fail-closed on both absence and parse-fail with no
+fail-open path (RW4 intact); B1 remains cleared (round 2); gates green stubbed without a daemon;
+executor byte-frozen. **No routable items remain — plan-vs-impl is clean.**
