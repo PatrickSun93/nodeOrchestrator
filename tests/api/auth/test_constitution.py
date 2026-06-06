@@ -229,10 +229,56 @@ class TestLensAFailClosed:
         assert r.status_code == 401, "new route must be protected without opt-in"
 
     def test_public_paths_not_blocked(self, unauth_client: TestClient) -> None:
-        """Login and logout are public (no auth required)."""
+        """Login is public (no auth required); logout requires auth (not in PUBLIC_PATHS)."""
         r = unauth_client.post("/login", json={"user_id": "x", "password": "x"})
         # 401 (wrong credentials) not 401 from middleware — middleware lets it through
         assert r.status_code in (200, 401, 422), "login must not be 401 from middleware"
+
+    def test_ws_unauthenticated_rejected_with_1008(
+        self, unauth_client: TestClient
+    ) -> None:
+        """Unauthenticated WS upgrade is closed with code 1008 before accept().
+
+        The WS handler rejects without calling accept() — no half-open-stream
+        window (ADR-039 D4 / app.py _room_stream pre-accept check).
+        """
+        from starlette.websockets import WebSocketDisconnect
+
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            with unauth_client.websocket_connect("/rooms/any-room/stream"):
+                pass
+        assert exc_info.value.code == 1008, (
+            f"expected close 1008 (Policy Violation), got {exc_info.value.code}"
+        )
+
+
+class TestLensACookiePath:
+    """Cookie login path: POST /login → session cookie → cookie-authenticated requests."""
+
+    def test_login_sets_cookie_authenticates_subsequent_requests(
+        self, ctx: AppContext
+    ) -> None:
+        """POST /login → Set-Cookie session_id → cookie carries auth for next request.
+
+        base_url='https://testserver' makes TestClient treat requests as HTTPS,
+        so the Secure cookie is sent on subsequent same-client requests.
+        (ADR-039 D3 cookie semantics integration test.)
+        """
+        from orchestrator.api.app import _make_test_app
+
+        app = _make_test_app(ctx)
+        with TestClient(app, base_url="https://testserver") as client:
+            resp = client.post(
+                "/login", json={"user_id": TEST_USER, "password": TEST_PW}
+            )
+            assert resp.status_code == 200, f"login failed: {resp.json()}"
+            assert "session_id" in resp.cookies, "login must set session_id cookie"
+
+            # Cookie is carried automatically — no explicit Authorization header needed
+            resp2 = client.post("/rooms", json={"type": "free_chat"})
+            assert resp2.status_code == 201, (
+                f"cookie-authenticated POST /rooms returned {resp2.status_code}"
+            )
 
 
 class TestLensAExpiredRevoked:
