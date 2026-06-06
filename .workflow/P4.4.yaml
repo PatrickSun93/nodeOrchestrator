@@ -1,7 +1,7 @@
 task_id: P4.4
 state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-06T06:31:23.233532Z'
+last_transition_at: '2026-06-06T06:46:12.584823Z'
 cycle_started_at: '2026-06-06T05:31:00.557163Z'
 override_history:
 - timestamp: '2026-06-06T06:31:23.233532Z'
@@ -16,4 +16,9 @@ override_history:
     / refuse-all-graceful / always-prefix / version-coherence-as-operator-check /
     endpoints-contract-only. Plan merged to main (ff a8428d2). requires_cross_family_review=true
     (impl-stage mandatory dual-lens). Advancing to junior impl (P4.4-1..6 serial).'
+- timestamp: '2026-06-06T06:46:12.584823Z'
+  actor: architect
+  from_state: awaiting_senior_plan_vs_impl
+  to_state: awaiting_junior_impl
+  reason: junior impl in progress P4.4-2 done continuing with P4.4-3..6
 requires_cross_family_review: true
