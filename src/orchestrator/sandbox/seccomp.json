@@ -1,0 +1,107 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "syscalls": [
+    {
+      "names": [
+        "unshare"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "deny namespace unshare (container-escape vector)"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "args": [
+        {
+          "index": 0,
+          "value": 268435456,
+          "op": "SCMP_CMP_MASKED_EQ",
+          "comment": "CLONE_NEWUSER=0x10000000"
+        }
+      ],
+      "comment": "deny clone(CLONE_NEWUSER) — user-namespace creation"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "args": [
+        {
+          "index": 0,
+          "value": 1073741824,
+          "op": "SCMP_CMP_MASKED_EQ",
+          "comment": "CLONE_NEWNET=0x40000000"
+        }
+      ],
+      "comment": "deny clone(CLONE_NEWNET) — network namespace creation"
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "args": [
+        {
+          "index": 0,
+          "value": 131072,
+          "op": "SCMP_CMP_MASKED_EQ",
+          "comment": "CLONE_NEWNS=0x00020000"
+        }
+      ],
+      "comment": "deny clone(CLONE_NEWNS) — mount namespace creation"
+    },
+    {
+      "names": [
+        "bpf"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "deny BPF (kernel code injection vector)"
+    },
+    {
+      "names": [
+        "io_uring_setup"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "deny io_uring_setup (large historical CVE surface)"
+    },
+    {
+      "names": [
+        "add_key"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "deny keyring manipulation"
+    },
+    {
+      "names": [
+        "request_key"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "deny keyring manipulation"
+    },
+    {
+      "names": [
+        "keyctl"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "deny keyring manipulation"
+    },
+    {
+      "names": [
+        "ptrace"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "deny ptrace (process introspection / injection)"
+    },
+    {
+      "names": [
+        "mount"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "deny mount (host-mount escape vector)"
+    }
+  ],
+  "_note": "Docker/runtime default seccomp profile is the blocklist BASELINE. This file contains the ADDITIONAL denial set (ADR-037 D2 / P4.3-2 R0-B Y1). It is merged with the runtime default at spawn time via --security-opt seccomp=<profile>. raw socket/AF_PACKET is denied by Docker default; enumerated here for auditability. The full-allowlist (default-deny) is the deferred-stronger tail (ADR-037 D5)."
+}
