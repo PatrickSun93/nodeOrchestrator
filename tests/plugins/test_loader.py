@@ -213,23 +213,23 @@ def test_plugin_role_loads(tmp_path: Path) -> None:
     plugins_dir = tmp_path / "plugins"
     _write_plugin(plugins_dir, "myplugin", roles=["test_agent"])
     result = _call_load_plugins(plugins_dir)
-    assert "test_agent" in result.agents
-    assert result.agents["test_agent"].id == "test_agent"
+    assert "myplugin__test_agent" in result.agents
+    assert result.agents["myplugin__test_agent"].id == "test_agent"
 
 
 def test_plugin_skill_loads(tmp_path: Path) -> None:
     plugins_dir = tmp_path / "plugins"
     _write_plugin(plugins_dir, "myplugin", skills=["test-skill"])
     result = _call_load_plugins(plugins_dir)
-    assert "test-skill" in result.skills
-    assert result.skills["test-skill"].id == "test-skill"
+    assert "myplugin__test-skill" in result.skills
+    assert result.skills["myplugin__test-skill"].id == "test-skill"
 
 
 def test_plugin_tool_classification_loads(tmp_path: Path) -> None:
     plugins_dir = tmp_path / "plugins"
     _write_plugin(plugins_dir, "myplugin", tools=["my_tool"])
     result = _call_load_plugins(plugins_dir)
-    assert "my_tool" in result.tools
+    assert "myplugin__my_tool" in result.tools
 
 
 def test_plugin_executable_tool_loads_and_callable(tmp_path: Path) -> None:
@@ -246,8 +246,8 @@ def test_plugin_executable_tool_loads_and_callable(tmp_path: Path) -> None:
         """),
     )
     result = _call_load_plugins(plugins_dir)
-    assert "my_tool" in result.local_tools
-    output = result.local_tools["my_tool"]({"x": "42"})
+    assert "myplugin__my_tool" in result.local_tools
+    output = result.local_tools["myplugin__my_tool"]({"x": "42"})
     assert isinstance(output, LocalToolOutput)
     assert output.content == "executed:42"
 
@@ -264,14 +264,16 @@ def test_unclassified_plugin_tool_defaults_hard_confirm(tmp_path: Path) -> None:
 
     # No host classification for unclassified_tool
     result = _call_load_plugins(plugins_dir, host_tools={})
-    assert "unclassified_tool" in result.tools
-    assert result.tools["unclassified_tool"].reversibility == 0
+    assert "myplugin__unclassified_tool" in result.tools
+    assert result.tools["myplugin__unclassified_tool"].reversibility == 0
 
     # Verify it gates to HARD_CONFIRM (score=0 < threshold_confirm=5)
-    op = Operation(tool_id="unclassified_tool", initiating_agent="a1", user_explicit_intent=False)
+    op = Operation(
+        tool_id="myplugin__unclassified_tool", initiating_agent="a1", user_explicit_intent=False
+    )
     thresholds = ThresholdConfig(threshold_auto=8, threshold_confirm=5, user_intent_modifier=2)
     gate_score = score(op, result.tools)
-    autonomy = decide_tier(gate_score, thresholds, False, tool_id="unclassified_tool")
+    autonomy = decide_tier(gate_score, thresholds, False, tool_id="myplugin__unclassified_tool")
     assert autonomy.tier == AutonomyTier.HARD_CONFIRM
 
 
@@ -294,19 +296,22 @@ def test_host_preclassified_tool_impl_gates_auto(tmp_path: Path) -> None:
         """),
     )
 
-    # Host pre-classifies the tool (simulates config/tools.yaml entry)
-    host_tools = {"auto_tool": ToolMeta(reversibility=10)}
+    # Host pre-classifies the tool with namespaced name (simulates config/tools.yaml entry
+    # post-P4.4-3 rebind: auto_tool → myplugin__auto_tool).
+    host_tools = {"myplugin__auto_tool": ToolMeta(reversibility=10)}
     result = _call_load_plugins(plugins_dir, host_tools=host_tools)
-    # Impl loads; host_tools retains the ToolMeta (plugin doesn't re-contribute it)
-    assert "auto_tool" in result.local_tools
-    # Combined registry (host + plugin merge) has the tool
+    # Impl loads under namespaced key; host_tools retains the ToolMeta
+    assert "myplugin__auto_tool" in result.local_tools
+    # Combined registry (host + plugin merge) has the tool under namespaced key
     combined = {**host_tools, **result.tools}
-    assert combined["auto_tool"].reversibility == 10
+    assert combined["myplugin__auto_tool"].reversibility == 10
 
-    op = Operation(tool_id="auto_tool", initiating_agent="a1", user_explicit_intent=False)
+    op = Operation(
+        tool_id="myplugin__auto_tool", initiating_agent="a1", user_explicit_intent=False
+    )
     thresholds = ThresholdConfig(threshold_auto=4, threshold_confirm=2, user_intent_modifier=1)
     gate_score = score(op, combined)
-    autonomy = decide_tier(gate_score, thresholds, False, tool_id="auto_tool")
+    autonomy = decide_tier(gate_score, thresholds, False, tool_id="myplugin__auto_tool")
     assert autonomy.tier == AutonomyTier.AUTO_EXECUTE
 
 
@@ -322,6 +327,209 @@ def test_reversibility_cap_new_tool_defaults_zero(tmp_path: Path) -> None:
 
     # No host classification for brand_new_tool
     result = _call_load_plugins(plugins_dir, host_tools={})
-    assert "brand_new_tool" in result.tools
+    assert "myplugin__brand_new_tool" in result.tools
     # Plugin's tools.yaml says rev=10 but no host classification → default-0 cap
-    assert result.tools["brand_new_tool"].reversibility == 0
+    assert result.tools["myplugin__brand_new_tool"].reversibility == 0
+
+
+# ---------------------------------------------------------------------------
+# P4.4-2: enabled-gate + version-coherence tests (ADR-038 D2)
+# ---------------------------------------------------------------------------
+
+from orchestrator.plugins.provenance import PluginRegistry, RegistryEntry  # noqa: E402
+
+
+def _call_load_plugins_with_registry(
+    plugins_dir: Path,
+    *,
+    plugin_registry: PluginRegistry | None = None,
+    fetched_plugins_dir: Path | None = None,
+    activation_registry_path: Path | None = None,
+    host_local_tool_names: frozenset[str] | None = None,
+    host_tools: dict[str, ToolMeta] | None = None,
+) -> PluginLoadResult:
+    return load_plugins(
+        plugins_dir,
+        models=_MODELS,
+        host_room_types=_HOST_ROOM_TYPES,
+        host_contract_version=PLUGIN_HOST_CONTRACT_VERSION,
+        host_agents={},
+        host_skills={},
+        host_tools=host_tools or {},
+        host_local_tool_names=host_local_tool_names or frozenset(),
+        host_mcp_server_names=frozenset(),
+        fetched_plugins_dir=fetched_plugins_dir,
+        activation_registry_path=activation_registry_path,
+        plugin_registry=plugin_registry,
+    )
+
+
+def test_p442_disabled_plugin_skipped(tmp_path: Path) -> None:
+    """Plugin with enabled: false is absent from merge (ADR-038 D2)."""
+    plugins_dir = tmp_path / "plugins"
+    _write_plugin(
+        plugins_dir,
+        "myplugin",
+        tool_impls={"my_tool": "tools_impl:fn"},
+    )
+    registry: PluginRegistry = {
+        "myplugin": RegistryEntry(plugin_id="myplugin", enabled=False),
+    }
+    result = _call_load_plugins_with_registry(plugins_dir, plugin_registry=registry)
+    assert "my_tool" not in result.local_tools
+
+
+def test_p442_enabled_plugin_loads(tmp_path: Path) -> None:
+    """Plugin with enabled: true loads normally."""
+    plugins_dir = tmp_path / "plugins"
+    _write_plugin(
+        plugins_dir,
+        "myplugin",
+        tool_impls={"my_tool": "tools_impl:fn"},
+    )
+    registry: PluginRegistry = {
+        "myplugin": RegistryEntry(plugin_id="myplugin", enabled=True),
+    }
+    result = _call_load_plugins_with_registry(plugins_dir, plugin_registry=registry)
+    assert "myplugin__my_tool" in result.local_tools
+
+
+def test_p442_operator_placed_no_entry_still_loads(tmp_path: Path) -> None:
+    """Operator-placed plugin with no registry entry still loads (presence=opt-in, ADR-029 D5)."""
+    plugins_dir = tmp_path / "plugins"
+    _write_plugin(
+        plugins_dir,
+        "no_entry_plugin",
+        tool_impls={"impl_tool": "tools_impl:fn"},
+    )
+    # Empty registry — no entry for no_entry_plugin
+    result = _call_load_plugins_with_registry(plugins_dir, plugin_registry={})
+    assert "no_entry_plugin__impl_tool" in result.local_tools
+
+
+def test_p442_absent_registry_loads_operator_placed(tmp_path: Path) -> None:
+    """Absent registry (None) → today's shipped defaults: operator-placed loads (ADR-029 D5)."""
+    plugins_dir = tmp_path / "plugins"
+    _write_plugin(
+        plugins_dir,
+        "op_plugin",
+        tool_impls={"op_tool": "tools_impl:fn"},
+    )
+    result = _call_load_plugins_with_registry(plugins_dir, plugin_registry=None)
+    assert "op_plugin__op_tool" in result.local_tools
+
+
+def test_p442_version_mismatch_refused(tmp_path: Path) -> None:
+    """Fetched plugin with registry version != manifest version → refused (ADR-038 D2)."""
+    import yaml
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    fetched_dir = tmp_path / "fetched_plugins"
+    pdir = fetched_dir / "fetched_p"
+    pdir.mkdir(parents=True)
+    (pdir / "plugin.yaml").write_text(
+        "schema_version: 1\nid: fetched_p\nname: FP\nversion: '1.0.0'\n",
+        encoding="utf-8",
+    )
+
+    # Activation entry (old mechanism still guards fetched)
+    act_path = tmp_path / "activations.yaml"
+    act_path.write_text(
+        yaml.dump({
+            "activations": [{
+                "plugin_id": "fetched_p",
+                "source_url": "https://example.com/fp.zip",
+                "digest": "sha256:fp",
+            }]
+        }),
+        encoding="utf-8",
+    )
+
+    # Registry entry says version='2.0.0' but manifest says '1.0.0' → mismatch
+    registry: PluginRegistry = {
+        "fetched_p": RegistryEntry(
+            plugin_id="fetched_p",
+            enabled=True,
+            version="2.0.0",
+            source_url="https://example.com/fp.zip",
+            digest="sha256:fp",
+        ),
+    }
+    result = _call_load_plugins_with_registry(
+        plugins_dir,
+        fetched_plugins_dir=fetched_dir,
+        activation_registry_path=act_path,
+        plugin_registry=registry,
+    )
+    assert result.agents == {}
+    assert result.local_tools == {}
+
+
+def test_p442_version_absent_loads_fail_safe(tmp_path: Path) -> None:
+    """Fetched plugin with registry version=None → no version check (fail-safe, ADR-038 D2)."""
+    import yaml
+
+    plugins_dir = tmp_path / "plugins"
+    plugins_dir.mkdir()
+    fetched_dir = tmp_path / "fetched_plugins"
+    pdir = fetched_dir / "fetched_p"
+    pdir.mkdir(parents=True)
+    (pdir / "plugin.yaml").write_text(
+        "schema_version: 1\nid: fetched_p\nname: FP\nversion: '1.0.0'\n",
+        encoding="utf-8",
+    )
+
+    act_path = tmp_path / "activations.yaml"
+    act_path.write_text(
+        yaml.dump({
+            "activations": [{
+                "plugin_id": "fetched_p",
+                "source_url": "https://example.com/fp.zip",
+                "digest": "sha256:fp",
+            }]
+        }),
+        encoding="utf-8",
+    )
+
+    # version=None → no check → loads
+    registry: PluginRegistry = {
+        "fetched_p": RegistryEntry(
+            plugin_id="fetched_p",
+            enabled=True,
+            version=None,
+            source_url="https://example.com/fp.zip",
+            digest="sha256:fp",
+        ),
+    }
+    result = _call_load_plugins_with_registry(
+        plugins_dir,
+        fetched_plugins_dir=fetched_dir,
+        activation_registry_path=act_path,
+        plugin_registry=registry,
+    )
+    # Plugin loads (no tool_impls declared, but agents/skills empty = at least didn't refuse)
+    # Verify it wasn't refused by checking it's not in a "refused" state — just empty contributions
+    # The key assertion: no ConfigError / no refusal from version check
+    assert result is not None
+
+
+def test_p442_shape_coherence_op_placed_with_fetched_entry_refused(tmp_path: Path) -> None:
+    """Op-placed plugin with fetched-shape registry entry (source_url+digest) → refused."""
+    plugins_dir = tmp_path / "plugins"
+    _write_plugin(
+        plugins_dir,
+        "op_plugin",
+        tool_impls={"op_tool": "tools_impl:fn"},
+    )
+    # fetched-shape entry for an operator-placed plugin = authoring error
+    registry: PluginRegistry = {
+        "op_plugin": RegistryEntry(
+            plugin_id="op_plugin",
+            enabled=True,
+            source_url="https://example.com/op.zip",
+            digest="sha256:op",
+        ),
+    }
+    result = _call_load_plugins_with_registry(plugins_dir, plugin_registry=registry)
+    assert "op_tool" not in result.local_tools

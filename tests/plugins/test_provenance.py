@@ -1,4 +1,6 @@
-"""Provenance-by-origin + activation allowlist tests (ADR-031 D3/D4; P3.7-remote-6).
+"""Provenance-by-origin + activation allowlist + unified registry tests.
+
+ADR-031 D3/D4 + ADR-038 D1 + P3.7-remote-6 + P4.4-1.
 
 Acceptance criteria:
   pv1  — operator-placed plugins load unchanged; provenance label = "operator_placed".
@@ -12,6 +14,16 @@ Acceptance criteria:
   pv7  — disjoint-root guard: overlapping roots → ValueError (laundering prevention).
   pv8  — plugin_subprocess_env from activation entry is passed to the subprocess;
          operator-placed plugins get empty env (no env leakage).
+  pr1  — RegistryEntry: frozen, enabled defaults true, version optional str|None.
+  pr2  — load_plugin_registry: absent/None path → empty registry.
+  pr3  — load_plugin_registry: malformed YAML → ConfigError (fail-closed).
+  pr4  — load_plugin_registry: fetched entry missing source_url or digest → ConfigError.
+  pr5  — load_plugin_registry: enabled non-bool raises (incl. quoted "false" string).
+  pr6  — load_plugin_registry: version non-(str|None) raises.
+  pr7  — load_plugin_registry: unknown entry key raises (extra="forbid").
+  pr8  — load_plugin_registry: duplicate plugin_id raises ConfigError.
+  pr9  — load_plugin_registry: provenance/posture fields rejected as unknown keys.
+  pr10 — load_plugin_registry: strings-only env preserved; non-string env raises.
 """
 
 from __future__ import annotations
@@ -22,12 +34,15 @@ from textwrap import dedent
 import pytest
 import yaml
 
+from orchestrator.llm.exceptions import ConfigError
 from orchestrator.llm.router import ModelRegistry
 from orchestrator.llm.types import ModelId, ModelProfile, ProviderId
 from orchestrator.plugins.loader import PluginLoadResult, load_plugins
 from orchestrator.plugins.provenance import (
     ActivationEntry,
+    RegistryEntry,
     load_activation_registry,
+    load_plugin_registry,
 )
 from orchestrator.plugins.schema import PLUGIN_HOST_CONTRACT_VERSION
 
@@ -162,7 +177,7 @@ def test_pv1_operator_placed_loads_unchanged(tmp_path: Path) -> None:
     _minimal_plugin(plugins_dir, "op_plugin", with_tool_impl=True)
 
     result = _load(plugins_dir)
-    assert "echo_tool" in result.local_tools
+    assert "op_plugin__echo_tool" in result.local_tools
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +240,7 @@ def test_pv3_fetched_plugin_with_activation_loads(tmp_path: Path) -> None:
     )
 
     result = _load(plugins_dir, fetched_plugins_dir=fetched_dir, activation_registry_path=reg_path)
-    assert "echo_tool" in result.local_tools
+    assert "my_fetched__echo_tool" in result.local_tools
 
 
 # ---------------------------------------------------------------------------
@@ -278,8 +293,8 @@ def test_pv5_fetched_tool_impls_are_posture_b(tmp_path: Path) -> None:
     )
 
     result = _load(plugins_dir, fetched_plugins_dir=fetched_dir, activation_registry_path=reg_path)
-    assert "echo_tool" in result.local_tools
-    fn = result.local_tools["echo_tool"]
+    assert "fetched_b__echo_tool" in result.local_tools
+    fn = result.local_tools["fetched_b__echo_tool"]
     # Posture B marker present → importlib never called at load time
     assert bool(getattr(fn, "_is_posture_b_subprocess", False)), (
         "pv5: fetched plugin tool impl is NOT Posture-B — "
@@ -297,7 +312,7 @@ def test_pv5_operator_placed_tool_impls_are_posture_a(tmp_path: Path) -> None:
     _minimal_plugin(plugins_dir, "op_a", with_tool_impl=True)
 
     result = _load(plugins_dir)
-    fn = result.local_tools["echo_tool"]
+    fn = result.local_tools["op_a__echo_tool"]
     # Posture A: NOT a subprocess-launching closure (_is_posture_b_subprocess absent)
     assert not bool(getattr(fn, "_is_posture_b_subprocess", False)), (
         "pv5: operator-placed plugin tool impl IS Posture-B — "
@@ -356,7 +371,7 @@ def test_pv8_activation_subprocess_env_passed_to_closure(tmp_path: Path) -> None
     )
 
     result = _load(plugins_dir, fetched_plugins_dir=fetched_dir, activation_registry_path=reg_path)
-    fn = result.local_tools["echo_tool"]
+    fn = result.local_tools["env_plugin__echo_tool"]
     # The _PostureBFn should have the activation's plugin_subprocess_env
     assert getattr(fn, "_plugin_subprocess_env", None) == {"CUSTOM_KEY": "custom_value"}
 
@@ -367,7 +382,289 @@ def test_pv8_operator_placed_uses_posture_a(tmp_path: Path) -> None:
     _minimal_plugin(plugins_dir, "clean_plugin", with_tool_impl=True)
 
     result = _load(plugins_dir)
-    fn = result.local_tools["echo_tool"]
+    fn = result.local_tools["clean_plugin__echo_tool"]
     # Posture A: not a subprocess fn, so no subprocess env attribute
     assert not bool(getattr(fn, "_is_posture_b_subprocess", False))
     assert getattr(fn, "_plugin_subprocess_env", None) is None
+
+
+# ---------------------------------------------------------------------------
+# pr1: RegistryEntry: frozen, enabled defaults true, version optional
+# ---------------------------------------------------------------------------
+
+
+def test_pr1_registry_entry_frozen() -> None:
+    """RegistryEntry is frozen (immutable)."""
+    import dataclasses
+
+    entry = RegistryEntry(plugin_id="my_plugin")
+    assert dataclasses.is_dataclass(entry)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        entry.enabled = False  # type: ignore[misc]
+
+
+def test_pr1_registry_entry_enabled_defaults_true() -> None:
+    """RegistryEntry.enabled defaults to True (consent-by-authoring)."""
+    entry = RegistryEntry(plugin_id="p")
+    assert entry.enabled is True
+
+
+def test_pr1_registry_entry_version_defaults_none() -> None:
+    """RegistryEntry.version defaults to None."""
+    entry = RegistryEntry(plugin_id="p")
+    assert entry.version is None
+
+
+def test_pr1_registry_entry_no_provenance_field() -> None:
+    """RegistryEntry has no provenance or posture field (un-spoofable invariant)."""
+    entry = RegistryEntry(plugin_id="p")
+    assert not hasattr(entry, "provenance")
+    assert not hasattr(entry, "posture")
+
+
+# ---------------------------------------------------------------------------
+# pr2: load_plugin_registry: absent/None path → empty registry
+# ---------------------------------------------------------------------------
+
+
+def test_pr2_absent_path_returns_empty() -> None:
+    """Missing registry file → empty registry."""
+    result = load_plugin_registry(Path("/nonexistent/plugins.yaml"))
+    assert result == {}
+
+
+def test_pr2_none_path_returns_empty() -> None:
+    """None path → empty registry."""
+    assert load_plugin_registry(None) == {}
+
+
+def test_pr2_empty_yaml_returns_empty(tmp_path: Path) -> None:
+    """Empty YAML file → empty registry."""
+    p = tmp_path / "plugins.yaml"
+    p.write_text("", encoding="utf-8")
+    assert load_plugin_registry(p) == {}
+
+
+# ---------------------------------------------------------------------------
+# pr3: load_plugin_registry: malformed YAML → ConfigError
+# ---------------------------------------------------------------------------
+
+
+def test_pr3_non_mapping_root_raises(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text("- a\n- b\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="expected a mapping"):
+        load_plugin_registry(p)
+
+
+def test_pr3_plugins_not_list_raises(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text("plugins:\n  foo: bar\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="'plugins' must be a list"):
+        load_plugin_registry(p)
+
+
+def test_pr3_entry_not_mapping_raises(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text("plugins:\n  - just_a_string\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="must be a mapping"):
+        load_plugin_registry(p)
+
+
+# ---------------------------------------------------------------------------
+# pr4: fetched entry missing source_url or digest → ConfigError
+# ---------------------------------------------------------------------------
+
+
+def test_pr4_source_url_without_digest_raises(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text(
+        "plugins:\n"
+        "  - plugin_id: p\n"
+        "    source_url: https://example.com/p.zip\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="both be present or both absent"):
+        load_plugin_registry(p)
+
+
+def test_pr4_digest_without_source_url_raises(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text(
+        "plugins:\n"
+        "  - plugin_id: p\n"
+        "    digest: sha256:abc\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="both be present or both absent"):
+        load_plugin_registry(p)
+
+
+def test_pr4_both_present_is_valid(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text(
+        "plugins:\n"
+        "  - plugin_id: p\n"
+        "    source_url: https://example.com/p.zip\n"
+        "    digest: sha256:abc\n",
+        encoding="utf-8",
+    )
+    result = load_plugin_registry(p)
+    assert "p" in result
+    assert result["p"].source_url == "https://example.com/p.zip"
+    assert result["p"].digest == "sha256:abc"
+
+
+# ---------------------------------------------------------------------------
+# pr5: enabled non-bool raises (incl. quoted "false" string)
+# ---------------------------------------------------------------------------
+
+
+def test_pr5_enabled_string_false_raises(tmp_path: Path) -> None:
+    """YAML `enabled: \"false\"` is a string (truthy!) — must raise, not silently enable."""
+    p = tmp_path / "plugins.yaml"
+    p.write_text(
+        'plugins:\n  - plugin_id: p\n    enabled: "false"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="'enabled' must be a bool"):
+        load_plugin_registry(p)
+
+
+def test_pr5_enabled_integer_raises(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text("plugins:\n  - plugin_id: p\n    enabled: 0\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="'enabled' must be a bool"):
+        load_plugin_registry(p)
+
+
+def test_pr5_enabled_true_is_valid(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text("plugins:\n  - plugin_id: p\n    enabled: true\n", encoding="utf-8")
+    result = load_plugin_registry(p)
+    assert result["p"].enabled is True
+
+
+def test_pr5_enabled_false_is_valid(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text("plugins:\n  - plugin_id: p\n    enabled: false\n", encoding="utf-8")
+    result = load_plugin_registry(p)
+    assert result["p"].enabled is False
+
+
+# ---------------------------------------------------------------------------
+# pr6: version non-(str|None) raises
+# ---------------------------------------------------------------------------
+
+
+def test_pr6_version_integer_raises(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text("plugins:\n  - plugin_id: p\n    version: 1\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="'version' must be a str or null"):
+        load_plugin_registry(p)
+
+
+def test_pr6_version_str_is_valid(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text("plugins:\n  - plugin_id: p\n    version: '1.2.3'\n", encoding="utf-8")
+    result = load_plugin_registry(p)
+    assert result["p"].version == "1.2.3"
+
+
+def test_pr6_version_null_is_valid(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text("plugins:\n  - plugin_id: p\n    version: null\n", encoding="utf-8")
+    result = load_plugin_registry(p)
+    assert result["p"].version is None
+
+
+# ---------------------------------------------------------------------------
+# pr7: unknown entry key raises (extra="forbid")
+# ---------------------------------------------------------------------------
+
+
+def test_pr7_unknown_key_raises(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text(
+        "plugins:\n  - plugin_id: p\n    extra_field: oops\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="unknown keys"):
+        load_plugin_registry(p)
+
+
+# ---------------------------------------------------------------------------
+# pr8: duplicate plugin_id raises ConfigError
+# ---------------------------------------------------------------------------
+
+
+def test_pr8_duplicate_plugin_id_raises(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text(
+        "plugins:\n"
+        "  - plugin_id: myplugin\n"
+        "  - plugin_id: myplugin\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate plugin_id"):
+        load_plugin_registry(p)
+
+
+# ---------------------------------------------------------------------------
+# pr9: provenance/posture fields rejected as unknown keys
+# ---------------------------------------------------------------------------
+
+
+def test_pr9_provenance_field_rejected(tmp_path: Path) -> None:
+    """An entry must never declare 'provenance' — it's host-derived (un-spoofable)."""
+    p = tmp_path / "plugins.yaml"
+    p.write_text(
+        "plugins:\n  - plugin_id: p\n    provenance: fetched\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="unknown keys"):
+        load_plugin_registry(p)
+
+
+def test_pr9_posture_field_rejected(tmp_path: Path) -> None:
+    """An entry must never declare 'posture' — it's host-derived (un-spoofable)."""
+    p = tmp_path / "plugins.yaml"
+    p.write_text(
+        "plugins:\n  - plugin_id: p\n    posture: A\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="unknown keys"):
+        load_plugin_registry(p)
+
+
+# ---------------------------------------------------------------------------
+# pr10: strings-only env preserved; non-string raises
+# ---------------------------------------------------------------------------
+
+
+def test_pr10_valid_env_preserved(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text(
+        "plugins:\n"
+        "  - plugin_id: p\n"
+        "    source_url: https://example.com/p.zip\n"
+        "    digest: sha256:abc\n"
+        "    plugin_subprocess_env:\n"
+        "      KEY: value\n"
+        "      OTHER: thing\n",
+        encoding="utf-8",
+    )
+    result = load_plugin_registry(p)
+    assert result["p"].plugin_subprocess_env == {"KEY": "value", "OTHER": "thing"}
+
+
+def test_pr10_non_string_env_value_raises(tmp_path: Path) -> None:
+    p = tmp_path / "plugins.yaml"
+    p.write_text(
+        "plugins:\n"
+        "  - plugin_id: p\n"
+        "    plugin_subprocess_env:\n"
+        "      KEY: 123\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="must be strings"):
+        load_plugin_registry(p)
+
+

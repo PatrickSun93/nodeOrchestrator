@@ -33,6 +33,9 @@ from orchestrator.plugins.provenance import (
     ActivationEntry,
     ActivationRegistry,
     PluginProvenance,
+    PluginRegistry,
+    RegistryEntry,
+    _RegistryRefuseAll,
     check_fetched_activation,
     load_activation_registry,
 )
@@ -198,61 +201,72 @@ def _collision_check(
     host_tools: dict[str, ToolMeta],
     host_local_tool_names: frozenset[str],
     host_mcp_server_names: frozenset[str],
-    seen_role_ids: set[str],
-    seen_skill_ids: set[str],
-    seen_tool_names: set[str],
-    seen_tool_impl_names: set[str],
-    seen_server_names: set[str],
 ) -> bool:
-    """Check ALL declared contribution names against host registries and cross-plugin.
+    """Check host-collision (bare name, fail-closed) and within-plugin duplicates.
 
-    Returns True (no collision) or False (collision found, plugin refused).
-    Runs BEFORE any importlib call — the fail-closed gauntlet must not be
-    pierced by an early import (ADR-029 D2 step 3; R0-B R1).
+    Cross-plugin collision is resolved by deterministic always-prefix namespacing
+    (<plugin_id>__<name>, ADR-038 D4) — no refusal for cross-plugin duplicates.
+
+    Host-collision and within-plugin dup checks evaluate the BARE declared name
+    (absorbed R0-A Y4 / R0-B b1; ADR-038 D4 order-of-operations):
+      - A plugin tool_impl shadowing a host local_tool (shadow-bypass) → refused
+        on the bare name even though namespacing would de-conflict it.
+      - Within-plugin duplicate names → refused.
+
+    Returns True (pass) or False (refused). Runs BEFORE any importlib call.
     """
     pid = candidate.plugin_id
     c = candidate.manifest.contributions
 
-    # Role ids
+    # Role ids: host-collision + within-plugin dup (bare name)
+    _plugin_roles: set[str] = set()
     for role_id in c.roles:
         if role_id in host_agents:
             _log.warning("plugin %r: role %r collides with host agent — refusing", pid, role_id)
             return False
-        if role_id in seen_role_ids:
-            _log.warning("plugin %r: role %r collides with cross-plugin — refusing", pid, role_id)
+        if role_id in _plugin_roles:
+            _log.warning("plugin %r: role %r duplicate within plugin — refusing", pid, role_id)
             return False
+        _plugin_roles.add(role_id)
 
-    # Skill ids
+    # Skill ids: host-collision + within-plugin dup (bare name)
+    _plugin_skills: set[str] = set()
     for skill_id in c.skills:
         if skill_id in host_skills:
-            _log.warning("plugin %r: skill %r collides with host skill — refusing", pid, skill_id)
+            _log.warning(
+                "plugin %r: skill %r collides with host skill — refusing", pid, skill_id
+            )
             return False
-        if skill_id in seen_skill_ids:
-            _log.warning("plugin %r: skill %r collides with cross-plugin — refusing", pid, skill_id)
+        if skill_id in _plugin_skills:
+            _log.warning(
+                "plugin %r: skill %r duplicate within plugin — refusing", pid, skill_id
+            )
             return False
+        _plugin_skills.add(skill_id)
 
-    # Tool classification names (ToolMeta registry)
+    # Tool classification names: host-collision + within-plugin dup (bare name)
+    # Cross-plugin tool name collisions are resolved by namespacing, not refusal.
+    _plugin_tools: set[str] = set()
     for tool_name in c.tools:
         if tool_name in host_tools:
-            _log.warning("plugin %r: tool %r collides with host tools — refusing", pid, tool_name)
+            _log.warning(
+                "plugin %r: tool %r collides with host tools — refusing", pid, tool_name
+            )
             return False
-        if tool_name in seen_tool_names:
-            _log.warning("plugin %r: tool %r collides with cross-plugin — refusing", pid, tool_name)
+        if tool_name in _plugin_tools:
+            _log.warning(
+                "plugin %r: tool %r duplicate within plugin — refusing", pid, tool_name
+            )
             return False
+        _plugin_tools.add(tool_name)
 
-    # tool_impls names (→ local_tools): two-way check (R0-A Y1 / ADR-029 D6)
-    # (i) host local_tools — closes shadow-bypass (a plugin must not shadow an
-    #     existing host implementation such as the sandboxed read_file).
-    # (ii) cross-plugin — two plugins cannot both provide the same impl name.
-    # NOTE: tool_impls names are intentionally NOT checked against host_tools
-    # (ToolMeta-only classification entries from config/tools.yaml). Operator
-    # may pre-classify a brand-new plugin tool in config/tools.yaml to set the
-    # gate tier (ADR-029 D5/D7); that pre-classification is authoritative but
-    # not an "existing implementation" to shadow. The shadow-bypass is closed by
-    # check (i) which covers all tools with local implementations.
+    # tool_impls names (→ local_tools): host shadow-bypass check (bare name, fail-closed).
+    # ADR-038 D4 / ADR-029 D2: host-collision evaluated on BARE name; a plugin declaring
+    # tool_impl "read_file" is REFUSED even though prefixing would de-conflict it.
+    # NOTE: tool_impls is a dict → no within-plugin dup possible.
+    # NOTE: tool_impls intentionally NOT checked against host_tools (ToolMeta-only
+    # classifications from config/tools.yaml may pre-classify plugin impls, ADR-029 D5/D7).
     for impl_name in c.tool_impls:
-        # (i) host local_tools — closes shadow-bypass (e.g. read_file has a
-        #     sandboxed impl; shadowing it would bypass the path-sandbox).
         if impl_name in host_local_tool_names:
             _log.warning(
                 "plugin %r: tool_impl %r shadows host local_tools (shadow-bypass) — refusing",
@@ -260,16 +274,9 @@ def _collision_check(
                 impl_name,
             )
             return False
-        # (ii) cross-plugin tool_impls
-        if impl_name in seen_tool_impl_names:
-            _log.warning(
-                "plugin %r: tool_impl %r collides with cross-plugin — refusing",
-                pid,
-                impl_name,
-            )
-            return False
 
-    # MCP server names
+    # MCP server names: host-collision + within-plugin dup (bare name)
+    _plugin_servers: set[str] = set()
     for server_name in c.mcp_servers:
         if server_name in host_mcp_server_names:
             _log.warning(
@@ -278,13 +285,14 @@ def _collision_check(
                 server_name,
             )
             return False
-        if server_name in seen_server_names:
+        if server_name in _plugin_servers:
             _log.warning(
-                "plugin %r: mcp_server %r collides with cross-plugin — refusing",
+                "plugin %r: mcp_server %r duplicate within plugin — refusing",
                 pid,
                 server_name,
             )
             return False
+        _plugin_servers.add(server_name)
 
     return True
 
@@ -332,12 +340,8 @@ def _load_plugin(
     host_tools: dict[str, ToolMeta],
     host_local_tool_names: frozenset[str],
     host_mcp_server_names: frozenset[str],
-    seen_role_ids: set[str],
-    seen_skill_ids: set[str],
-    seen_tool_names: set[str],
-    seen_tool_impl_names: set[str],
-    seen_server_names: set[str],
     activation_entry: ActivationEntry | None = None,
+    registry_entry: RegistryEntry | None = None,
     posture_resolver: PostureResolver | None = None,
     sandbox_root: Path | None = None,
 ) -> PluginLoadResult | None:
@@ -350,23 +354,66 @@ def _load_plugin(
     For fetched plugins: activation_entry must be present (fail-closed if absent).
     The plugin_subprocess_env from the activation entry is operator-authored and
     passed to load_plugin_code — the fetched manifest cannot override it (ADR-031 D4).
+
+    registry_entry: the unified RegistryEntry for this plugin (ADR-038 D1/D2).
+    Used for shape-coherence and version-coherence checks.
     """
     pid = candidate.plugin_id
     plugin_dir = candidate.plugin_dir
     manifest = candidate.manifest
     provenance = candidate.provenance
 
+    # Shape-coherence guard (ADR-038 D1): entry's admission-proof shape must match
+    # the plugin's host-derived root. A fetched-shape entry (source_url+digest present)
+    # for an operator-placed plugin is an authoring error — refuse loudly.
+    if (
+        registry_entry is not None
+        and registry_entry.source_url is not None
+        and provenance == "operator_placed"
+    ):
+        _log.warning(
+            "plugin %r: registry entry has fetched-shape (source_url+digest) but "
+            "plugin is operator-placed — shape/root mismatch, refusing",
+            pid,
+        )
+        return None
+
+    # Version-coherence check (ADR-038 D2, A3): operator-intent / update-consistency.
+    # registry.version (if set) must equal manifest.version for fetched plugins.
+    # This catches the operator pinning the wrong version label for a digest.
+    # version absent → no check (fail-safe; digest is the integrity anchor).
+    if (
+        provenance == "fetched"
+        and registry_entry is not None
+        and registry_entry.version is not None
+        and registry_entry.version != manifest.version
+    ):
+        _log.warning(
+            "plugin %r (fetched): version mismatch: registry has %r, manifest has %r "
+            "— refusing (ADR-038 D2)",
+            pid,
+            registry_entry.version,
+            manifest.version,
+        )
+        return None
+
     # Fetched provenance guard: activation required, fail-closed if absent (ADR-031 D4).
+    # Activation can come from (a) unified registry_entry with fetched-shape (source_url present)
+    # or (b) legacy activation_entry. (a) is the ADR-038 D1 unified path; (b) is legacy.
     if provenance == "fetched":
-        if activation_entry is None:
+        _has_registry_activation = (
+            registry_entry is not None and registry_entry.source_url is not None
+        )
+        if not _has_registry_activation and activation_entry is None:
             _log.warning(
                 "plugin %r (fetched): no activation entry — refusing (ADR-031 D4)",
                 pid,
             )
             return None
-        _log.debug("plugin %r (fetched): activation entry present, continuing load", pid)
+        _log.debug("plugin %r (fetched): activation proof present, continuing load", pid)
 
-    # Step 3: Collision-check ALL declared names BEFORE any import
+    # Step 3: Host-collision + within-plugin-dup check BEFORE any import (ADR-029 D2 step 3).
+    # Cross-plugin collision is resolved by namespacing (ADR-038 D4).
     if not _collision_check(
         candidate,
         host_agents,
@@ -374,11 +421,6 @@ def _load_plugin(
         host_tools,
         host_local_tool_names,
         host_mcp_server_names,
-        seen_role_ids,
-        seen_skill_ids,
-        seen_tool_names,
-        seen_tool_impl_names,
-        seen_server_names,
     ):
         return None
 
@@ -445,9 +487,12 @@ def _load_plugin(
     if manifest.contributions.tool_impls:
         from orchestrator.plugins.code import PluginCodeLoadError, load_plugin_code
 
-        subprocess_env: dict[str, str] = (
-            activation_entry.plugin_subprocess_env if activation_entry is not None else {}
-        )
+        # subprocess_env: prefer unified registry_entry, fall back to legacy activation_entry.
+        subprocess_env: dict[str, str] = {}
+        if activation_entry is not None:
+            subprocess_env = activation_entry.plugin_subprocess_env
+        elif registry_entry is not None:
+            subprocess_env = registry_entry.plugin_subprocess_env
         try:
             plugin_local_tools = load_plugin_code(
                 plugin_dir,
@@ -504,10 +549,11 @@ def load_plugins(
     host_mcp_server_names: frozenset[str],
     fetched_plugins_dir: Path | None = None,
     activation_registry_path: Path | None = None,
+    plugin_registry: PluginRegistry | _RegistryRefuseAll | None = None,
     posture_resolver: PostureResolver | None = None,
     sandbox_root: Path | None = None,
 ) -> PluginLoadResult:
-    """Discover, validate, and merge plugin contributions (ADR-029 D2, ADR-031 D3/D4).
+    """Discover, validate, and merge plugin contributions (ADR-029 D2, ADR-031 D3/D4; ADR-038 D2).
 
     Absent plugins/ dir → no-op (clean boot). Per-plugin load isolation:
     a failure at ANY stage refuses that plugin without crashing bootstrap
@@ -521,6 +567,10 @@ def load_plugins(
 
     activation_registry_path: path to the operator's activation allowlist YAML.
       Absent / None → no fetched plugins activated (fail-closed default).
+
+    plugin_registry: the unified RegistryEntry registry (ADR-038 D1/D2).
+      None → absent registry → today's shipped defaults (operator-placed by
+      presence; fetched none). Used for enabled-gate + version-coherence.
     """
     fetched_empty = fetched_plugins_dir is None or not fetched_plugins_dir.exists()
     if not plugins_dir.exists() and fetched_empty:
@@ -577,15 +627,37 @@ def load_plugins(
             )
         )
 
-    # Steps 3-7: Per-plugin collision-check + load + atomic merge (global, cross-root)
+    # Sentinel guard: malformed plugins.yaml → refuse-all (ADR-038 D2).
+    # REGISTRY_REFUSE_ALL is distinct from None (absent → defaults) and {} (empty → defaults).
+    # On malformed config the operator's intent is unknown — the safe position is refuse-all,
+    # never admit-by-presence.  This mirrors _resolve_sandbox_posture → fail_closed().
+    if isinstance(plugin_registry, _RegistryRefuseAll):
+        _log.warning(
+            "plugins.yaml is malformed — refusing all %d candidate(s) (ADR-038 D2 refuse-all)",
+            len(candidates),
+        )
+        return PluginLoadResult()
+
+    # Steps 3-7: Per-plugin host-collision-check + load + namespaced merge (global, cross-root).
+    # Cross-plugin collision is resolved by deterministic always-prefix namespacing
+    # (<plugin_id>__<name>, ADR-038 D4). No seen_* sets needed for cross-plugin dedup.
     merged = PluginLoadResult()
-    seen_role_ids: set[str] = set()
-    seen_skill_ids: set[str] = set()
-    seen_tool_names: set[str] = set()
-    seen_tool_impl_names: set[str] = set()
-    seen_server_names: set[str] = set()
 
     for candidate in candidates:
+        # enabled-gate: short-circuit disabled plugins BEFORE _load_plugin (ADR-038 D2,
+        # absorbed R0-A Y1). _load_plugin builds MCP sessions (live stdio subprocesses);
+        # a disabled plugin must never enter _load_plugin — no subprocess spawned.
+        # Operator-placed with no registry entry → still loads (presence=opt-in, ADR-029 D5).
+        r_entry: RegistryEntry | None = (
+            plugin_registry.get(candidate.plugin_id) if plugin_registry is not None else None
+        )
+        if r_entry is not None and not r_entry.enabled:
+            _log.info(
+                "plugin %r: disabled in registry (enabled: false) — skipping",
+                candidate.plugin_id,
+            )
+            continue
+
         activation = (
             check_fetched_activation(candidate.plugin_id, activation_registry)
             if candidate.provenance == "fetched"
@@ -599,30 +671,23 @@ def load_plugins(
             host_tools=host_tools,
             host_local_tool_names=host_local_tool_names,
             host_mcp_server_names=host_mcp_server_names,
-            seen_role_ids=seen_role_ids,
-            seen_skill_ids=seen_skill_ids,
-            seen_tool_names=seen_tool_names,
-            seen_tool_impl_names=seen_tool_impl_names,
-            seen_server_names=seen_server_names,
             activation_entry=activation,
+            registry_entry=r_entry,
             posture_resolver=posture_resolver,
             sandbox_root=sandbox_root,
         )
         if result is None:
             continue
 
-        # Atomic per-plugin merge: update seen_* and merged only after full success
-        seen_role_ids.update(candidate.manifest.contributions.roles)
-        seen_skill_ids.update(candidate.manifest.contributions.skills)
-        seen_tool_names.update(candidate.manifest.contributions.tools)
-        seen_tool_impl_names.update(candidate.manifest.contributions.tool_impls.keys())
-        seen_server_names.update(candidate.manifest.contributions.mcp_servers)
-
-        merged.agents.update(result.agents)
+        # Atomic namespaced merge: prefix all contribution names with <plugin_id>__
+        # (ADR-038 D4 deterministic coexistence). regex_registry uses agent.id as key
+        # (not the agents dict key), so it merges bare — consistent with speaking.py lookup.
+        pid = candidate.plugin_id
+        merged.agents.update({f"{pid}__{k}": v for k, v in result.agents.items()})
         merged.regex_registry.update(result.regex_registry)
-        merged.skills.update(result.skills)
-        merged.tools.update(result.tools)
-        merged.local_tools.update(result.local_tools)
-        merged.mcp_sessions.update(result.mcp_sessions)
+        merged.skills.update({f"{pid}__{k}": v for k, v in result.skills.items()})
+        merged.tools.update({f"{pid}__{k}": v for k, v in result.tools.items()})
+        merged.local_tools.update({f"{pid}__{k}": v for k, v in result.local_tools.items()})
+        merged.mcp_sessions.update({f"{pid}__{k}": v for k, v in result.mcp_sessions.items()})
 
     return merged

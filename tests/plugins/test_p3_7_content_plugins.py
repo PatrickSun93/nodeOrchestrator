@@ -77,54 +77,56 @@ class TestContextPlugin:
     """Discriminating tests for the context plugin bundle (P3.7-content-10)."""
 
     def test_context_plugin_agent_loads(self) -> None:
-        """context plugin contributes context_analyst agent to merged registries."""
+        """context plugin contributes context_analyst agent under namespaced key."""
         result = _load_all_plugins(
-            host_tools={"context_summary": ToolMeta(reversibility=10)},
+            host_tools={"context__context_summary": ToolMeta(reversibility=10)},
         )
-        assert "context_analyst" in result.agents
+        assert "context__context_analyst" in result.agents
 
     def test_context_plugin_skill_loads(self) -> None:
-        """context plugin contributes context-tracking skill to merged registries."""
+        """context plugin contributes context-tracking skill under namespaced key."""
         result = _load_all_plugins(
-            host_tools={"context_summary": ToolMeta(reversibility=10)},
+            host_tools={"context__context_summary": ToolMeta(reversibility=10)},
         )
-        assert "context-tracking" in result.skills
+        assert "context__context-tracking" in result.skills
 
     def test_context_plugin_tool_impl_loads(self) -> None:
-        """context plugin contributes context_summary tool_impl to merged registries."""
+        """context plugin contributes context__context_summary tool_impl (P4.4-3 rebind)."""
         result = _load_all_plugins(
-            host_tools={"context_summary": ToolMeta(reversibility=10)},
+            host_tools={"context__context_summary": ToolMeta(reversibility=10)},
         )
-        assert "context_summary" in result.local_tools
+        assert "context__context_summary" in result.local_tools
 
     def test_host_preclassified_tool_auto_execute(self) -> None:
-        """context_summary (host-pre-classify rev=10) gates to AUTO_EXECUTE (ADR-029 D5/D7)."""
+        """context__context_summary (host-pre-classify rev=10) gates AUTO_EXECUTE (ADR-038 D4)."""
         from orchestrator.autonomy.scoring import Operation, decide_tier, score
 
         result = _load_all_plugins(
-            host_tools={"context_summary": ToolMeta(reversibility=10)},
+            host_tools={"context__context_summary": ToolMeta(reversibility=10)},
         )
         # Build combined registry: host classification takes precedence
-        host_tools = {"context_summary": ToolMeta(reversibility=10)}
+        host_tools = {"context__context_summary": ToolMeta(reversibility=10)}
         combined = {**host_tools, **result.tools}
-        op = Operation(tool_id="context_summary", initiating_agent="a1", user_explicit_intent=False)
+        op = Operation(
+            tool_id="context__context_summary", initiating_agent="a1", user_explicit_intent=False
+        )
         gate_score = score(op, combined)
-        autonomy = decide_tier(gate_score, _THRESHOLDS, False, tool_id="context_summary")
+        autonomy = decide_tier(gate_score, _THRESHOLDS, False, tool_id="context__context_summary")
         assert autonomy.tier == AutonomyTier.AUTO_EXECUTE
 
     def test_plugin_classify_only_tool_caps_to_hard_confirm(self) -> None:
-        """annotate_context (plugin-classify only, no host entry) caps to rev 0 → HARD_CONFIRM."""
+        """context__annotate_context (plugin-classify only) caps to rev 0 → HARD_CONFIRM."""
         from orchestrator.autonomy.scoring import Operation, decide_tier, score
 
         result = _load_all_plugins()
-        assert "annotate_context" in result.tools
+        assert "context__annotate_context" in result.tools
         # Plugin declared rev=4 but no host classification → capped to 0
-        assert result.tools["annotate_context"].reversibility == 0
+        assert result.tools["context__annotate_context"].reversibility == 0
         op = Operation(
-            tool_id="annotate_context", initiating_agent="a1", user_explicit_intent=False
+            tool_id="context__annotate_context", initiating_agent="a1", user_explicit_intent=False
         )
         gate_score = score(op, result.tools)
-        autonomy = decide_tier(gate_score, _THRESHOLDS, False, tool_id="annotate_context")
+        autonomy = decide_tier(gate_score, _THRESHOLDS, False, tool_id="context__annotate_context")
         assert autonomy.tier == AutonomyTier.HARD_CONFIRM
 
     def test_context_plugin_fail_closed_bad_manifest(self, tmp_path: Path) -> None:
@@ -159,9 +161,9 @@ class TestInsightsPlugin:
     """Discriminating tests for the insights plugin bundle (P3.7-content-11)."""
 
     def test_insights_plugin_skill_loads(self) -> None:
-        """insights plugin contributes insights-synthesis skill to merged registries."""
+        """insights plugin contributes insights-synthesis skill under namespaced key."""
         result = _load_all_plugins()
-        assert "insights-synthesis" in result.skills
+        assert "insights__insights-synthesis" in result.skills
 
     def test_insights_plugin_mcp_server_declared_in_manifest(self) -> None:
         """insights plugin manifest declares insights_db as an mcp_server contribution."""

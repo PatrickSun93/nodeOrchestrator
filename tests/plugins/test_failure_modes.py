@@ -593,15 +593,19 @@ def test_missing_callable_in_module_refused(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cross-plugin collision → second plugin refused
+# Cross-plugin name collision → coexistence via namespacing (ADR-038 D4)
 # ---------------------------------------------------------------------------
 
 
-def test_cross_plugin_skill_collision_refused(tmp_path: Path) -> None:
-    """Two plugins declaring the same skill id: second is refused."""
+def test_cross_plugin_skill_coexist_namespaced(tmp_path: Path) -> None:
+    """Two plugins declaring the same skill id: both load under namespaced keys.
+
+    ADR-038 D4: cross-plugin collision resolved by deterministic always-prefix
+    namespacing (<plugin_id>__<skill_id>), not refusal.
+    """
     plugins_dir = tmp_path / "plugins"
     _write_valid_plugin(plugins_dir, "plugin_a", "shared_skill")
-    _write_valid_plugin(plugins_dir, "plugin_b", "shared_skill")  # same skill id → collision
+    _write_valid_plugin(plugins_dir, "plugin_b", "shared_skill")
 
     result = load_plugins(
         plugins_dir,
@@ -614,11 +618,10 @@ def test_cross_plugin_skill_collision_refused(tmp_path: Path) -> None:
         host_local_tool_names=frozenset(),
         host_mcp_server_names=frozenset(),
     )
-    # Only one of them loads (the first one alphabetically)
-    assert "shared_skill" in result.skills
-    # Exactly one skill (second was refused)
-    skill_ids = [s for s in result.skills if s == "shared_skill"]
-    assert len(skill_ids) == 1
+    # Both coexist under namespaced keys (alphabetical load order: a before b)
+    assert "plugin_a__shared_skill" in result.skills
+    assert "plugin_b__shared_skill" in result.skills
+    assert len(result.skills) == 2
 
 
 # ---------------------------------------------------------------------------

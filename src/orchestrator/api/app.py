@@ -71,6 +71,7 @@ from orchestrator.tools.executor import LocalToolRegistry, execute_pending_tool_
 from orchestrator.tools.local import build_local_tool_registry
 
 if TYPE_CHECKING:
+    from orchestrator.plugins.provenance import PluginRegistry, _RegistryRefuseAll
     from orchestrator.sandbox.posture import PostureResolver
 
 PAYLOAD_LIMIT_BYTES = 65_536  # 64 KiB
@@ -198,6 +199,44 @@ def _resolve_sandbox_posture(config_dir: Path) -> PostureResolver:
         return PostureResolver.fail_closed()
 
 
+def _resolve_plugin_registry(
+    config_dir: Path,
+) -> PluginRegistry | _RegistryRefuseAll:
+    """Resolve unified plugin registry from config_dir/plugins.yaml.
+
+    Three outcomes:
+      absent        → PluginRegistry() empty dict (today's defaults; op-placed by presence).
+      parseable     → PluginRegistry with the declared entries.
+      malformed     → REGISTRY_REFUSE_ALL sentinel + WARNING (refuse-all, ADR-038 D2).
+
+    The sentinel is distinct from an empty dict so load_plugins can tell
+    "no config file" (absent → defaults) from "config file broken" (refuse-all).
+    Follows the _resolve_sandbox_posture → fail_closed() pattern (app.py:172).
+    Extracted so wired-whole tests can drive the real function.
+    """
+    import logging
+
+    import yaml
+
+    from orchestrator.llm.exceptions import ConfigError
+    from orchestrator.plugins.provenance import (
+        REGISTRY_REFUSE_ALL,
+        PluginRegistry,
+        load_plugin_registry,
+    )
+
+    config_path = config_dir / "plugins.yaml"
+    if config_path.exists():
+        try:
+            return load_plugin_registry(config_path)
+        except (ConfigError, yaml.YAMLError) as exc:
+            logging.getLogger("orchestrator.api.app").warning(
+                "plugins.yaml parse failed → refuse-all sentinel (ADR-038 D2): %s", exc
+            )
+            return REGISTRY_REFUSE_ALL
+    return PluginRegistry()
+
+
 def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     """Build the full production AppContext from config + DB path.
 
@@ -244,13 +283,15 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     # re-implementing it (constitution RW8-2 wired-whole; this is the sole injection point).
     _sandbox_posture_resolver = _resolve_sandbox_posture(config_dir)
 
-    # Plugin aggregation pass (ADR-029 D2 / P3.5-5): discover + validate + merge
-    # all valid plugins from plugins/ (repo-root sibling of config/).
+    # Plugin aggregation pass (ADR-029 D2 / P3.5-5 / ADR-038 D1/D2 P4.4-4): discover + validate
+    # + merge all valid plugins from plugins/ (operator-placed) and fetched_plugins/ (fetched).
     # Absent plugins/ → no-op. Any-stage plugin failure refuses only that plugin.
-    # Resolver built before this block (RW5 will thread it into load_plugins).
+    # Plugin registry: absent → defaults; malformed → REGISTRY_REFUSE_ALL sentinel → refuse-all.
     from orchestrator.core.room import RoomType as _RoomType
     from orchestrator.plugins.loader import load_plugins
     from orchestrator.plugins.schema import PLUGIN_HOST_CONTRACT_VERSION
+
+    _plugin_registry = _resolve_plugin_registry(config_dir)
 
     plugin_result = load_plugins(
         sandbox_root / "plugins",
@@ -262,6 +303,8 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         host_tools=tools,
         host_local_tool_names=frozenset(local_tools.keys()),
         host_mcp_server_names=frozenset(mcp_sessions.keys()),
+        fetched_plugins_dir=sandbox_root / "fetched_plugins",
+        plugin_registry=_plugin_registry,
         posture_resolver=_sandbox_posture_resolver,
         sandbox_root=sandbox_root,
     )
