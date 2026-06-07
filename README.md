@@ -44,7 +44,7 @@
 4. 读 chat-history.md 第 17-18 节(LLM 层设计推理)
 5. 读 handoff.md 剩余部分
 
-**当前阶段**(P0 完成,准备 P1.1):
+**深入设计推理**(理解为什么这么设计):
 
 1. 读 handoff.md 第 5.5 节(LLM 层完整设计)
 2. 读 chat-history.md 第 17-18 节(为什么三层、为什么这么选 model)
@@ -93,16 +93,10 @@ P0 实施过程中发现:Claude Code 借用的"读取宽容、写入严格"原�
 
 不是"我做完了你 review",而是"我做完了,这些选择我倾向 A 但有 B C D 可能,你看看"。这是 honest interlocutor 在协作层的应用。
 
-## 项目状态(2026 年 5 月)
+## 项目状态(2026 年 6 月)
 
-**P0**:✅ 接口冻结完成,等 commit 2 实现 + 测试
+**P0–P4 全部完成(2026-06-07)。** 产品已走完 P1(地基:event store / LLM 三层 / 自治度 gate / skills / 多 agent / 状态机 / 跨房间记忆)、P2(跨房间记忆 + 用户偏好 + re-entry + 平台演化)、P3(完整产品:facilitator / API / GUI / MCP / 插件 / confirm-then-execute / 远程)、P4(完整化:turn-loop / 完整本地工具面 / syscall 沙箱 / 插件 registry+lifecycle / auth+multi-user / auto-fire / GUI 高级层)。阶段详情见 `handoff.md` §7 + `docs/process/P3-roadmap.md` / `docs/process/P4-roadmap.md`。
 
-**接下来**:P1.0 端到端骨架(3-4 天) → P1.1 LLM 层(1.5-2 周)
-
-**ADR 索引**:
-- ADR-001:Event store 地基(待写,P0 commit 3)
-- ADR-002:LLM 三层配置架构(待写,P1.1)
-- ADR-003:Claude Code 不能给 operator(待写,P1.1)
-- ADR-004:Tool calling 策略 3(待写,P1.1)
+**ADR 索引**:ADR-001..040 全部 Accepted(无 ADR-004 — 折入 ADR-003;ADR-008 为 dev-harness 状态机)。权威索引见 `handoff.md` §15;原文在 `docs/decisions/`。
 
 每次重大设计决策做新 ADR。后续的人(包括未来的 Claude Code 自己)能从 ADR 看到决策为什么这样做。

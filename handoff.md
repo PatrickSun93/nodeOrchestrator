@@ -769,6 +769,9 @@ async def select_model_and_provider(
 
 ## 7. 实施优先级(更新版)
 
+> **状态(2026-06-07):P0–P4 全部 closed。** 产品线已完成 deferred-completeness(P4):agent turn-loop + 完整本地工具面(subprocess/network/mutation)+ 容器 syscall/egress 沙箱 + 插件 registry/lifecycle/admission + auth/multi-user + COUNTDOWN auto-fire + GUI 高级/配置层。ADR-001..040 全 Accepted(索引见 §15)。
+> **本节以下保留各阶段的历史推进叙述**(P1.2 / P2 段为当时快照,未推倒重写);slice 级权威记录见 `docs/process/P3-roadmap.md`(P3)与 `docs/process/P4-roadmap.md`(P4)。下方分节的状态标记以本 banner 为准。
+
 ### P0 — 事件流地基 ✅ Closed
 
 **Landed commits**: `69f66d1`(scaffold + interface freeze)→ `997bb00`(ADR-001 accepted)。架构记录 `docs/architecture/event-model.md`,决策记录 `docs/decisions/ADR-001-event-store-foundation.md`。Retrospective 未单独写(P0 早期、retro 习惯从 P1.1 开始)。
@@ -796,7 +799,9 @@ async def select_model_and_provider(
 - Cross-family two-reviewer 经验数据(verify overlap ~100%、find overlap <10%)
 - 7 个 constitutional tests landed,首个真正"付钱"的是 `test_constitution_no_hardcoded_model_names`(P1.1 期间 3 次实抓)
 
-### P1.2 — 自治度评分系统 🚧 In flight
+### P1.2 — 自治度评分系统 ✅ Closed
+
+> (P1.2 早已 closed;以下 commit timeline / "Pending" 行为当时推进快照,按 §7 banner 视为历史。)
 
 **Commit timeline**:
 
@@ -928,19 +933,30 @@ Placeholder defaults 全部标 TODO,真值通过 P1.5+ 实际使用 tune 出来�
 |---|---|---|---|
 | **P2.1** | Tag registry(ADR-018):`tag` 表 + `normalize_tag` + `resolve_tags`;Hypothesis/VK 共享规范词汇表 | ✅ **DONE** | 地基(matcher 的前置) |
 | **P2.2** | 晋升规则 (a) 跨房间 matcher(ADR-017):`run_matcher` 按 canonical tag-set 分组,跨 ≥N 房间 flip `candidate_for_promotion`,advisory-only | ✅ **DONE** | 依赖 P2.1 |
-| **P2.3** | 晋升规则 (c) 外部 ground-truth 验证(ADR-019):typed external-validation 输入 + deterministic 规则函数,advisory-only,judgment 重定位到 connector(Principle 5) | 🚧 **IN-PROGRESS**(senior 起草中) | 完成晋升三元组 (a)(b)(c) |
-| **P2.4** | **记忆数据模型补全**:Entity 全实现(producer/consumer,脱离 schema-only stub)+ ProjectArchive(model+表+impl,P1.6.5 起 deferred)+ 用户偏好系统(chat-history §类别4:用户偏好 = 实体记忆) | ✅ IMPL DONE (claude/P2.4-impl — awaiting review) | re-entry 消费的"容器";必须先于 P2.5 |
-| **P2.5** | **房间 re-entry / 离开-回来追平体验(= P2 验收"AI 记得我")**:离开生成 catch-up 摘要;回来显式追平;**第一个** `lookup_verified_knowledge` + ProjectArchive + Entity + snapshot 的消费者 | ✅ IMPL DONE (claude/P2.5-impl — awaiting review) | `orchestrator/reentry/`：`assemble_reentry`(code)+ `render_reentry_prose`(REENTRY_DIGEST_RENDER content-gen) + `record_leave_marker` + `generate_and_record_archive`(ARCHIVE_SUMMARY_RENDER) + 2 constitutional AST guards (import + LLM-free-selection) |
-| **P2.6** | **喂活 dormant 晋升规则**:rule-a 的 tagging producer(agent 层 content-gen 给 `Hypothesis.topic_tags` 打标)+ rule-c 的 external connectors(产出 validation verdict)+ refuted/inconclusive verdict 处理(P2.3 push-back #4 deferred) | ✅ IMPL DONE (claude/P2.6-impl — awaiting review) | `producers/tagging.py` + `memory/store.py::update_hypothesis_tags` + `connectors/{_emit,dataset_check}.py` + `memory/validation.py::list_refuted_candidates` + c1/c2 AST guards + import guard; rules a/c now fire on real data |
-| **P2.7** | **平台演化 + LLM 层 + 启动 polish**:状态机演化/切换(§7 co-headline)+ LLM Layer 4(全局 cost/quality override)+ Claude Code alt backend(`ANTHROPIC_BASE_URL`)+ 友好版启动错误信息 | ✅ IMPL DONE (claude/P2.7-impl — awaiting review) | S1 scaffold SM(bug_fix/code_review/idea_validation/free_chat 真实 transition tables + discriminating tests) + S2 GlobalLLMOverride(4th layer, apply_global_override pure fn, c1 structural test) + S3 alt-backend(ANTHROPIC_BASE_URL opt-in + allowlist + Y2 env-inheritance closed) + S4 bootstrap.py + StartupError + render_startup_error; 1257 tests green. **P2 closes when P2.7 review completes.** |
+| **P2.3** | 晋升规则 (c) 外部 ground-truth 验证(ADR-019):typed external-validation 输入 + deterministic 规则函数,advisory-only,judgment 重定位到 connector(Principle 5) | ✅ **DONE** | 完成晋升三元组 (a)(b)(c) |
+| **P2.4** | **记忆数据模型补全**:Entity 全实现(producer/consumer,脱离 schema-only stub)+ ProjectArchive(model+表+impl,P1.6.5 起 deferred)+ 用户偏好系统(chat-history §类别4:用户偏好 = 实体记忆) | ✅ IMPL DONE (claude/P2.4-impl — closed) | re-entry 消费的"容器";必须先于 P2.5 |
+| **P2.5** | **房间 re-entry / 离开-回来追平体验(= P2 验收"AI 记得我")**:离开生成 catch-up 摘要;回来显式追平;**第一个** `lookup_verified_knowledge` + ProjectArchive + Entity + snapshot 的消费者 | ✅ IMPL DONE (claude/P2.5-impl — closed) | `orchestrator/reentry/`：`assemble_reentry`(code)+ `render_reentry_prose`(REENTRY_DIGEST_RENDER content-gen) + `record_leave_marker` + `generate_and_record_archive`(ARCHIVE_SUMMARY_RENDER) + 2 constitutional AST guards (import + LLM-free-selection) |
+| **P2.6** | **喂活 dormant 晋升规则**:rule-a 的 tagging producer(agent 层 content-gen 给 `Hypothesis.topic_tags` 打标)+ rule-c 的 external connectors(产出 validation verdict)+ refuted/inconclusive verdict 处理(P2.3 push-back #4 deferred) | ✅ IMPL DONE (claude/P2.6-impl — closed) | `producers/tagging.py` + `memory/store.py::update_hypothesis_tags` + `connectors/{_emit,dataset_check}.py` + `memory/validation.py::list_refuted_candidates` + c1/c2 AST guards + import guard; rules a/c now fire on real data |
+| **P2.7** | **平台演化 + LLM 层 + 启动 polish**:状态机演化/切换(§7 co-headline)+ LLM Layer 4(全局 cost/quality override)+ Claude Code alt backend(`ANTHROPIC_BASE_URL`)+ 友好版启动错误信息 | ✅ IMPL DONE (claude/P2.7-impl — closed) | S1 scaffold SM(bug_fix/code_review/idea_validation/free_chat 真实 transition tables + discriminating tests) + S2 GlobalLLMOverride(4th layer, apply_global_override pure fn, c1 structural test) + S3 alt-backend(ANTHROPIC_BASE_URL opt-in + allowlist + Y2 env-inheritance closed) + S4 bootstrap.py + StartupError + render_startup_error; 1257 tests green. **P2 ✅ closed。** |
 
 **依赖序**:`P2.1→P2.2→P2.3`(晋升机制,已基本完成)→ `P2.4`(补全记忆容器)→ `P2.5`(re-entry 读容器,验收)→ `P2.6`(producers 喂活规则)→ `P2.7`(平台 polish)。
 **关键 gap 提醒**:P2.1-2.3 全是记忆**写**侧;`lookup_verified_knowledge` 至今**零消费者**。**P2.5 才是真正搬动"AI 记得我"验收的 slice** —— 前面都是它将读取的 plumbing。P2.5 是 milestone critical path。
 **一个序的判断点(ratified 2026-05-31:re-entry before producers)**:P2.5(re-entry)vs P2.6(producers)的先后 —— architect ratified **P2.5 先于 P2.6**:re-entry 的硬依赖是 P2.4 容器(非 producers),且可在 rule-b 已晋升的 VK 上 demo,故置于 P2.6 前(尽早 de-risk "AI 记得我" 验收)。Producer 自动填充的真实记忆演示在 P2.6 之后补强。
 
-### P3 — 完整产品
+### P3 — 完整产品 ✅ Closed
 
 加更多 agent / 模板 / skill,Plugin 系统,MCP 集成,GUI 完整。
+
+**P3 ✅ Closed(slice 级权威记录见 `docs/process/P3-roadmap.md`)** — 7 个 slice 全 closed + merged:
+- **P3.1** scaffold rosters + `facilitator` agent role(ADR-024)
+- **P3.2** API/Server 边界 — HTTP/WS over event store(ADR-025)
+- **P3.3** GUI MVP — React/TS view+intent(ADR-026)
+- **P3.4** MCP client + autonomy-gating(cycle-1, ADR-027)+ runtime tool-executor(cycle-2, ADR-028)
+- **P3.5** 插件系统 — manifest + loader + code-trust(Posture A)(ADR-029)
+- **P3.6** confirm-then-execute — human-in-the-loop 门控审批(ADR-030)
+- **P3.7** content depth(4 agents / 3 skills / 2 connectors / 2 plugins;无新 ADR)+ remote(Posture-B executor + 远程 MCP transport,ADR-031/032)
+
+下方 P3.4 cycle-1 / cycle-2 细节为历史落地记录,保留。
 
 **P3.4 cycle-1 已落地 (2026-06-02)**: MCP client + stdio transport + generic tool-adapter +
 autonomy-gating 已完成 (ADR-027 Accepted)。
@@ -964,6 +980,25 @@ autonomy-gating 已完成 (ADR-027 Accepted)。
   interpret bounded deadline (INTERPRET_TIMEOUT_S)；bounded local read (MAX_RESULT_BYTES)
 - 沙箱信任边界: read_file/list_files resolve + 逃逸检测，sandbox_root = config_dir.parent
 - 28 tools tests: C2-1/C2-2 executor + local + C2-3 e2e + C2-4 constitution 全覆盖
+
+### P4 — 完整化(deferred-completeness)✅ Closed
+
+P4 = 完整化:退役 P1–P3 显式 deferred 的 residual + 完成被推迟的能力(turn-loop、完整本地工具面、真 syscall 沙箱、插件 registry/lifecycle、auth/multi-user、auto-fire、GUI 高级层)。scope-decision + realized 记录见 `docs/process/P4-roadmap.md`。8 个 slice 全 closed + merged(PRs #53–64,ADR-033..040 Accepted):
+
+| Slice | 内容 | ADR | PR |
+|---|---|---|---|
+| **P4.1** | agent turn-loop — in-turn 工具结果 re-dispatch + loop bound + read-only code-intel 工具 | ADR-033(+ amend ADR-028 D3/D4、ADR-011) | #53 |
+| **P4.2-B3** | subprocess 本地工具(run_tests/run_lint/git_blame/git_log/git_diff) | ADR-034 | #54 |
+| **P4.2-B4** | network 本地工具(web_fetch/web_search;SSRF/exfil 威胁模型) | ADR-035 | #56 |
+| **P4.2-B5** | mutation 本地工具(apply_edit/send_email/git_push;confirm-actuation) | ADR-036 | #57 |
+| **P4.3** | 容器 syscall/egress 沙箱 — `RB-FS/NET` residual 退役基座 | ADR-037 | #58 |
+| **P4.4** | 插件 registry + lifecycle + admission/signature + namespacing(admission 半) | ADR-038 | #59 |
+| **P4.5** | auth / identity 模型 — 首个 human-identity 信任边界 + multi-user + remote-bind | ADR-039 | #60 |
+| **P4.6** | COUNTDOWN auto-fire-on-timer — durable 调度器 + 首个 human-out-of-loop 执行姿态 | ADR-040 | #61 |
+| **P4.7-BE** | 插件管理端点(realizes ADR-038 D5 + ADR-039 D5/D9;无新 ADR) | — | #62 |
+| **P4.7-FE** | GUI 高级/配置层(login/auth、plugin-management、config;light frontend track) | — | #63 |
+
+宪法脊柱 8 片全程守住(门控=代码、discovery≠permission、无 content-gen 之外的新 routing/judgment `LLMPurpose`;见各 ADR Status)。**F(scale/concurrency)+ D4** 判定 out-of-scope(仅 P4.5 的 reader-concurrency 修复拉入)。in-window 另有 **#55** gui-restyle(设计系统应用)+ **#64** UI format-hygiene(8 prettier + openapi-codegen 锁定 plugin/auth 合约)。
 
 ---
 
@@ -1049,27 +1084,29 @@ your-orchestrator/
 │   ├── llm_providers.yaml       # NEW
 │   └── llm_models.yaml          # NEW
 ├── src/orchestrator/
-│   ├── core/                    # Event store(P0)、Room、State machine
-│   ├── llm/                     # NEW — LLM 层(P1.1)
-│   │   ├── types.py
-│   │   ├── purposes.py
-│   │   ├── protocol.py
-│   │   ├── exceptions.py
-│   │   ├── router.py
-│   │   ├── config_loader.py
-│   │   ├── health_check.py
-│   │   ├── providers/
-│   │   │   ├── openai_compatible.py
-│   │   │   ├── claude_code_cli.py
-│   │   │   └── mock.py
-│   │   └── parsers/
-│   │       └── claude_code_output.py
-│   ├── agents/                  # Agent loader、execution(P1.4)
-│   ├── tools/                   # 工具实现
-│   ├── memory/                  # 跨房间记忆 — P1.6.5 slice B 已物化 (ADR-016)
-│   ├── autonomy/                # 自治度系统(P1.2)
+│   ├── core/                    # Event store(P0)、Room、relations
+│   ├── llm/                     # LLM 层(P1.1)— providers / router / config_loader / purposes / parsers
+│   │   ├── types.py / purposes.py / protocol.py / exceptions.py
+│   │   ├── router.py / config_loader.py / health_check.py
+│   │   ├── providers/           # openai_compatible / claude_code_cli / mock
+│   │   └── parsers/             # claude_code_output
+│   ├── agents/                  # Agent loader + execution + should_speak / dispatch(P1.4)
+│   ├── rooms/                   # 房间运行时 + per-RoomType 状态机(P1.5)
+│   ├── autonomy/                # 自治度评分 gate(P1.2)
 │   ├── skills/                  # Skill 加载(P1.3)
-│   └── ui/                      # GUI(P3)
+│   ├── derived/                 # 派生视图 — snapshot / decision log(P1.6)
+│   ├── memory/                  # 跨房间记忆 — Hypothesis/VK/Entity/ProjectArchive(P1.6.5 / P2.4 起)
+│   ├── reentry/                 # 房间 re-entry / 离开-回来追平(P2.5)
+│   ├── producers/               # 喂活晋升规则的 producers — tagging 等(P2.6)
+│   ├── connectors/              # 外部 ground-truth 验证 connectors(P2.3 / P2.6)
+│   ├── tools/                   # runtime tool-executor + 本地工具(P3.4 cycle-2 / P4.1–P4.2)
+│   ├── mcp/                     # MCP client — stdio + 远程 streamable-http(P3.4 / P3.7-remote)
+│   ├── plugins/                 # 插件系统 — Posture-A in-proc + Posture-B 子进程 + registry/lifecycle(P3.5 / P3.7-remote / P4.4)
+│   ├── sandbox/                 # 容器 syscall/egress 沙箱 — RB-FS/NET 退役(P4.3)
+│   ├── api/                     # API/Server 边界 — HTTP/WS + auth/(P3.2 / P4.5)
+│   ├── bootstrap.py             # 启动装配 + 友好启动错误(P2.7)
+│   └── workflow/                # 【dev harness】workflow 状态机 CLI(ADR-008;不被产品 import)
+├── ui/                          # React/TS 前端 — view+intent + login/plugins/config(P3.3 / P4.7-FE)
 ├── tests/
 │   ├── core/
 │   ├── llm/
@@ -1089,12 +1126,8 @@ your-orchestrator/
     │   ├── test-coverage-standard.md      # P1.2-R0 — 6 categories
     │   └── autonomy.md                    # P1.2 — TBD
     ├── decisions/
-    │   ├── ADR-001-event-store-foundation.md     # P0
-    │   ├── ADR-002-llm-three-layer-config.md     # P1.1
-    │   ├── ADR-003-claude-code-no-orchestrator-tools.md  # P1.1
-    │   ├── ADR-005-autonomy-scoring-tiered-reversibility.md  # P1.2
-    │   ├── ADR-006-unknown-tool-id-semantics.md  # P1.2-C3
-    │   ├── ADR-007-autonomy-refusal-event-type.md  # P1.2-C4
+    │   ├── ADR-001 … ADR-040-*.md                # 决策记录(P0→P4;全 Accepted;索引见 handoff §15)
+    │   │                                          #   无 ADR-004(折入 ADR-003);ADR-008 为 dev-harness 状态机
     │   ├── ADR-template.md / ADR-EXAMPLE-pydantic.md / writing-adrs.md
     ├── retrospectives/
     │   ├── P1.1.md                        # closed
@@ -1198,6 +1231,39 @@ your-orchestrator/
 - ADR-005: 自治度评分 — 单维 reversibility + 三档 AutonomyTier + 分层 Hard Guards(P1.2,Accepted 2026-05-19)
 - ADR-006: Unknown tool_id 语义 — registry-miss 抛 `UnknownToolError`;field-miss 走 Pydantic default 0(P1.2-C3,Accepted 2026-05-20)
 - ADR-007: autonomy_refusal 事件类型 — `AUTONOMY_REFUSAL` EventType + `AutonomyRefusalMetadata`(4 字段);emit-before-raise 合约(P1.2-C4,Accepted 2026-05-20)
+- ADR-008: Workflow 状态机 + 自动化 **【dev harness】**(Accepted 2026-05-21;经 W-005/RC-21/W-006 多次 amend)
+- ADR-009: SKILL.md frontmatter schema + 加载(P1.3,Accepted 2026-05-26)
+- ADR-010: `should_agent_speak` 决策合约(P1.4,Accepted 2026-05-27)
+- ADR-011: 多 agent 调度 — 顺序、每轮快照(P1.4,Accepted 2026-05-27;P4.1 经 ADR-033 amend `snapshot_excerpt`)
+- ADR-012: per-RoomType 状态机 + `agent.applies_to` 过滤(P1.5,Accepted 2026-05-27)
+- ADR-013: operator tool-dispatch 合约(P1.5.5,Accepted 2026-05-27)
+- ADR-014: snapshot 合约 — 纯函数派生视图 + persisted-via-event(P1.6,Accepted 2026-05-28;经 ADR-030 amend)
+- ADR-015: decision log 形状 — 事件流 live filter(P1.6,Accepted 2026-05-28)
+- ADR-016: 跨房间记忆持久化 — Hypothesis + VerifiedKnowledge 表 + 确认晋升 + 跨房间 lookup(slice B)(P1.6.5,Accepted 2026-05-29)
+- ADR-017: 跨房间 hypothesis matcher — 晋升规则 (a),advisory(P2.2,Accepted 2026-05-31)
+- ADR-018: 共享跨房间 tag registry — memory/ 的规范 tag 词汇(P2.1,Accepted 2026-05-29)
+- ADR-019: 晋升规则 (c) — 外部 ground-truth 验证(event 表示,advisory 纯派生)(P2.3,Accepted 2026-05-31)
+- ADR-020: 记忆数据模型补全 — Entity 全实现 + ProjectArchive + 用户偏好(P2.4,Accepted 2026-06-01)
+- ADR-021: 房间 re-entry / 离开-回来追平 — catch-up consumer(代码选、LLM 措辞)(P2.5,Accepted 2026-06-01)
+- ADR-022: 喂活 dormant 晋升规则 — tagging producer(a)+ 外部 connectors(c)+ refuted 处理(P2.6,Accepted 2026-06-01)
+- ADR-023: LLM Layer-4 全局 override + alt-backend 信任边界 + 启动错误合约(P2.7,Accepted 2026-06-02)
+- ADR-024: `facilitator` agent role(free_chat 对话主持)(P3.1,Accepted 2026-06-02)
+- ADR-025: API/Server 边界 — HTTP/WS over event store + room runtime(P3.2,Accepted 2026-06-02)
+- ADR-026: GUI 前端边界 — React/TS view+intent over frozen API 合约(P3.3,Accepted 2026-06-02)
+- ADR-027: MCP client + tool-adapter + autonomy-gating(P3.4 cycle-1,Accepted 2026-06-02)
+- ADR-028: runtime tool-executor(P3.4 cycle-2,Accepted 2026-06-03;P4.1/B3/B4/B5 amend D3/D4)
+- ADR-029: 插件系统 — manifest + loader + code-trust/隔离(Posture A)(P3.5,Accepted 2026-06-03)
+- ADR-030: confirm-then-execute — human-in-the-loop 门控审批流(P3.6,Accepted 2026-06-03)
+- ADR-031: Posture-B 子进程插件执行器 + 远程插件 provenance(`RB-FS/NET` residual)(P3.7-remote,Accepted 2026-06-04)
+- ADR-032: 远程 MCP transport(streamable-http)+ 远程信任面(P3.7-remote,Accepted 2026-06-04)
+- ADR-033: agent turn-loop — in-turn 工具结果 re-dispatch + loop bound(P4.1,Accepted 2026-06-04;并 amend ADR-028 D3/D4、ADR-011)
+- ADR-034: subprocess 本地工具 — 执行姿态 / 威胁模型 / honest residual(P4.2-B3,Accepted 2026-06-05)
+- ADR-035: network 本地工具 — SSRF/exfil 威胁模型 + egress residual(P4.2-B4,Accepted 2026-06-05)
+- ADR-036: mutation 本地工具 — confirm-actuation + write/exfil/push 威胁模型 + ambient-auth residual(P4.2-B5,Accepted 2026-06-05)
+- ADR-037: 容器 syscall/egress 沙箱 — `RB-FS/NET` 退役基座(P4.3,Accepted 2026-06-05)
+- ADR-038: 插件 registry + lifecycle + admission/signature + namespacing(admission 半)(P4.4,Accepted 2026-06-05)
+- ADR-039: auth / identity 模型 — 首个 human-identity 信任边界 + multi-user + remote-bind(P4.5,Accepted 2026-06-06)
+- ADR-040: COUNTDOWN auto-fire-on-timer — durable 调度器 + 首个 human-out-of-loop 执行姿态(P4.6,Accepted 2026-06-07)
 
 每次重大设计决策做新 ADR。**ADR 起草由 senior planner 负责,architect review/accept**(详见 `docs/process/senior-planner.md` § ADR drafting;ADR-005 是 workflow bootstrap 期的例外,architect 起草自己 review)。后续的人(包括未来的 Claude Code 自己)能从 ADR 看到决策为什么这样做。
 
