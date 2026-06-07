@@ -1,7 +1,20 @@
 task_id: P4.7-BE
-state: awaiting_junior_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-06-07T19:20:56.691528Z'
+last_transition_at: '2026-06-07T20:23:40.100295Z'
 cycle_started_at: '2026-06-07T14:55:34.111478Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-07T20:23:40.100295Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: closed
+  reason: 'P4.7-BE merged (PR #62, merge 4a3cd7f). Plugin management endpoints — realizes
+    ADR-038 D5 + ADR-039 D5/D9 pinned contract (no new ADR; amendments at impl). Impl-stage
+    dual-lens ALL CLEAN first round (R0-A + R0-B cross-family + plan-vs-impl). scope-A
+    plugin-only; DP1(a) config-file write boot-only; admit author-entry-only; fail-closed
+    config-writer (round-trip validator + reject refuse-all + atomic); authenticated-allowed
+    + admit-finer-seam; Y1(a) last-load-result column deferred (inscribed residual).
+    Spine byte-frozen (load_plugins/validator/gate/_execute_local_call zero-diff,
+    no runtime-store, no new LLMPurpose). Gates green. Closing. Remaining P4: P4.7-FE
+    (frontend light track).'
 requires_cross_family_review: true
