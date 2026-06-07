@@ -19,6 +19,10 @@ verdict_history:
     impl_head: bb8f47a
     verdict: needs_architect
     summary: "RW6 (bb8f47a) ELIMINATED the Y5 CI-deadlock hang — verified by me: target test 15/15 PASS no hang, targeted scope exit 0, full pytest exit 0 (0 failed; lone warning = unrelated test_net_trust hung-DNS daemon thread), ruff+mypy(275) green. RW6 = (a) conftest reader_exec max_workers 2→1, (b) _room_stream auth try/except→close(1011) before accept, (c) test threads daemon=True. BUT it fixed the SYMPTOM not the true root cause → NEW 🟡 Y6: production app.py:276 reader_executor=ThreadPoolExecutor(max_workers=4) shares ONE reader_conn (app.py:272) — the exact concurrent-single-SQLite-connection race junior diagnosed; RW6 changed only the TEST fixture (a) + a WS-auth-only close-guard (b, doesn't cover replay app.py:947 / GET reader paths), so production still races on concurrent reads. P4.5's multi-user seam (DP1=b) makes concurrent reads the NORMAL condition (2 users ⇒ correctness, not F-scale). RW6 commit's '(a) no SQLite race (root cause)' overstates (test-only); test-green fidelity dropped (max_workers=1 serialises the very concurrency it tests while prod=4); writer is correctly max_workers=1 (ADR-025 D6) — reader=4 on a shared conn is the asymmetry bug. Architect ruled concurrent-reader on the multi-user path is P4.5 IN-SCOPE → routed α-RW7 (per-thread/thread-local reader conn, keep writer single-conn, make test truly concurrent, fix wording). Y1-Y4 still resolved (untouched by RW6); L3 reject-before-accept + Y3 1008 test still hold (new 1011 path also pre-accept). 2 below-bar residuals persist. Verdict needs_architect — not clean until true root cause (Y6) fixed + suite stably green (round-4)."
+  - round: 4
+    impl_head: d2b5566
+    verdict: needs_architect
+    summary: "RW7 (d2b5566) TRULY fixed Y6 — verified by me: per-thread WAL reader pool (reader_executor initializer=_init_reader_worker + threading.local; every reader lambda resolves get_reader_conn()/get_reader_store() at RUN-TIME on its own worker thread — RW6's bug was capturing one conn on the loop thread; WAL set on writer app.py:290 is DB-file-level so all per-thread reader conns inherit it) eliminates the shared-connection race. Target test 15/15 PASS under the now genuinely-concurrent config (conftest upgraded to max_workers=4 + per-thread initializer → fidelity restored; test now asserts not-alive 'reader hang?', no longer daemon-masked); full pytest exit 0, 0 failed; ruff 0 / mypy 275. Writer untouched (single conn, max_workers=1 — ADR-025 D6 two-connection-model semantics intact). RW6's overstated wording corrected (conftest comment removed; RW7 commit acknowledges RW6 masked it). Y1-Y4 still resolved (RW7 only touched reader paths + executor config). NEW 🟡 Y7 (ADR-as-contract integrity): the per-thread reader pool contradicts the single-reader-connection model inscribed in ADR-039 (line 19 'a separate read-only WAL reader connection'; line 137 'the reader connection') AND ADR-025 D6 (line 80 singular; line 99 Considered-Alternatives 'a thread pool of connections — Rejected for MVP, pooling is a perf forward hook (WAL)') — neither updated, so ADR-039 (Accepted this cycle) mis-describes its own impl. Architect ruled α (inscribe-first): senior updates ADR-039 (line 19/137 → per-thread WAL reader pool) + annotates ADR-025 D6 (the deferred pooling forward-hook is now ACTIVATED; rationale = P4.5 multi-user concurrent-read correctness; writer single-conn unchanged); then round-5 verifies impl↔ADR consistency → clean. 2 below-bar residuals persist (verify_password disabled-branch pre-scrypt; authenticated-/logout positive path untested). Verdict needs_architect — not clean until the ADR reader-model inscription lands (round-5)."
 reviewer: architect-partner
 date: 2026-06-06
 reviewed_artifacts:
@@ -32,7 +36,7 @@ contract:
   - docs/decisions/ADR-039-auth-identity-model.md (Accepted 2026-06-06)
   - docs/process/senior-plans/P4.5.md
 against: claude/P4.5-impl @ 7924b36 (8 atomic commits over origin/main)
-gates: ruff ✅ · mypy ✅ (275 files) · pytest — R3 GREEN (target test 15/15 no hang · targeted scope exit 0 · full suite exit 0); verdict still needs_architect on Y6 (prod reader-conn race — a code-correctness finding, not a gate-red — see verdict_history R3 + Round 3 §). [history — R1 373✅; R2 Y5 hang-red, fixed by RW6]
+gates: ruff ✅ · mypy ✅ (275 files) · pytest — R4 GREEN (target test 15/15 concurrent no hang · full suite exit 0, 0 failed); verdict still needs_architect on Y7 (ADR-039/025 reader-model inscription gap — a doc/contract finding, not a gate-red — see verdict_history R4 + Round 4 §). [history — R3 GREEN, Y6 code-fixed by RW7; R2 Y5 hang fixed by RW6; R1 373✅]
 ---
 
 # R0-A on impl — P4.5: the first human-identity trust boundary (ADR-039 D1–D10)
@@ -217,3 +221,37 @@ The hang's real cause is a **production** concurrency bug, not a test artefact:
 
 - **`verify_password` disabled-user branch** (`users.py:201-202`) returns before scrypt — a weaker oracle than the not-found path Y4 fixed; out of Y4's scope.
 - **Authenticated-`/logout` success path** (`_logout` + `revoke_sessions_for_user`) — only the unauthenticated-401 case is tested; the success path is an untested minor coverage gap (the function mirrors `revoke_session`).
+
+---
+
+## Round 4 — verdict-bump re-review (RC-10): Y6 code-fixed (verified), remaining α = ADR reader-model inscription (Y7)
+
+**Dispatch.** Junior pushed RW7 (`d2b5566`) to truly fix the Y6 production reader-connection race. RC-10 re-verification against the architect's four checkpoints + re-run the gates. **Route nothing** — the new finding (Y7) was architect-ruled α (inscribe-first) in-chat; recorded below.
+
+**Verdict: `needs_architect` (one step from clean).** The Y6 race is **genuinely eliminated** and all four checkpoints pass; the only thing left is an honest-inscription α the architect ruled in-scope: ADR-039 + ADR-025 D6 still describe a *single* reader connection, which the per-thread pool now contradicts. Clean awaits round-5 (verify impl ↔ the updated ADRs).
+
+### RW7 (`d2b5566`) verification — the four checkpoints, all pass
+
+| Checkpoint | Verified |
+|---|---|
+| **(1) per-thread conns truly remove the shared-conn race** | `reader_executor` gets `initializer=_init_reader_worker`; each worker opens + owns its own `sqlite3` connection in `threading.local`. Every reader lambda now calls `ctx.get_reader_conn()` / `get_reader_store()` **at run-time on the worker thread** (`app.py:517/528/537/541/554/948/957/967/998`) — RW6's defect was binding `reader_conn = ctx.reader_store.conn` once on the async loop thread. WAL is set on the writer (`app.py:290`) and is a DB-file-level persistent mode → every per-thread reader conn inherits it → concurrent readers + writer, no `database is locked`. No route lambda uses the shared `reader_store` anymore (it is fallback-only). |
+| **(2) writer single-conn serialisation untouched** | `writer_executor = ThreadPoolExecutor(max_workers=1)` (`app.py:316`), single `writer_conn`, `shutdown()` writer path unchanged. ADR-025 D6's writer-side (one serialised connection, atomic multi-append) is intact. |
+| **(3) test now genuinely tests concurrent reads** | `conftest.py` upgraded to `max_workers=4` + the same per-thread initializer (matches prod) — the concurrency test exercises real concurrent reads, not the RW6 serialised-to-1 config. `test_concurrency.py` now **asserts** `not any(t.is_alive())` ("Subscriber threads timed out — reader hang?") — a hang now **fails the test** instead of being daemon-masked; `daemon=True` is honestly demoted to a CI safety-net comment. |
+| **(4) RW6 overstated wording corrected (HR#5)** | conftest's wrong `max_workers=1 … fixes the concurrent-WS hang` comment is removed; RW7's commit explicitly states RW6 "masked this … left the production path broken." |
+
+**Gates (re-run by me, round 4):** target test **15/15 PASS** under the genuinely-concurrent config (zero hangs) · **full pytest exit 0, 0 failed** (lone warning is the unrelated `test_net_trust` hung-DNS daemon thread) · **ruff exit 0** · **mypy "no issues, 275 files."** **Y1–Y4** untouched by RW7 → still resolved.
+
+### 🟡 Y7 (round-4, NEW — ADR-as-contract integrity) — the per-thread reader pool is un-inscribed → **architect-ruled α (inscribe-first)**
+
+The code is correct, but it now **contradicts the inscribed connection model** in two ADRs, neither updated:
+- **ADR-039** (P4.5's own ADR, **Accepted this cycle**): line 19 (storage idiom) — *"a separate read-only **WAL reader** connection + read executor"*; line 137 (crash/concurrency posture) — *"validated on **the reader** connection"*. Both singular. → ADR-039 **mis-describes its own impl**.
+- **ADR-025 D6**: line 80 — *"a separate read-only WAL connection"* (singular); line 99 Considered-Alternatives — ***"a thread pool of connections — Rejected for MVP … pooling is a perf forward hook (WAL)."*** → RW7 implements exactly the alternative D6 deferred.
+
+Per the project discipline (*"ADR amendment IS required when changing an ADR decision"* + Architect Accept required), the per-thread reader pool must be **inscribed before ADR-039 is Accepted** — else the Accept records a false reader model. This is *within* the per-thread-reader decision the architect already ratified (an honest-inscription, not a new design choice).
+
+**Architect routing (in-chat): α — inscribe-first.** Senior updates ADR-039 (line 19 / 137 → per-thread WAL reader pool: each `reader_executor` worker owns its connection) and annotates ADR-025 D6 (the line-99 deferred "thread pool of connections" forward-hook is now **activated** by P4.5 — rationale: the multi-user seam makes concurrent-read correctness in-scope; writer single-conn serialisation unchanged). Then R0-A round-5 verifies the impl matches the updated ADRs → clean.
+
+### Below-bar residuals (still noting, not blocking)
+
+- **`verify_password` disabled-user branch** (`users.py:201-202`) returns before scrypt — weaker oracle than the not-found path Y4 fixed; out of Y4's scope.
+- **Authenticated-`/logout` success path** (`_logout` + `revoke_sessions_for_user`) — only the unauthenticated-401 case is tested; the success path is an untested minor coverage gap (mirrors `revoke_session`).
