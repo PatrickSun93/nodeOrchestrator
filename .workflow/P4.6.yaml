@@ -1,7 +1,21 @@
 task_id: P4.6
-state: awaiting_junior_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-06-07T12:55:13.093733Z'
+last_transition_at: '2026-06-07T14:52:44.320140Z'
 cycle_started_at: '2026-06-07T02:00:30.702786Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-07T14:52:44.320140Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: closed
+  reason: 'P4.6 merged (PR #61, merge 2931ac0). COUNTDOWN auto-fire-on-timer — first
+    human-out-of-loop execution. Impl-stage lean dual-lens ALL CLEAN first round:
+    R0-A clean + R0-B cross-family clean + plan-vs-impl clean. ADR-040 Accepted +
+    ADR-030 D4/D7(c) amended + ADR-005/025/028 annotated. Durable expires_at + in-process
+    sweeper (discovery-on-reader/actuate-on-writer, runtime enabled-gate, restart
+    re-arms fresh full window, clean shutdown); COUNTDOWN-only (HARD never), reversibility-floor
+    (irreversible never headless), opt-in default OFF (byte-identical when off). Spine
+    byte-frozen (scoring/emission/gate/_execute_local_call zero-diff, no new LLMPurpose,
+    confirm idempotency inherited). RB-AUTOFIRE residual inscribed honestly. Gates
+    green. Closing.'
 requires_cross_family_review: true
