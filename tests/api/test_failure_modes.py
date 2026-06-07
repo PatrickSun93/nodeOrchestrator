@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from orchestrator.api.app import AppContext
 from orchestrator.core.event import RoomId
+from tests.api.conftest import TEST_USER_ID
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -116,7 +117,7 @@ class TestTurnFailStage:
         events = client.get(f"/rooms/{room_id}/events").json()
         assert len(events) == 1, "Exactly the user event should be in the store"
         assert events[0]["id"] == appended_event_id
-        assert events[0]["author"] == "user"
+        assert events[0]["author"] == f"user:{TEST_USER_ID}"  # P4.5-4 CLASS A
         assert events[0]["content"] == "persist me"
 
     def test_run_turn_raise_no_partial_writes_surfaced(self, client: TestClient) -> None:
@@ -208,7 +209,7 @@ class TestWsDisconnectTurnUnaffected:
             json={"type": "user_input", "content": "still works"},
         )
         assert r.status_code == 200
-        assert r.json()["appended_event"]["author"] == "user"
+        assert r.json()["appended_event"]["author"] == f"user:{TEST_USER_ID}"  # P4.5-4 CLASS A
 
     def test_intent_event_in_store_after_ws_disconnect(
         self, client: TestClient, ctx: AppContext

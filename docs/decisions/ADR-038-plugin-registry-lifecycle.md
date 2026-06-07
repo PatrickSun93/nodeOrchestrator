@@ -107,6 +107,8 @@ Cross-plugin name collisions relax from **fail-closed-refuse** to **deterministi
 
 The config UI **sends intent, never decides** (ADR-026 HR#2). No UI and no endpoint code ship in P4.4 (frontend track).
 
+**[Annotated P4.5 → ADR-039, Accepted 2026-06-06: the authz dimension of this forward-contract is now pinned. These management endpoints are **operator actions requiring an authenticated principal** (ADR-039 D9 / D5): any authenticated user under DP3a (all-or-nothing operator); the D5 checkpoint seam #2 is where a role check (DP3b) would later gate. No endpoint code is built in P4.5 — P4.7 builds against an authz-aware contract rather than inheriting an authz-blind one (inscribe-before-producer). The no-RBAC residual (`RB-AUTHZ`) is inscribed in ADR-039 D10.]**
+
 **Residuals P4.4 leaves (inscribe, don't soften — roadmap §10):**
 
 - **`RB-ADMIT`** (D3) — no author-identity / no-revocation / no-update-trust; persists past P4.4 unless signature is separately justified.

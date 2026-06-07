@@ -13,7 +13,9 @@ Covers:
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
+import uuid as _uuid_mod
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,8 @@ from orchestrator.agents.schema import (
     EventTypeTrigger,
 )
 from orchestrator.api.app import MAX_TURN_LOOP_PASSES, AppContext, _make_test_app
+from orchestrator.api.auth.session import create_token
+from orchestrator.api.auth.users import create_user, init_auth_schema
 from orchestrator.api.pubsub import RoomEventBus
 from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.core.event import EventType, generate_event_id
@@ -59,6 +63,10 @@ _AUTONOMY = AgentAutonomyThresholds(threshold_auto=10, threshold_confirm=3, user
 _LLM_CFG = AgentLLMConfig(default_model=_MOCK_MODEL, autonomy_thresholds=_AUTONOMY)
 
 
+_TEST_USER_TL = "testuser"
+_TEST_PW_TL = "test-pw"
+
+
 def _make_store(db_path: str = ":memory:") -> EventStore:
     conn = sqlite3.connect(db_path, check_same_thread=False)
     store = EventStore(conn)
@@ -66,6 +74,18 @@ def _make_store(db_path: str = ":memory:") -> EventStore:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.commit()
     return store
+
+
+def _init_auth(conn: sqlite3.Connection) -> None:
+    """Initialize auth schema + create test user on a connection."""
+    init_auth_schema(conn)
+    with contextlib.suppress(ValueError):
+        create_user(conn, _TEST_USER_TL, _TEST_PW_TL)
+
+
+def _auth_headers(ctx: AppContext) -> dict[str, str]:
+    raw_token = create_token(ctx.writer_store.conn, _TEST_USER_TL)
+    return {"Authorization": f"Bearer {raw_token}"}
 
 
 def _make_agent(
@@ -111,11 +131,25 @@ def _make_ctx(
     agent: Agent | None = None,
     llm_router: LLMRouterProtocol | None = None,
     tools: dict[str, ToolMeta] | None = None,
-    db_path: str = ":memory:",
+    db_path: str | None = None,
     reader_db_path: str | None = None,
 ) -> AppContext:
-    writer_store = _make_store(db_path)
-    reader_store = _make_store(reader_db_path or db_path)
+    # Use a shared named in-memory URI so writer and reader see the same data.
+    # Two sqlite3.connect(":memory:") calls give SEPARATE databases — useless for auth.
+    if db_path is None and reader_db_path is None:
+        _shared = f"file:tl_{_uuid_mod.uuid4().hex}?mode=memory&cache=shared"
+        writer_conn = sqlite3.connect(_shared, check_same_thread=False, uri=True)
+        writer_store = EventStore(writer_conn)
+        writer_store.init_schema()
+        writer_conn.execute("PRAGMA journal_mode=WAL")
+        writer_conn.commit()
+        reader_conn = sqlite3.connect(_shared, check_same_thread=False, uri=True)
+        reader_store = EventStore(reader_conn)
+    else:
+        writer_store = _make_store(db_path or ":memory:")
+        reader_store = _make_store(reader_db_path or db_path or ":memory:")
+    # Auth schema + test user on writer (reader shares the same DB, sees the same data)
+    _init_auth(writer_store.conn)
     writer_exec = ThreadPoolExecutor(max_workers=1)
     reader_exec = ThreadPoolExecutor(max_workers=1)
     bus = RoomEventBus()
@@ -206,7 +240,7 @@ def test_turn_loop_chain_two_tool_calls_in_one_turn(tmp_path: Any) -> None:
     ctx.sandbox_root = tmp_path
 
     app = _make_test_app(ctx)
-    with TestClient(app) as client:
+    with TestClient(app, headers=_auth_headers(ctx)) as client:
         room_id = _post_room(client)
         _post_intent(client, room_id)
 
@@ -259,7 +293,7 @@ def test_turn_loop_exits_on_zero_tool_calls(tmp_path: Any) -> None:
     ctx.sandbox_root = tmp_path
 
     app = _make_test_app(ctx)
-    with TestClient(app) as client:
+    with TestClient(app, headers=_auth_headers(ctx)) as client:
         room_id = _post_room(client)
         _post_intent(client, room_id)
 
@@ -304,7 +338,7 @@ def test_turn_loop_continues_on_tool_failed(tmp_path: Any) -> None:
     ctx.local_tools = {}
 
     app = _make_test_app(ctx)
-    with TestClient(app) as client:
+    with TestClient(app, headers=_auth_headers(ctx)) as client:
         room_id = _post_room(client)
         response = _post_intent(client, room_id)
 
@@ -356,7 +390,7 @@ def test_turn_loop_countdown_pending_terminates_loop(tmp_path: Any) -> None:
     )
 
     app = _make_test_app(ctx)
-    with TestClient(app) as client:
+    with TestClient(app, headers=_auth_headers(ctx)) as client:
         room_id = _post_room(client)
         _post_intent(client, room_id)
 
@@ -423,7 +457,7 @@ def test_state_machine_runs_once_per_turn() -> None:
     original_next = _original_next
 
     app = _make_test_app(ctx)
-    with TestClient(app) as client, patch.object(
+    with TestClient(app, headers=_auth_headers(ctx)) as client, patch.object(
         _runtime_mod, "next_room_state", side_effect=patched_next_room_state
     ):
         room_id = _post_room(client)
@@ -479,7 +513,9 @@ def test_turn_loop_wall_clock_deadline_exits(tmp_path: Any) -> None:
     app = _make_test_app(ctx)
     # Set re-dispatch deadline to -1.0 (always expired): the first boundary check
     # will see monotonic() - loop_start >= -1.0 (always True since difference >= 0).
-    with TestClient(app) as client, patch.object(_app_mod, "MAX_REDISPATCH_WALL_CLOCK_S", -1.0):
+    with TestClient(app, headers=_auth_headers(ctx)) as client, patch.object(
+        _app_mod, "MAX_REDISPATCH_WALL_CLOCK_S", -1.0
+    ):
         room_id = _post_room(client)
         _post_intent(client, room_id)
 
@@ -564,7 +600,7 @@ def test_investigator_live_chain_flagship(tmp_path: Any) -> None:
     ctx.sandbox_root = tmp_path
 
     app = _make_test_app(ctx)
-    with TestClient(app) as client:
+    with TestClient(app, headers=_auth_headers(ctx)) as client:
         room_id = _post_room(client, "bug_fix")
         _post_intent(client, room_id)
 
@@ -607,7 +643,7 @@ def test_investigator_mutation_tool_does_not_auto_execute(tmp_path: Any) -> None
     )
 
     app = _make_test_app(ctx)
-    with TestClient(app) as client:
+    with TestClient(app, headers=_auth_headers(ctx)) as client:
         room_id = _post_room(client, "bug_fix")
         _post_intent(client, room_id)
 

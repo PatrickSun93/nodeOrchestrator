@@ -23,6 +23,8 @@ from fastapi.testclient import TestClient
 
 from orchestrator.agents.dispatch import LLMRouterProtocol
 from orchestrator.api.app import AppContext, _make_test_app
+from orchestrator.api.auth.session import create_token
+from orchestrator.api.auth.users import create_user, init_auth_schema
 from orchestrator.api.pubsub import RoomEventBus
 from orchestrator.core.event import (
     Event,
@@ -68,13 +70,25 @@ def _mock_router() -> MagicMock:
     return router
 
 
+_TEST_USER = "testuser"
+_TEST_PW = "test-pw"
+
+
 def _make_store(db_path: Any) -> EventStore:
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     store = EventStore(conn)
     store.init_schema()
     conn.execute("PRAGMA journal_mode=WAL")
     conn.commit()
+    # Auth tables alongside event tables (ADR-039 D2)
+    init_auth_schema(conn)
+    create_user(conn, _TEST_USER, _TEST_PW)
     return store
+
+
+def _auth_headers(ctx: AppContext) -> dict[str, str]:
+    raw_token = create_token(ctx.writer_store.conn, _TEST_USER)
+    return {"Authorization": f"Bearer {raw_token}"}
 
 
 def _make_ctx(db_path: Any, local_tools: dict[str, Any] | None = None) -> AppContext:
@@ -149,7 +163,7 @@ class TestConfirmApproveHappyPath:
         room_id = _make_room(ctx.writer_store)
         pending = _append_pending(ctx.writer_store, room_id, call_id="call_happy")
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},
@@ -172,7 +186,7 @@ class TestConfirmApproveHappyPath:
         room_id = _make_room(ctx.writer_store)
         pending = _append_pending(ctx.writer_store, room_id, agent_id="coordinator")
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},
@@ -188,7 +202,7 @@ class TestConfirmApproveHappyPath:
         room_id = _make_room(ctx.writer_store)
         pending = _append_pending(ctx.writer_store, room_id)
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},
@@ -212,7 +226,7 @@ class TestConfirmIdempotency:
         room_id = _make_room(ctx.writer_store)
         pending = _append_pending(ctx.writer_store, room_id, call_id="call_idem")
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r1 = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},
@@ -234,7 +248,7 @@ class TestConfirmIdempotency:
         room_id = _make_room(ctx.writer_store)
         pending = _append_pending(ctx.writer_store, room_id, call_id="call_once")
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},
@@ -263,7 +277,7 @@ class TestConfirmCancel:
         room_id = _make_room(ctx.writer_store)
         pending = _append_pending(ctx.writer_store, room_id, call_id="call_cancel")
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "cancel"},
@@ -286,7 +300,7 @@ class TestConfirmCancel:
         room_id = _make_room(ctx.writer_store)
         pending = _append_pending(ctx.writer_store, room_id, call_id="call_cancelled")
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "cancel"},
@@ -313,7 +327,7 @@ class TestConfirmRoomStateGate:
         room_id = _make_room(ctx.writer_store, state="closed")
         pending = _append_pending(ctx.writer_store, room_id)
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},
@@ -333,7 +347,7 @@ class TestConfirmRoomStateGate:
             room_id = _make_room(ctx.writer_store, state=state)
             pending = _append_pending(ctx.writer_store, room_id, call_id=f"call_{state}")
 
-            with TestClient(_make_test_app(ctx)) as client:
+            with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
                 r = client.post(
                     f"/rooms/{room_id}/confirm",
                     json={"pending_event_id": pending.id, "decision": "approve"},
@@ -355,7 +369,7 @@ class TestConfirmNoForge:
         room_id = _make_room(ctx.writer_store)
         pending = _append_pending(ctx.writer_store, room_id)
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={
@@ -374,7 +388,7 @@ class TestConfirmNoForge:
         ctx = _make_ctx(tmp_path / "db.db")
         room_id = _make_room(ctx.writer_store)
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": generate_event_id(), "decision": "approve"},
@@ -400,7 +414,7 @@ class TestConfirmNoForge:
         )
         ctx.writer_store.append(utterance)
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": utterance.id, "decision": "approve"},
@@ -415,7 +429,7 @@ class TestConfirmNoForge:
         """Unknown room_id → 422 (not_found)."""
         ctx = _make_ctx(tmp_path / "db.db")
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 "/rooms/room_doesnotexist/confirm",
                 json={"pending_event_id": generate_event_id(), "decision": "approve"},
@@ -457,7 +471,7 @@ class TestConfirmCrossTurnY2:
         # Append a fresh TOOL_CALL_PENDING with same call_id="abc" (turn 5)
         pending = _append_pending(ctx.writer_store, room_id, call_id="abc")
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             # Should succeed: prior-turn result is BEFORE the pending event (position-anchored)
             r = client.post(
                 f"/rooms/{room_id}/confirm",
@@ -496,7 +510,7 @@ class TestConfirmWriterExecutorAtomicity:
 
         ctx.writer_executor.submit = _tracking_submit  # type: ignore[assignment]
 
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},
@@ -531,7 +545,7 @@ class TestPendingResolutionConsistency:
         assert any(r.event_id == pending.id for r in snap.tool_calls_pending_confirm)
 
         # Endpoint also sees it as still-pending (confirm succeeds)
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},
@@ -546,7 +560,7 @@ class TestPendingResolutionConsistency:
         pending = _append_pending(ctx.writer_store, room_id, call_id="call_cons_res")
 
         # First confirm resolves it
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r1 = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},
@@ -561,7 +575,7 @@ class TestPendingResolutionConsistency:
         assert not any(r.event_id == pending.id for r in snap.tool_calls_pending_confirm)
 
         # Endpoint also returns already_resolved
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r2 = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},
@@ -597,7 +611,7 @@ class TestConfirmExecuteStage:
                 "orchestrator.api.app.execute_pending_tool_calls",
                 side_effect=RuntimeError("executor boom"),
             ),
-            TestClient(_make_test_app(ctx)) as client,
+            TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client,
         ):
             r1 = client.post(
                 f"/rooms/{room_id}/confirm",
@@ -617,7 +631,7 @@ class TestConfirmExecuteStage:
         assert tool_calls[0].id == body["appended_event_id"]
 
         # Re-confirm → already_resolved (layer-1 catches the orphaned TOOL_CALL)
-        with TestClient(_make_test_app(ctx)) as client:
+        with TestClient(_make_test_app(ctx), headers=_auth_headers(ctx)) as client:
             r2 = client.post(
                 f"/rooms/{room_id}/confirm",
                 json={"pending_event_id": pending.id, "decision": "approve"},

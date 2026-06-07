@@ -6,6 +6,7 @@ Covers:
   - read-during-turn liveness: GET does not block while writer executor busy
   - slow subscriber dropped without stalling the bus or other subscribers
   - Multiple WS connections to same room work independently
+  - Concurrent HTTP auth: N simultaneous authed requests all reach 200 (RW8)
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from orchestrator.core.event import (
     now_ms,
 )
 from orchestrator.core.room import Room, RoomType
+from tests.api.conftest import make_auth_headers
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -122,19 +124,33 @@ class TestMultipleConnections:
         results: list[list[dict[str, Any]]] = [[], []]
         errors: list[Exception] = []
 
+        auth_hdrs = make_auth_headers(ctx)
+
         def _collect(idx: int) -> None:
             try:
-                with TestClient(app).websocket_connect(f"/rooms/{room_id_str}/stream") as ws:
-                    results[idx] = _drain_until_replay_complete(ws)
+                with TestClient(app, headers=auth_hdrs).websocket_connect(
+                    f"/rooms/{room_id_str}/stream"
+                ) as ws:
+                    collected: list[dict[str, Any]] = []
+                    for _ in range(len(pre) + 5):
+                        msg = ws.receive_json()
+                        if msg["kind"] == "replay_complete":
+                            break
+                        if msg["kind"] == "event":
+                            collected.append(msg)
+                    results[idx] = collected
             except Exception as exc:
                 errors.append(exc)
 
-        threads = [threading.Thread(target=_collect, args=(i,)) for i in range(2)]
+        # daemon=True: CI safety net only — with per-thread reader connections
+        # (RW7) replay_complete arrives promptly; threads should never hit timeout.
+        threads = [threading.Thread(target=_collect, args=(i,), daemon=True) for i in range(2)]
         for t in threads:
             t.start()
         for t in threads:
             t.join(timeout=10)
 
+        assert not any(t.is_alive() for t in threads), "Subscriber threads timed out — reader hang?"
         assert not errors, f"WS errors: {errors}"
         for i in range(2):
             assert len(results[i]) == 3
@@ -338,3 +354,58 @@ class TestSlowSubscriberDrop:
             assert [e.id for e in received] == [e.id for e in delivered]
 
         asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# §2.6  Concurrent HTTP auth — middleware per-thread reader pool (RW8)
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentHttpAuth:
+    """§2.6 N concurrent authenticated HTTP requests all reach 200.
+
+    Before RW8: middleware._resolve_principal captured ctx.reader_store.conn
+    (shared) on the async loop thread and closed over it in the lambdas
+    submitted to reader_executor.  Concurrent requests raced on the one
+    connection across different worker threads → SQLite concurrent-access
+    errors, causing legitimate requests to be mis-rejected (401/500).
+
+    After RW8: each lambda calls ctx.get_reader_conn() at run-time on its
+    own worker thread → per-thread connection, no contention.
+    """
+
+    def test_concurrent_authenticated_requests_all_succeed(
+        self, app: FastAPI, ctx: AppContext
+    ) -> None:
+        room_id_str = generate_room_id()
+        ctx.writer_store.append_room(
+            Room(id=RoomId(room_id_str), type=RoomType.FREE_CHAT)
+        )
+        _append_event(ctx, room_id_str, "seed-event")
+
+        auth_hdrs = make_auth_headers(ctx)
+        n_concurrent = 16
+        statuses: list[int] = []
+        errors: list[Exception] = []
+
+        def _hit() -> None:
+            try:
+                with TestClient(app, headers=auth_hdrs) as tc:
+                    r = tc.get(f"/rooms/{room_id_str}/events")
+                    statuses.append(r.status_code)
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_hit, daemon=True) for _ in range(n_concurrent)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        assert not any(t.is_alive() for t in threads), (
+            "Concurrent auth requests timed out — possible shared-reader-conn hang"
+        )
+        assert not errors, f"Concurrent HTTP auth raised: {errors}"
+        assert all(s == 200 for s in statuses), (
+            f"Some concurrent auth requests mis-rejected: {statuses}"
+        )

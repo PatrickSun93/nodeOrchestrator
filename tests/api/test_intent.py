@@ -24,6 +24,7 @@ from orchestrator.core.event import (
     generate_event_id,
     now_ms,
 )
+from tests.api.conftest import TEST_USER_ID
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,7 +39,8 @@ def _post_room(client: TestClient, room_type: str = "free_chat") -> str:
 
 
 # ---------------------------------------------------------------------------
-# §4.1  Basic success — author server-stamped "user"
+# §4.1  Basic success — author server-stamped "user:<principal.user_id>"
+# (P4.5-4 CLASS A: authenticated /intent path stamps user:<id> from principal)
 # ---------------------------------------------------------------------------
 
 
@@ -55,6 +57,8 @@ class TestIntentBasicSuccess:
         assert "turn" in data
 
     def test_author_is_server_stamped_as_user(self, client: TestClient) -> None:
+        # P4.5-4 CLASS A: authenticated path stamps user:<principal.user_id>
+        # (not bare "user") — principal server-derived from verified session/token
         room_id = _post_room(client)
         r = client.post(
             f"/rooms/{room_id}/intent",
@@ -62,7 +66,7 @@ class TestIntentBasicSuccess:
         )
         assert r.status_code == 200
         evt = r.json()["appended_event"]
-        assert evt["author"] == "user"
+        assert evt["author"] == f"user:{TEST_USER_ID}"
 
     def test_id_and_timestamp_are_server_stamped(self, client: TestClient) -> None:
         room_id = _post_room(client)
@@ -303,7 +307,7 @@ class TestDecisionPromotionAuthority:
         assert r.status_code == 200
         evt = r.json()["appended_event"]
         assert evt["type"] == "decision"
-        assert evt["author"] == "user"
+        assert evt["author"] == f"user:{TEST_USER_ID}"  # P4.5-4 CLASS A
         # metadata stored as posted (shape-valid)
         assert evt["metadata"]["promotion"] is True
 
@@ -423,5 +427,5 @@ class TestIntentE2EStream:
             m for m in received if m["kind"] == "event" and m["event"]["type"] == "user_input"
         ]
         assert user_events, "No user_input event in live stream"
-        assert user_events[0]["event"]["author"] == "user"
+        assert user_events[0]["event"]["author"] == f"user:{TEST_USER_ID}"  # P4.5-4 CLASS A
         assert user_events[0]["event"]["content"] == "discriminate me"
