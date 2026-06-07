@@ -5,21 +5,35 @@ reviewer: architect-partner
 date: 2026-06-07
 dual_lens: false          # single-lens sanity per architect dispatch (low-risk frontend, no new ADR)
 scope: ui/ only — zero src/orchestrator product code
-verdict: needs_architect
-findings_count: 1         # 1 🟡 (gate-red routing call) + 4 nits (non-blocking)
-findings: { red: 0, yellow: 1, nits: 4 }
+verdict: clean            # round-2 (round-1 was needs_architect; F1 routed α-lite by architect, now resolved)
+verdict_history:
+  - round: 1
+    commit: 178cfe0
+    verdict: needs_architect
+    note: spine clean (C1/C2/C3/C5); F1 prettier gate-red needed a block-vs-nit routing call
+  - round: 2
+    commit: 10bfe26        # P4.7-FE-fix
+    verdict: clean
+    note: >
+      F1 routed α-lite by architect — resolved. 4 P4.7-FE-new files now pass prettier;
+      8 pre-existing prettier debt deferred to hygiene task #95; N2 (err.reason) + N4
+      (*.tsbuildinfo gitignore) fixed; N1 (probeAuth catch-all) + N3 (hand-typed contract
+      not codegen-locked) left noting. Fix is formatting + 2 nits only — eslint + vitest
+      constitutional tests re-green ⇒ no view+intent/auth regression.
+findings_count: 0         # round-2: F1 resolved, N2/N4 fixed; N1/N3 remain as noted nits (non-blocking)
+findings: { red: 0, yellow: 0, nits: 2 }   # round-1 was 0R/1Y/4nit
 gates:
-  lint:          pass      # eslint src — incl. no-fetch/WebSocket-outside-api rule (ADR-026 D4 HR#2)
-  format_check:  FAIL      # prettier --check — 12 files: 8 pre-existing (untouched by P4.7-FE) + 4 P4.7-FE-new
-  typecheck:     pass      # tsc --noEmit, exit 0
-  test:          pass      # vitest — 10 files / 107 tests, incl. constitutional no-fetch test
+  lint:          pass      # eslint src — incl. no-fetch/WebSocket-outside-api rule (ADR-026 D4 HR#2); re-green round-2
+  format_check:  deferred  # round-2: 4 P4.7-FE-new now PASS; 8 pre-existing → hygiene task #95 (architect α-lite)
+  typecheck:     pass      # tsc --noEmit, exit 0 (both rounds)
+  test:          pass      # vitest — 10 files / 107 tests, incl. constitutional no-fetch test (both rounds)
   codegen_check: pass      # schema.ts fresh vs openapi.json
-  build:         pass      # tsc -b && vite build, exit 0 (1m1s)
+  build:         pass      # tsc -b && vite build, exit 0 (round-2: 1m7s)
 constitutional_checks:
   view_intent_decides_nothing: pass   # C1
   auth_not_bypassed:           pass   # C2
   contract_bound_correctly:    pass   # C3
-  gates_green:                 mixed  # C4 — architect-named (build/tsc/eslint) green; prettier red
+  gates_green:                 pass   # C4 — round-2: architect-named (build/tsc/eslint) green; 4-new prettier resolved; 8 pre-existing deferred #95
   no_product_code_touched:     pass   # C5
 ---
 
@@ -154,9 +168,49 @@ manually, not formally advanced) — surfaced per the state-machine self-check, 
 files are never hand-edited). Architect may want to `override` it to a terminal state when this slice
 lands, or leave the light track informal.
 
-## Verdict
+## Verdict (round 1)
 
 **needs_architect** — constitutional spine clean (C1/C2/C3/C5 PASS; the no-fetch + auth-no-forge
 invariants are mechanically proven by the passing eslint + vitest constitutional tests). The single
 open item is **F1** (prettier gate-red), which sits exactly on the seam between the dispatch's two
 criteria and needs a one-line routing call. 4 nits recorded, none blocking.
+
+---
+
+# Round 2 — re-confirm (F1 routed α-lite)
+
+Architect routed F1 as **α-lite**. Junior pushed `10bfe26` ("P4.7-FE-fix: prettier 4 new files +
+N4 gitignore + N2 err.reason"). Lightweight re-confirm against `git show 10bfe26`.
+
+**Diff scope** — touches exactly the 4 P4.7-FE-new files + `.gitignore`, nothing else:
+`ui/.gitignore`, `ui/src/App.tsx`, `ui/src/api/client.ts`, `ui/src/components/NavBar.module.css`,
+`ui/src/components/PluginsPage.tsx`. **Did not touch** any of the 8 pre-existing prettier-debt files;
+**did not touch** `src/orchestrator/` (no product code). ✓
+
+**Re-confirm checklist:**
+
+1. **4 new files now pass `prettier --check`** ✓ — `prettier --check src` now flags **only** the 8
+   pre-existing files (App.module.css, Composer/ConnectionStatus/MessageItem/PendingDecision/
+   RoomCreate/RoomPicker `.module.css`, index.css); none of client.ts/App.tsx/NavBar.module.css/
+   PluginsPage.tsx. The 8 remaining are the **deferred** debt → hygiene task **#95** (expected red).
+2. **No pre-existing files / no backend touched** ✓ (diff scope above).
+3. **Architect-named gates re-green** ✓ — eslint exit 0, `tsc --noEmit` exit 0, build exit 0 (1m7s).
+   vitest 107/107 (incl. the constitutional no-fetch test) → **no view+intent/auth regression**.
+4. **N2 fixed correctly** ✓ — `PluginsPage.tsx:61,92`: `String(err)` → `(err as {reason?:string})
+   .reason ?? "请稍后重试"`, so the human reason surfaces instead of `[object Object]` (both the
+   action and admit error paths).
+5. **N4 fixed correctly** ✓ — `ui/.gitignore` gains `*.tsbuildinfo`.
+
+**No regression to the spine.** The fix is formatting + N2 (error-display string) + N4 (gitignore)
+only. client.ts's reformat is byte-equivalent in behavior (same endpoints/methods/bodies); App.tsx is
+a JSX rewrap; NavBar.module.css is a `transition` shorthand split. C1/C2/C3/C5 unchanged and the
+mechanical guards (eslint no-fetch rule + vitest constitutional test) are re-green.
+
+**Remaining nits (noting, non-blocking):** N1 (`probeAuth` catch-all returns `true`) and N3
+(hand-typed plugin/auth contract not codegen-locked) — left as-is per architect routing.
+
+## Verdict (round 2 — final)
+
+**clean** — F1 resolved (α-lite: 4 new files formatted; 8 pre-existing deferred to #95). N2 + N4 fixed.
+N1 + N3 remain as noted nits. Constitutional spine intact and mechanically re-verified. No further
+architect-partner action; this is the final R0-A verdict for P4.7-FE.
