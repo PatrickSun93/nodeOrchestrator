@@ -102,7 +102,9 @@
   cursor: pointer;
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
-  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition:
+    background var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 .returnBtn:hover {

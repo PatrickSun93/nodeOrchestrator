@@ -13,7 +13,9 @@
   border-radius: var(--radius-field);
   padding: var(--space-2) var(--space-2) var(--space-2) 14px;
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition:
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 .row:focus-within {
@@ -52,7 +54,9 @@
   font-weight: var(--weight-medium);
   cursor: pointer;
   align-self: stretch;
-  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition:
+    background var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 .sendBtn:hover:not(:disabled) {

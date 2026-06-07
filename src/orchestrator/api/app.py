@@ -122,9 +122,7 @@ class AppContext:
     reader_local: threading.local = field(default_factory=threading.local)
     reader_conns: list[sqlite3.Connection] = field(default_factory=list)
     # COUNTDOWN auto-fire config (ADR-040 D7). Default OFF (fail-closed) for test compat.
-    countdown_auto_fire: CountdownAutoFireConfig = field(
-        default_factory=CountdownAutoFireConfig
-    )
+    countdown_auto_fire: CountdownAutoFireConfig = field(default_factory=CountdownAutoFireConfig)
     # config_dir: retained so plugin management routes can resolve config/plugins.yaml.
     # D-A: _plugin_registry is a local in _build_context (not retained on AppContext);
     # config_dir is not recoverable from sandbox_root (sandbox_root = config_dir.parent).
@@ -174,6 +172,20 @@ class _LoginRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     user_id: str
     password: str
+
+
+class _LoginResponse(BaseModel):
+    """Response body for POST /login (ADR-039 D3). Documents OpenAPI contract."""
+
+    model_config = ConfigDict(frozen=True)
+    user_id: str
+
+
+class _LogoutResponse(BaseModel):
+    """Response body for POST /logout (ADR-039 D3). Documents OpenAPI contract."""
+
+    model_config = ConfigDict(frozen=True)
+    status: str
 
 
 class _AppendFailedError(Exception):
@@ -605,9 +617,7 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     tools = load_tools_config(config_dir / "tools.yaml")
 
     # COUNTDOWN auto-fire config (ADR-040 D7 / P4.6-1). Absent → disabled (fail-closed).
-    countdown_auto_fire_cfg = load_countdown_auto_fire_config(
-        config_dir / "autonomy.yaml"
-    )
+    countdown_auto_fire_cfg = load_countdown_auto_fire_config(config_dir / "autonomy.yaml")
 
     # Merge MCP tool registry + retain sessions (ADR-028 D2 — fixes session-discard).
     # Graceful: unavailable servers are warned+skipped (skip_unavailable=True).
@@ -741,9 +751,7 @@ def _derive_provenance_and_kind(
         return "operator_placed", None
     if (sandbox_root / "fetched_plugins" / plugin_id).exists():
         return "fetched", None
-    kind = (
-        "fetched (pending)" if (source_url and digest) else "operator-placed (pending)"
-    )
+    kind = "fetched (pending)" if (source_url and digest) else "operator-placed (pending)"
     return "declared-not-yet-on-disk", kind
 
 
@@ -762,7 +770,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
     # (ADR-039 D3/D4 — public endpoints, exempt from auth middleware)
     # -----------------------------------------------------------------------
 
-    @app.post("/login")
+    @app.post("/login", response_model=_LoginResponse)
     async def _login(body: _LoginRequest, request: Request) -> JSONResponse:
         from orchestrator.api.auth.session import create_session
         from orchestrator.api.auth.users import verify_password
@@ -795,7 +803,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         )
         return resp
 
-    @app.post("/logout")
+    @app.post("/logout", response_model=_LogoutResponse)
     async def _logout(request: Request) -> JSONResponse:
         from orchestrator.api.auth.session import revoke_sessions_for_user
 
@@ -988,9 +996,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 prev_pass_events = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
 
                 # Termination condition 1: zero new TOOL_CALL events in last pass (D3).
-                new_tool_calls = [
-                    e for e in prev_pass_events if e.type == EventType.TOOL_CALL
-                ]
+                new_tool_calls = [e for e in prev_pass_events if e.type == EventType.TOOL_CALL]
                 if not new_tool_calls:
                     break
 
@@ -1085,8 +1091,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     (
                         e
                         for e in sorted_events
-                        if e.id == body.pending_event_id
-                        and e.type == EventType.TOOL_CALL_PENDING
+                        if e.id == body.pending_event_id and e.type == EventType.TOOL_CALL_PENDING
                     ),
                     None,
                 )
@@ -1168,8 +1173,10 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             result: list[_PluginInfo] = []
             for pid, entry in registry.items():
                 provenance, provenance_kind = _derive_provenance_and_kind(
-                    pid, ctx.sandbox_root,
-                    source_url=entry.source_url, digest=entry.digest,
+                    pid,
+                    ctx.sandbox_root,
+                    source_url=entry.source_url,
+                    digest=entry.digest,
                 )
                 result.append(
                     _PluginInfo(

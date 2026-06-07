@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Login */
+        post: operations["_login_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout */
+        post: operations["_logout_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rooms": {
         parameters: {
             query?: never;
@@ -102,8 +136,8 @@ export interface paths {
          * Post Intent
          * @description Write path: forge-check → append → run_turn → cursor-diff → publish.
          *
-         *     Security spine (ADR-025 D4):
-         *       - author hardcoded "user" — cannot be forged by client
+         *     Security spine (ADR-025 D4 / ADR-039 D1/D7):
+         *       - author stamped server-side from the verified principal (P4.5-3)
          *       - id + timestamp server-stamped
          *       - type allowlist enforced before any append (fail-closed)
          *       - metadata validated by validate_metadata (shape-only, not authority)
@@ -135,13 +169,106 @@ export interface paths {
          *     1. Resolve room; find the TOOL_CALL_PENDING by pending_event_id.
          *     2. Room-state gate: closed room → ConfirmError{stage:'append', reason:'room_closed'}.
          *     3. Still-pending check (layer 1) — position-anchored after the pending event.
-         *     4. cancel → append TOOL_CALL_CANCELLED, return.
-         *     5. approve → append agent-authored TOOL_CALL from record, execute, publish.
+         *     4. cancel → append TOOL_CALL_CANCELLED (with approver_user_id from principal).
+         *     5. approve → append agent-authored TOOL_CALL from record (with approver_user_id).
          *
          *     No decision surface: gate decision already made; human approval second factor only.
+         *     ADR-039 D6: approver provenance recorded from the authenticated principal.
+         *     D5 checkpoint seam #1: authenticated ⇒ allowed; role check would gate here.
          */
         post: operations["_post_confirm_rooms__room_id__confirm_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plugins
+         * @description List declared plugin registry entries (id/provenance/enabled/version/fetched).
+         *
+         *     Runs on ctx.reader_executor (G2 absorb, R0-A-on-plan).
+         *     last-load-result column deferred as named residual (Y1=(a), ADR-038 D5 T5).
+         */
+        get: operations["_get_plugins_plugins_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/{plugin_id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enable Plugin */
+        post: operations["_enable_plugin_plugins__plugin_id__enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/{plugin_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disable Plugin */
+        post: operations["_disable_plugin_plugins__plugin_id__disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/{plugin_id}/admit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admit Plugin */
+        post: operations["_admit_plugin_plugins__plugin_id__admit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/{plugin_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Plugin */
+        delete: operations["_delete_plugin_plugins__plugin_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -410,11 +537,81 @@ export interface components {
             ctx?: Record<string, never>;
         };
         /**
+         * _AdmitRequest
+         * @description Request body for POST /plugins/{id}/admit.
+         *
+         *     extra=forbid is the forge guard (ADR-039 D7 / mirrors _LoginRequest).
+         *     version is optional; source_url+digest are required (pinned-bundle intent).
+         */
+        _AdmitRequest: {
+            /** Source Url */
+            source_url: string;
+            /** Digest */
+            digest: string;
+            /** Version */
+            version?: string | null;
+        };
+        /**
          * _CreateRoomBody
          * @description Request body for POST /rooms.
          */
         _CreateRoomBody: {
             type: components["schemas"]["RoomType"];
+        };
+        /**
+         * _LoginRequest
+         * @description Request body for POST /login (ADR-039 D3). extra=forbid is the forge guard.
+         */
+        _LoginRequest: {
+            /** User Id */
+            user_id: string;
+            /** Password */
+            password: string;
+        };
+        /**
+         * _LoginResponse
+         * @description Response body for POST /login (ADR-039 D3). Documents OpenAPI contract.
+         */
+        _LoginResponse: {
+            /** User Id */
+            user_id: string;
+        };
+        /**
+         * _LogoutResponse
+         * @description Response body for POST /logout (ADR-039 D3). Documents OpenAPI contract.
+         */
+        _LogoutResponse: {
+            /** Status */
+            status: string;
+        };
+        /**
+         * _PluginInfo
+         * @description Single entry in GET /plugins response (ADR-038 D5).
+         */
+        _PluginInfo: {
+            /** Plugin Id */
+            plugin_id: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Version */
+            version: string | null;
+            /** Provenance */
+            provenance: string;
+            /** Provenance Kind */
+            provenance_kind: string | null;
+            /** Fetched */
+            fetched: boolean;
+        };
+        /**
+         * _PluginWriteResponse
+         * @description Response for all plugin write operations (boot-only; ADR-038 D2 / DP1a).
+         */
+        _PluginWriteResponse: {
+            /**
+             * Effect
+             * @default next_restart
+             */
+            effect: string;
         };
     };
     responses: never;
@@ -425,6 +622,59 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    _login_login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_LoginResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _logout_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_LogoutResponse"];
+                };
+            };
+        };
+    };
     _create_room_rooms_post: {
         parameters: {
             query?: never;
@@ -666,6 +916,154 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfirmError"];
+                };
+            };
+        };
+    };
+    _get_plugins_plugins_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_PluginInfo"][];
+                };
+            };
+        };
+    };
+    _enable_plugin_plugins__plugin_id__enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_PluginWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _disable_plugin_plugins__plugin_id__disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_PluginWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _admit_plugin_plugins__plugin_id__admit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_AdmitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_PluginWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _delete_plugin_plugins__plugin_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_PluginWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
