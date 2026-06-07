@@ -45,7 +45,9 @@
   font-family: inherit;
   color: var(--fg2);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .navBtn:hover {
@@ -89,7 +91,9 @@
   font-family: inherit;
   color: var(--fg2);
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
 .logoutBtn:hover {

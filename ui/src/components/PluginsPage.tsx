@@ -58,7 +58,8 @@ export function PluginsPage() {
         setUnauthenticated();
         return;
       }
-      setActionError(`操作失败：${String(err)}`);
+      const msg = (err as { reason?: string }).reason ?? "请稍后重试";
+      setActionError(`操作失败：${msg}`);
     } finally {
       setBusyId(null);
     }
@@ -89,7 +90,8 @@ export function PluginsPage() {
         setUnauthenticated();
         return;
       }
-      setActionError(`添加失败：${String(err)}`);
+      const msg = (err as { reason?: string }).reason ?? "请稍后重试";
+      setActionError(`添加失败：${msg}`);
     } finally {
       setAdmitting(false);
     }
@@ -102,7 +104,11 @@ export function PluginsPage() {
   }
 
   if (loading) {
-    return <div className={styles.page}><p className={styles.emptyMsg}>加载中…</p></div>;
+    return (
+      <div className={styles.page}>
+        <p className={styles.emptyMsg}>加载中…</p>
+      </div>
+    );
   }
 
   return (
@@ -203,7 +209,10 @@ export function PluginsPage() {
                     {provenanceLabel(p.provenance)}
                   </span>
                   {p.provenance_kind && (
-                    <span className={`${styles.badge} ${styles.provBadge}`} style={{ marginLeft: 4 }}>
+                    <span
+                      className={`${styles.badge} ${styles.provBadge}`}
+                      style={{ marginLeft: 4 }}
+                    >
                       {p.provenance_kind}
                     </span>
                   )}
@@ -241,9 +250,7 @@ export function PluginsPage() {
                       <button
                         className={styles.actionBtn}
                         disabled={busyId === p.plugin_id}
-                        onClick={() =>
-                          void runAction(p.plugin_id, () => enablePlugin(p.plugin_id))
-                        }
+                        onClick={() => void runAction(p.plugin_id, () => enablePlugin(p.plugin_id))}
                       >
                         启用
                       </button>
@@ -251,9 +258,7 @@ export function PluginsPage() {
                     <button
                       className={`${styles.actionBtn} ${styles.removeBtn}`}
                       disabled={busyId === p.plugin_id}
-                      onClick={() =>
-                        void runAction(p.plugin_id, () => deletePlugin(p.plugin_id))
-                      }
+                      onClick={() => void runAction(p.plugin_id, () => deletePlugin(p.plugin_id))}
                     >
                       移除
                     </button>

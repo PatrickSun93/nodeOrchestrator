@@ -141,8 +141,8 @@ export default function App() {
             <div className={styles.leaveSummary} data-testid="leave-summary">
               <p>
                 已离开房间。本次会话共 {leaveSummary.eventCountOnLeave} 条消息
-                {leaveSummary.decisionCount > 0 &&
-                  `，作出了 ${leaveSummary.decisionCount} 个决定`}。
+                {leaveSummary.decisionCount > 0 && `，作出了 ${leaveSummary.decisionCount} 个决定`}
+                。
               </p>
               <button
                 className={styles.returnBtn}

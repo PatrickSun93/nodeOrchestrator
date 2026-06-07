@@ -120,31 +120,28 @@ export function getPlugins(): Promise<PluginInfo[]> {
 }
 
 export function enablePlugin(pluginId: string): Promise<PluginWriteResponse> {
-  return request<PluginWriteResponse>(
-    `${BASE}/plugins/${encodeURIComponent(pluginId)}/enable`,
-    { method: "POST" },
-  );
+  return request<PluginWriteResponse>(`${BASE}/plugins/${encodeURIComponent(pluginId)}/enable`, {
+    method: "POST",
+  });
 }
 
 export function disablePlugin(pluginId: string): Promise<PluginWriteResponse> {
-  return request<PluginWriteResponse>(
-    `${BASE}/plugins/${encodeURIComponent(pluginId)}/disable`,
-    { method: "POST" },
-  );
+  return request<PluginWriteResponse>(`${BASE}/plugins/${encodeURIComponent(pluginId)}/disable`, {
+    method: "POST",
+  });
 }
 
 export function admitPlugin(pluginId: string, body: AdmitRequest): Promise<PluginWriteResponse> {
-  return request<PluginWriteResponse>(
-    `${BASE}/plugins/${encodeURIComponent(pluginId)}/admit`,
-    { method: "POST", body: JSON.stringify(body) },
-  );
+  return request<PluginWriteResponse>(`${BASE}/plugins/${encodeURIComponent(pluginId)}/admit`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export function deletePlugin(pluginId: string): Promise<PluginWriteResponse> {
-  return request<PluginWriteResponse>(
-    `${BASE}/plugins/${encodeURIComponent(pluginId)}`,
-    { method: "DELETE" },
-  );
+  return request<PluginWriteResponse>(`${BASE}/plugins/${encodeURIComponent(pluginId)}`, {
+    method: "DELETE",
+  });
 }
 
 // Auth API (ADR-039 D3 / P4.7-BE)
