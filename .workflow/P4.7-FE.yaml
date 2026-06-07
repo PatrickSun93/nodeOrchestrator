@@ -1,7 +1,19 @@
 task_id: P4.7-FE
-state: awaiting_brief
+state: closed
 cycle: 1
-last_transition_at: '2026-06-07T20:26:06.922329Z'
+last_transition_at: '2026-06-07T21:12:29.059297Z'
 cycle_started_at: '2026-06-07T20:26:06.922329Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-07T21:12:29.059297Z'
+  actor: architect
+  from_state: awaiting_brief
+  to_state: closed
+  reason: 'P4.7-FE merged (PR #63, merge f8e7d14). GUI advanced/config layers — auth
+    login + E2 plugin-mgmt + E3 config(read-only), binding P4.7-BE endpoints + ADR-039
+    D3. Light frontend track: single-lens R0-A sanity round-2 CLEAN (spine C1/C2/C3/C5
+    PASS — view+intent-only/auth-not-bypassed/contract-bound/no-product-code, mechanically
+    proven by eslint no-fetch rule + vitest constitutional test; tsc+build green).
+    F1 prettier routed α-lite (4 new prettier''d; 8 pre-existing + N3 deferred to
+    UI hygiene follow-on #95). No new ADR. State driven manually (light track). Closing.
+    **P4 (deferred-completeness) COMPLETE: P4.1-P4.6 + P4.7-BE + P4.7-FE all closed.**'
 requires_cross_family_review: false
