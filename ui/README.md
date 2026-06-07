@@ -2,6 +2,16 @@
 
 React/TS frontend for the Orchestrator — reads a room via HTTP + WebSocket and sends user intent.
 
+## Surfaces
+
+Beyond the main room view (messages + composer + progress/decision panels), the app includes the **P4.7-FE** advanced/config layers — three surfaces:
+
+- **Login / auth** (`LoginPage`, `authStore.ts`) — cookie-session auth against the backend (ADR-039).
+- **Plugin management** (`PluginsPage`) — over the P4.7-BE plugin-management endpoints (ADR-038).
+- **Config (read-only)** (`ConfigPage`) — backend-authoritative view (MCP / agents / models / autonomy tiers); intent-only, never a decision surface.
+
+All surfaces are view+intent over the frozen API contract (ADR-025/026); types come from `src/api/schema.ts` (codegen — see the Gate section below).
+
 ## Node setup
 
 ```bash
