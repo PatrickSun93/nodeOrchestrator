@@ -23,6 +23,10 @@ verdict_history:
     impl_head: d2b5566
     verdict: needs_architect
     summary: "RW7 (d2b5566) TRULY fixed Y6 — verified by me: per-thread WAL reader pool (reader_executor initializer=_init_reader_worker + threading.local; every reader lambda resolves get_reader_conn()/get_reader_store() at RUN-TIME on its own worker thread — RW6's bug was capturing one conn on the loop thread; WAL set on writer app.py:290 is DB-file-level so all per-thread reader conns inherit it) eliminates the shared-connection race. Target test 15/15 PASS under the now genuinely-concurrent config (conftest upgraded to max_workers=4 + per-thread initializer → fidelity restored; test now asserts not-alive 'reader hang?', no longer daemon-masked); full pytest exit 0, 0 failed; ruff 0 / mypy 275. Writer untouched (single conn, max_workers=1 — ADR-025 D6 two-connection-model semantics intact). RW6's overstated wording corrected (conftest comment removed; RW7 commit acknowledges RW6 masked it). Y1-Y4 still resolved (RW7 only touched reader paths + executor config). NEW 🟡 Y7 (ADR-as-contract integrity): the per-thread reader pool contradicts the single-reader-connection model inscribed in ADR-039 (line 19 'a separate read-only WAL reader connection'; line 137 'the reader connection') AND ADR-025 D6 (line 80 singular; line 99 Considered-Alternatives 'a thread pool of connections — Rejected for MVP, pooling is a perf forward hook (WAL)') — neither updated, so ADR-039 (Accepted this cycle) mis-describes its own impl. Architect ruled α (inscribe-first): senior updates ADR-039 (line 19/137 → per-thread WAL reader pool) + annotates ADR-025 D6 (the deferred pooling forward-hook is now ACTIVATED; rationale = P4.5 multi-user concurrent-read correctness; writer single-conn unchanged); then round-5 verifies impl↔ADR consistency → clean. 2 below-bar residuals persist (verify_password disabled-branch pre-scrypt; authenticated-/logout positive path untested). Verdict needs_architect — not clean until the ADR reader-model inscription lands (round-5)."
+  - round: 5
+    impl_head: d3faf50
+    verdict: needs_architect
+    summary: "Senior inscribed the per-thread reader model (d3faf50: ADR-039 line 19/52/137 + ADR-025 D6 annotation) — accurate for routes + WS. BUT tracing the inscription's 'validated on the per-thread WAL reader pool' claim against the impl exposed that RW7's per-thread fix was INCOMPLETE → NEW 🟡 Y8: the HTTP auth middleware (src/orchestrator/api/auth/middleware.py) was NEVER touched by RW7 (its file-set = app.py + conftest + test_concurrency) and still captures the SHARED ctx.reader_store.conn (middleware.py:85) then runs validate_session/validate_token on it via the 4-worker reader_executor (middleware.py:92, :103) — the exact Y6 shared-connection race, in the HIGHEST-traffic auth path (_resolve_principal runs on every protected HTTP request). grep confirms middleware.py:85 is the ONLY remaining shared-conn reader usage in src/. EMPIRICALLY REPRODUCED by me (40 concurrent authed HTTP reqs → 30×404 OK + 6×spurious-401 [valid bearer token rejected] + 4×InterfaceError 'bad parameter or other API misuse' [SQLite concurrent-single-conn corruption]). Fail-closed (reject/500, never grant — NO auth bypass) but a real multi-user correctness/availability bug (P4.5's core path rejects legitimate users under concurrency) + makes d3faf50's ADR-039 line 52/137 inaccurate for the HTTP path (HR#5). Uncaught earlier: round-4 grepped app.py not auth/middleware.py (my miss); the suite is green because no test exercises concurrent HTTP-through-middleware (the concurrency test is WS-replay-only). Architect routed α-RW8: apply RW7's _room_stream pattern to middleware.py — drop the reader_conn=ctx.reader_store.conn capture (line 85), resolve ctx.get_reader_conn() INSIDE each lambda (lines 92, 103) at run-time on the worker thread + add a concurrent-HTTP-auth regression test; then middleware is the last shared-conn site migrated, the inscription becomes accurate → round-6 clean. Y1-Y4 + Y6 (routes/WS) + Y7 (inscription written) still hold; 2 below-bar residuals persist. Verdict needs_architect — not clean until RW8 migrates the middleware + the regression test lands (round-6)."
 reviewer: architect-partner
 date: 2026-06-06
 reviewed_artifacts:
@@ -36,7 +40,7 @@ contract:
   - docs/decisions/ADR-039-auth-identity-model.md (Accepted 2026-06-06)
   - docs/process/senior-plans/P4.5.md
 against: claude/P4.5-impl @ 7924b36 (8 atomic commits over origin/main)
-gates: ruff ✅ · mypy ✅ (275 files) · pytest — R4 GREEN (target test 15/15 concurrent no hang · full suite exit 0, 0 failed); verdict still needs_architect on Y7 (ADR-039/025 reader-model inscription gap — a doc/contract finding, not a gate-red — see verdict_history R4 + Round 4 §). [history — R3 GREEN, Y6 code-fixed by RW7; R2 Y5 hang fixed by RW6; R1 373✅]
+gates: ruff ✅ · mypy ✅ (275 files) · pytest — suite GREEN but a COVERAGE GAP hid Y8 (no concurrent-HTTP-auth test; the concurrency test is WS-replay-only). Y8 EMPIRICALLY reproduced by me out-of-suite — 40 concurrent authed reqs → 6 spurious-401 + 4 InterfaceError. verdict needs_architect on Y8 (middleware shared-conn race — see verdict_history R5 + Round 5 §). [history — R4 Y7 inscription; R3 Y6 code-fixed by RW7; R2 Y5 hang fixed by RW6; R1 373✅]
 ---
 
 # R0-A on impl — P4.5: the first human-identity trust boundary (ADR-039 D1–D10)
@@ -250,6 +254,48 @@ The code is correct, but it now **contradicts the inscribed connection model** i
 Per the project discipline (*"ADR amendment IS required when changing an ADR decision"* + Architect Accept required), the per-thread reader pool must be **inscribed before ADR-039 is Accepted** — else the Accept records a false reader model. This is *within* the per-thread-reader decision the architect already ratified (an honest-inscription, not a new design choice).
 
 **Architect routing (in-chat): α — inscribe-first.** Senior updates ADR-039 (line 19 / 137 → per-thread WAL reader pool: each `reader_executor` worker owns its connection) and annotates ADR-025 D6 (the line-99 deferred "thread pool of connections" forward-hook is now **activated** by P4.5 — rationale: the multi-user seam makes concurrent-read correctness in-scope; writer single-conn serialisation unchanged). Then R0-A round-5 verifies the impl matches the updated ADRs → clean.
+
+### Below-bar residuals (still noting, not blocking)
+
+- **`verify_password` disabled-user branch** (`users.py:201-202`) returns before scrypt — weaker oracle than the not-found path Y4 fixed; out of Y4's scope.
+- **Authenticated-`/logout` success path** (`_logout` + `revoke_sessions_for_user`) — only the unauthenticated-401 case is tested; the success path is an untested minor coverage gap (mirrors `revoke_session`).
+
+---
+
+## Round 5 — verdict-bump re-review (RC-10): inscription landed, but RW7 was incomplete → NEW Y8 (middleware shared-conn race, empirically reproduced) → architect-routed α-RW8
+
+**Dispatch.** Senior pushed the per-thread-reader inscription (`d3faf50`): ADR-039 (line 19/52/137) + an ADR-025 D6 annotation. Round-5 = final-gate verification: confirm the inscription matches the RW7 impl, the Y6 race is truly gone, suite stable green, Y1–Y4 resolved → clean. **Route nothing** — the new finding (Y8) was architect-ruled α (RW8) in-chat; recorded below.
+
+**Verdict: `needs_architect` (NOT clean).** The inscription is well-written and the WS/route paths are correct, but tracing its *"validated on the per-thread WAL reader pool"* claim against the impl exposed that **RW7's per-thread fix was incomplete: the HTTP auth middleware was never migrated** and still races on the shared reader connection — **empirically reproduced** (valid users rejected under concurrency). The inscription therefore overstates. One more small fix (RW8) closes it.
+
+### The inscription (`d3faf50`) — accurate for routes + WS
+
+The ADR-025 D6 annotation + ADR-039 line 19 (storage idiom) / 52 (session validation) / 137 (crash-concurrency posture) now describe the per-thread WAL reader pool, the activation of D6's line-99 "thread pool of connections" forward-hook for the reader (multi-user concurrent-read correctness), and the unchanged writer single-conn. **Accurate for the route handlers + `_room_stream`** (which RW7 migrated to `get_reader_conn()`).
+
+### 🟡 Y8 (round-5, NEW — RW7 incomplete; EMPIRICALLY REPRODUCED) — the HTTP auth middleware still uses the shared reader connection → **architect-routed α-RW8**
+
+RW7 migrated the route handlers + WS to per-thread connections but **never touched `src/orchestrator/api/auth/middleware.py`** (its file-set was `app.py` + `conftest.py` + `test_concurrency.py`). The HTTP auth middleware — `_resolve_principal`, which runs on **every protected HTTP request** (the most-traveled auth path) — still has the exact Y6 race.
+
+**Precise fix locations (for RW8) — mirror RW7's `_room_stream` change:**
+
+| File:line | Current (racy) | Fix |
+|---|---|---|
+| `auth/middleware.py:85` | `reader_conn = ctx.reader_store.conn` — captures the **shared** conn on the loop thread | **delete this line** |
+| `auth/middleware.py:92` | `lambda: validate_session(reader_conn, session_id)` | `lambda: validate_session(ctx.get_reader_conn(), session_id)` |
+| `auth/middleware.py:103` | `lambda: validate_token(reader_conn, raw_token)` | `lambda: validate_token(ctx.get_reader_conn(), raw_token)` |
+
+`ctx` is already in scope in `_resolve_principal` (read from `request.app.state.ctx`), so each lambda can resolve **its own worker thread's** connection at run-time via `ctx.get_reader_conn()` — identical to RW7's `_room_stream` fix. `grep` confirms `middleware.py:85` is the **only remaining** `ctx.reader_store.conn`-fed-to-`reader_executor` usage in `src/`; after RW8 it is the last shared-conn site migrated, and the `d3faf50` inscription becomes accurate.
+
+**Empirical reproduction (mine, out-of-suite throwaway — deleted after running):** 40 concurrent authed HTTP requests through the middleware →
+- **30 → 404** (auth OK, room not found — correct)
+- **6 → 401** (a **valid** bearer token spuriously rejected — the race corrupts `validate_token`)
+- **4 → `InterfaceError('bad parameter or other API misuse')`** (SQLite concurrent-single-connection corruption)
+
+**Impact:** fail-closed (reject/500, never grant — **no auth bypass**), but P4.5's core multi-user auth path **rejects legitimate users + raises under concurrency** — exactly the multi-user condition P4.5 enables — and it makes the fresh `d3faf50` inscription (ADR-039 line 52/137: "validated on the per-thread WAL reader pool") **inaccurate for the HTTP path** (HR#5).
+
+**Why uncaught:** round-4 grepped `app.py`, not `auth/middleware.py` (my miss); the suite is green because **no test exercises concurrent HTTP requests through the middleware** (the concurrency test is WS-replay-only). RW8 should add a concurrent-HTTP-auth regression test (the reproduction above is a ready template).
+
+**Architect routing (in-chat): α — junior RW8** applies the three-line fix above + a concurrent-HTTP-auth regression test. Then R0-A round-6 re-runs the reproduction (expect all-404) + the full suite → clean.
 
 ### Below-bar residuals (still noting, not blocking)
 
