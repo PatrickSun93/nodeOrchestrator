@@ -214,6 +214,43 @@ _log = logging.getLogger("orchestrator.api.app")
 
 
 # ---------------------------------------------------------------------------
+# Plugin management request/response models (ADR-038 D5 / P4.7-BE-T3)
+# ---------------------------------------------------------------------------
+
+
+class _PluginInfo(BaseModel):
+    """Single entry in GET /plugins response (ADR-038 D5)."""
+
+    model_config = ConfigDict(frozen=True)
+    plugin_id: str
+    enabled: bool
+    version: str | None
+    provenance: str
+    provenance_kind: str | None
+    fetched: bool
+
+
+class _AdmitRequest(BaseModel):
+    """Request body for POST /plugins/{id}/admit.
+
+    extra=forbid is the forge guard (ADR-039 D7 / mirrors _LoginRequest).
+    version is optional; source_url+digest are required (pinned-bundle intent).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    source_url: str
+    digest: str
+    version: str | None = None
+
+
+class _PluginWriteResponse(BaseModel):
+    """Response for all plugin write operations (boot-only; ADR-038 D2 / DP1a)."""
+
+    model_config = ConfigDict(frozen=True)
+    effect: str = "next_restart"
+
+
+# ---------------------------------------------------------------------------
 # Shared writer-approve outcome types + helper (ADR-040 D3 / P4.6-4)
 # Used by the HTTP confirm handler and the countdown sweeper.
 # ---------------------------------------------------------------------------
@@ -687,6 +724,29 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     )
 
 
+def _derive_provenance_and_kind(
+    plugin_id: str,
+    sandbox_root: Path,
+    *,
+    source_url: str | None,
+    digest: str | None,
+) -> tuple[str, str | None]:
+    """Derive (provenance, provenance_kind) for a registry entry from filesystem roots.
+
+    G3 absorb (R0-A-on-plan): entries in neither root are reported as
+    declared-not-yet-on-disk; kind is inferred from the fetched-indicator
+    (source_url+digest present -> fetched intent; absent -> operator-placed intent).
+    """
+    if (sandbox_root / "plugins" / plugin_id).exists():
+        return "operator_placed", None
+    if (sandbox_root / "fetched_plugins" / plugin_id).exists():
+        return "fetched", None
+    kind = (
+        "fetched (pending)" if (source_url and digest) else "operator-placed (pending)"
+    )
+    return "declared-not-yet-on-disk", kind
+
+
 def _register_routes(app: FastAPI, ctx: AppContext) -> None:
     """Register all API routes on the app with captured context.
 
@@ -1082,6 +1142,166 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             raise _ConfirmExecuteError(result.reason, result.event_id)
 
         return await loop.run_in_executor(ctx.writer_executor, _confirm_on_writer)
+
+    # ---------------------------------------------------------------------------
+    # Plugin management routes — GET + enable/disable/admit/DELETE (ADR-038 D5)
+    #
+    # Boot-only: all writes mutate config/plugins.yaml and respond with
+    # effect:next_restart.  Zero live AppContext mutation (ADR-038 D2 / DP1a).
+    # Not in PUBLIC_PATHS → fail-closed auth inherited from middleware (ADR-039 D4).
+    # Principal read from request.state (server-derived, never body — ADR-039 D7).
+    # ---------------------------------------------------------------------------
+
+    @app.get("/plugins", response_model=list[_PluginInfo])
+    async def _get_plugins() -> list[_PluginInfo]:
+        """List declared plugin registry entries (id/provenance/enabled/version/fetched).
+
+        Runs on ctx.reader_executor (G2 absorb, R0-A-on-plan).
+        last-load-result column deferred as named residual (Y1=(a), ADR-038 D5 T5).
+        """
+        from orchestrator.plugins.provenance import load_plugin_registry
+
+        loop = asyncio.get_running_loop()
+
+        def _read() -> list[_PluginInfo]:
+            registry = load_plugin_registry(ctx.config_dir / "plugins.yaml")
+            result: list[_PluginInfo] = []
+            for pid, entry in registry.items():
+                provenance, provenance_kind = _derive_provenance_and_kind(
+                    pid, ctx.sandbox_root,
+                    source_url=entry.source_url, digest=entry.digest,
+                )
+                result.append(
+                    _PluginInfo(
+                        plugin_id=pid,
+                        enabled=entry.enabled,
+                        version=entry.version,
+                        provenance=provenance,
+                        provenance_kind=provenance_kind,
+                        fetched=bool(entry.source_url and entry.digest),
+                    )
+                )
+            return result
+
+        return await loop.run_in_executor(ctx.reader_executor, _read)
+
+    @app.post("/plugins/{plugin_id}/enable", response_model=_PluginWriteResponse)
+    async def _enable_plugin(plugin_id: str, request: Request) -> _PluginWriteResponse:
+        # ADR-039 D5 checkpoint seam #2: authenticated ⇒ allowed; role check (DP3b) would gate here.
+        _principal = request.state.principal  # ADR-039 D7: server-derived, never body
+        from orchestrator.plugins.provenance import (
+            RegistryEntry,
+            load_plugin_registry,
+            write_plugin_registry,
+        )
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _PluginWriteResponse:
+            registry_path = ctx.config_dir / "plugins.yaml"
+            registry = load_plugin_registry(registry_path)
+            existing = registry.get(plugin_id)
+            registry[plugin_id] = RegistryEntry(
+                plugin_id=plugin_id,
+                enabled=True,
+                version=existing.version if existing else None,
+                source_url=existing.source_url if existing else None,
+                digest=existing.digest if existing else None,
+                plugin_subprocess_env=existing.plugin_subprocess_env if existing else {},
+            )
+            write_plugin_registry(registry_path, registry)
+            return _PluginWriteResponse()
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.post("/plugins/{plugin_id}/disable", response_model=_PluginWriteResponse)
+    async def _disable_plugin(plugin_id: str, request: Request) -> _PluginWriteResponse:
+        # ADR-039 D5 checkpoint seam #2: authenticated ⇒ allowed; role check (DP3b) would gate here.
+        _principal = request.state.principal  # ADR-039 D7: server-derived, never body
+        from orchestrator.plugins.provenance import (
+            RegistryEntry,
+            load_plugin_registry,
+            write_plugin_registry,
+        )
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _PluginWriteResponse:
+            registry_path = ctx.config_dir / "plugins.yaml"
+            registry = load_plugin_registry(registry_path)
+            existing = registry.get(plugin_id)
+            registry[plugin_id] = RegistryEntry(
+                plugin_id=plugin_id,
+                enabled=False,
+                version=existing.version if existing else None,
+                source_url=existing.source_url if existing else None,
+                digest=existing.digest if existing else None,
+                plugin_subprocess_env=existing.plugin_subprocess_env if existing else {},
+            )
+            write_plugin_registry(registry_path, registry)
+            return _PluginWriteResponse()
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.post("/plugins/{plugin_id}/admit", response_model=_PluginWriteResponse)
+    async def _admit_plugin(
+        plugin_id: str, body: _AdmitRequest, request: Request
+    ) -> _PluginWriteResponse:
+        # seam #2-admit: admit introduces new fetched code into the trust boundary —
+        # strictly higher-trust than enable/disable toggling already-vetted code; a
+        # future DP3b may gate who-may-admit stricter than who-may-toggle (ADR-039 D5).
+        #
+        # No fetch_plugin_bundle call here: admit authors operator intent only.
+        # Fetch is out-of-band (ADR-038 D2 fetch≠admit; DP1-i author-entry-only).
+        # The digest-before-extract gauntlet (fetch.py:121) is unchanged + mandatory
+        # at the separate fetch step (ADR-031 D5 / DP3a byte-frozen).
+        _principal = request.state.principal  # ADR-039 D7: server-derived, never body
+        from orchestrator.plugins.provenance import (
+            RegistryEntry,
+            load_plugin_registry,
+            write_plugin_registry,
+        )
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _PluginWriteResponse:
+            registry_path = ctx.config_dir / "plugins.yaml"
+            registry = load_plugin_registry(registry_path)
+            existing = registry.get(plugin_id)
+            registry[plugin_id] = RegistryEntry(
+                plugin_id=plugin_id,
+                enabled=existing.enabled if existing else True,
+                version=body.version,
+                source_url=body.source_url,
+                digest=body.digest,
+                plugin_subprocess_env=existing.plugin_subprocess_env if existing else {},
+            )
+            write_plugin_registry(registry_path, registry)
+            return _PluginWriteResponse()
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.delete("/plugins/{plugin_id}", response_model=_PluginWriteResponse)
+    async def _delete_plugin(plugin_id: str, request: Request) -> _PluginWriteResponse:
+        # ADR-039 D5 checkpoint seam #2: authenticated ⇒ allowed; role check (DP3b) would gate here.
+        _principal = request.state.principal  # ADR-039 D7: server-derived, never body
+        from orchestrator.plugins.provenance import load_plugin_registry, write_plugin_registry
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> bool:
+            registry_path = ctx.config_dir / "plugins.yaml"
+            registry = load_plugin_registry(registry_path)
+            if plugin_id not in registry:
+                return False
+            del registry[plugin_id]
+            write_plugin_registry(registry_path, registry)
+            return True
+
+        found = await loop.run_in_executor(ctx.writer_executor, _write)
+        if not found:
+            raise HTTPException(status_code=404, detail=f"plugin {plugin_id!r} not in registry")
+        return _PluginWriteResponse()
 
     @app.exception_handler(_ConfirmAppendError)
     async def _confirm_append_failed_handler(
