@@ -11,6 +11,7 @@ P4.5-3: fail-closed auth boundary (_configure shared step, login/logout,
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import sqlite3
 import threading
@@ -20,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse
@@ -53,6 +54,7 @@ from orchestrator.core.event import (
     MetadataValidationError,
     RoomId,
     RoomNotFoundError,
+    TimestampMs,
     ToolCallCancelledMeta,
     ToolCallMeta,
     ToolCallPendingMeta,
@@ -201,6 +203,235 @@ class _ConfirmExecuteError(Exception):
         self.reason = reason
         self.event_id = event_id
         super().__init__(reason)
+
+
+_log = logging.getLogger("orchestrator.api.app")
+
+
+# ---------------------------------------------------------------------------
+# Shared writer-approve outcome types + helper (ADR-040 D3 / P4.6-4)
+# Used by the HTTP confirm handler and the countdown sweeper.
+# ---------------------------------------------------------------------------
+
+
+class _ApproveOk(NamedTuple):
+    appended_event: Event
+    turn_events: list[Event]
+
+
+class _ApproveSkipped(NamedTuple):
+    reason: str  # "already_resolved" | "room_closed" | "not_found"
+
+
+class _ApproveFailed(NamedTuple):
+    reason: str
+    event_id: EventId
+
+
+def _writer_approve_helper(
+    ctx: AppContext,
+    rid: RoomId,
+    pending_event_id: str,
+    approval_source: Literal["human", "auto_timer"],
+    approver_user_id: str | None,
+    loop: asyncio.AbstractEventLoop,
+) -> _ApproveOk | _ApproveSkipped | _ApproveFailed:
+    """Approve a gated TOOL_CALL_PENDING on the writer executor (ADR-040 D3).
+
+    Implements steps 2-5 of the confirm-approve path (ADR-030 D3):
+    room-state gate → still-pending check → reconstruct → execute → bus-publish.
+    Must run on writer_executor (max_workers=1) for atomicity.
+
+    Returns a discriminated outcome; callers map it to their own error semantics:
+    - HTTP confirm handler: _ApproveSkipped → 422, _ApproveFailed → 500
+    - Sweeper: _ApproveSkipped/_ApproveFailed → log + skip (never raises)
+    """
+    # Step 2: Resolve room + state gate.
+    room = ctx.writer_store.get_room(rid)
+    if room is None:
+        return _ApproveSkipped("not_found")
+    if room.state == "closed":
+        return _ApproveSkipped("room_closed")
+
+    all_events = ctx.writer_store.get_room_events(rid)
+    sorted_events = sorted(all_events, key=lambda e: (e.timestamp, e.id))
+
+    # Find the TOOL_CALL_PENDING event.
+    pending_event = next(
+        (
+            e
+            for e in sorted_events
+            if e.id == pending_event_id and e.type == EventType.TOOL_CALL_PENDING
+        ),
+        None,
+    )
+    if pending_event is None:
+        return _ApproveSkipped("not_found")
+
+    pending_meta = ToolCallPendingMeta.model_validate(pending_event.metadata)
+    pending_idx = sorted_events.index(pending_event)
+
+    # Step 3: Still-pending check (idempotency layer 1) — position-anchored.
+    already_resolved = any(
+        later.type in PENDING_RESOLUTION_TYPES
+        and str(later.metadata.get("call_id", "")) == pending_meta.call_id
+        for later in sorted_events[pending_idx + 1 :]
+    )
+    if already_resolved:
+        return _ApproveSkipped("already_resolved")
+
+    pre_cursor = len(all_events)
+
+    # Step 5: Approve — reconstruct TOOL_CALL from persisted record.
+    # tool_name/params/author come from the gate-produced record, NEVER from the caller.
+    # TOOL_CALL stays agent-authored (ADR-030 D3/ADR-039 D6 unchanged).
+    tool_call_event = Event(
+        id=generate_event_id(),
+        room_id=rid,
+        type=EventType.TOOL_CALL,
+        author=build_author(pending_meta.initiating_agent),
+        timestamp=now_ms(),
+        content="",
+        metadata=ToolCallMeta(
+            tool_name=pending_meta.tool_name,
+            call_id=pending_meta.call_id,
+            params=pending_meta.params,
+            approver_user_id=approver_user_id,
+            approval_source=approval_source,
+        ).model_dump(),
+    )
+    try:
+        ctx.writer_store.append(tool_call_event)
+    except (RoomNotFoundError, InvalidParentError, MetadataValidationError) as exc:
+        return _ApproveSkipped(str(exc))
+
+    # Idempotency layer 2: executor call_id guard (ADR-028 D2).
+    try:
+        execute_pending_tool_calls(
+            window_events=[tool_call_event],
+            room_id=rid,
+            event_store=ctx.writer_store,
+            mcp_sessions=ctx.mcp_sessions,
+            local_tools=ctx.local_tools,
+            llm_router=ctx.llm_router,
+        )
+    except Exception as exc:
+        return _ApproveFailed(str(exc), tool_call_event.id)
+
+    new_events = ctx.writer_store.get_room_events(rid)[pre_cursor:]
+    loop.call_soon_threadsafe(ctx.bus.publish, rid, new_events)
+    return _ApproveOk(tool_call_event, new_events)
+
+
+def _discover_expired_pendings(
+    ctx: AppContext,
+    cfg: CountdownAutoFireConfig,
+    server_start_ms: int,
+) -> list[tuple[RoomId, str]]:
+    """Enumerate expired-and-probably-still-pending COUNTDOWN pendings (reader path).
+
+    Runs on the reader_executor so discovery never blocks the event loop.
+    Results are approximate (stale reader); _writer_approve_helper re-checks
+    authoritatively on the writer.
+    """
+    results: list[tuple[RoomId, str]] = []
+    current_ms = now_ms()
+    reader = ctx.get_reader_store()
+    for rid in reader.list_room_ids():
+        events = reader.get_room_events(rid)
+        sorted_events = sorted(events, key=lambda e: (e.timestamp, e.id))
+        for idx, evt in enumerate(sorted_events):
+            if evt.type != EventType.TOOL_CALL_PENDING:
+                continue
+            try:
+                meta = ToolCallPendingMeta.model_validate(evt.metadata)
+            except Exception:
+                continue
+            if meta.tier != "countdown_confirm":
+                continue
+            if meta.expires_at is None:
+                continue
+            # D6 boot re-arm: branch on whether armed by THIS process or a prior one.
+            if evt.timestamp >= server_start_ms:
+                effective_deadline = meta.expires_at
+            else:
+                effective_deadline = TimestampMs(server_start_ms + cfg.window_s * 1000)
+            if current_ms < effective_deadline:
+                continue
+            # Pre-filter: position-anchored still-pending check (approximate).
+            already_resolved = any(
+                later.type in PENDING_RESOLUTION_TYPES
+                and str(later.metadata.get("call_id", "")) == meta.call_id
+                for later in sorted_events[idx + 1 :]
+            )
+            if not already_resolved:
+                results.append((rid, evt.id))
+    return results
+
+
+async def _countdown_sweeper(
+    ctx: AppContext,
+    cfg: CountdownAutoFireConfig,
+    loop: asyncio.AbstractEventLoop,
+    server_start_ms: int,
+) -> None:
+    """Periodic sweeper: discovers expired COUNTDOWN pendings + actuates on writer (ADR-040 D1).
+
+    Started in lifespan only when cfg.enabled. Cancelled cleanly in teardown.
+    """
+    import functools
+
+    _log.info(
+        "countdown sweeper started (window_s=%d sweep_interval_s=%d reversibility_floor=%d)",
+        cfg.window_s,
+        cfg.sweep_interval_s,
+        cfg.reversibility_floor,
+    )
+    while True:
+        await asyncio.sleep(cfg.sweep_interval_s)
+        try:
+            candidates = await loop.run_in_executor(
+                ctx.reader_executor,
+                lambda: _discover_expired_pendings(ctx, cfg, server_start_ms),
+            )
+            for rid, pending_event_id in candidates:
+                result = await loop.run_in_executor(
+                    ctx.writer_executor,
+                    functools.partial(
+                        _writer_approve_helper,
+                        ctx,
+                        rid,
+                        pending_event_id,
+                        "auto_timer",
+                        None,
+                        loop,
+                    ),
+                )
+                if isinstance(result, _ApproveOk):
+                    _log.info(
+                        "sweeper: auto-fired rid=%s pending=%s → tool_call=%s",
+                        rid,
+                        pending_event_id,
+                        result.appended_event.id,
+                    )
+                elif isinstance(result, _ApproveSkipped):
+                    _log.debug(
+                        "sweeper: skip rid=%s pending=%s reason=%s",
+                        rid,
+                        pending_event_id,
+                        result.reason,
+                    )
+                elif isinstance(result, _ApproveFailed):
+                    _log.error(
+                        "sweeper: execute failed rid=%s pending=%s reason=%s",
+                        rid,
+                        pending_event_id,
+                        result.reason,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _log.error("sweeper: unexpected error (loop continues): %s", exc, exc_info=True)
 
 
 class _NoopLLMRouter:
@@ -774,46 +1005,39 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         )
 
         def _confirm_on_writer() -> ConfirmResponse:
-            # Step 1: Resolve room and load events.
-            room = ctx.writer_store.get_room(rid)
-            if room is None:
-                raise _ConfirmAppendError("not_found")
-
-            # Step 2: Room-state gate — reject terminal (closed) rooms.
-            if room.state == "closed":
-                raise _ConfirmAppendError("room_closed")
-
-            all_events = ctx.writer_store.get_room_events(rid)
-            sorted_events = sorted(all_events, key=lambda e: (e.timestamp, e.id))
-
-            # Find the TOOL_CALL_PENDING event by pending_event_id.
-            pending_event = next(
-                (
-                    e
-                    for e in sorted_events
-                    if e.id == body.pending_event_id and e.type == EventType.TOOL_CALL_PENDING
-                ),
-                None,
-            )
-            if pending_event is None:
-                raise _ConfirmAppendError("not_found")
-
-            pending_meta = ToolCallPendingMeta.model_validate(pending_event.metadata)
-            pending_idx = sorted_events.index(pending_event)
-
-            # Step 3: Still-pending check (idempotency layer 1) — position-anchored.
-            # Scan events AFTER the pending event's position for the same call_id resolved.
-            already_resolved = any(
-                later.type in PENDING_RESOLUTION_TYPES
-                and str(later.metadata.get("call_id", "")) == pending_meta.call_id
-                for later in sorted_events[pending_idx + 1 :]
-            )
-            if already_resolved:
-                raise _ConfirmAppendError("already_resolved")
-
-            pre_cursor = len(all_events)
-
             if body.decision == "cancel":
+                # Cancel path: steps 1-4 inline (cancel branch not shared with sweeper).
+                room = ctx.writer_store.get_room(rid)
+                if room is None:
+                    raise _ConfirmAppendError("not_found")
+                if room.state == "closed":
+                    raise _ConfirmAppendError("room_closed")
+
+                all_events = ctx.writer_store.get_room_events(rid)
+                sorted_events = sorted(all_events, key=lambda e: (e.timestamp, e.id))
+                pending_event = next(
+                    (
+                        e
+                        for e in sorted_events
+                        if e.id == body.pending_event_id
+                        and e.type == EventType.TOOL_CALL_PENDING
+                    ),
+                    None,
+                )
+                if pending_event is None:
+                    raise _ConfirmAppendError("not_found")
+
+                pending_meta = ToolCallPendingMeta.model_validate(pending_event.metadata)
+                pending_idx = sorted_events.index(pending_event)
+                already_resolved = any(
+                    later.type in PENDING_RESOLUTION_TYPES
+                    and str(later.metadata.get("call_id", "")) == pending_meta.call_id
+                    for later in sorted_events[pending_idx + 1 :]
+                )
+                if already_resolved:
+                    raise _ConfirmAppendError("already_resolved")
+
+                pre_cursor = len(all_events)
                 # Step 4: Cancel — append TOOL_CALL_CANCELLED, done.
                 cancelled_event = Event(
                     id=generate_event_id(),
@@ -836,48 +1060,20 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 loop.call_soon_threadsafe(ctx.bus.publish, rid, new_events)
                 return ConfirmResponse(appended_event=cancelled_event, turn_events=new_events)
 
-            # Step 5: Approve — reconstruct TOOL_CALL from persisted record (backend-authoritative).
-            # tool_name/params/author come from the gate-produced record, NEVER from the request.
-            # TOOL_CALL stays agent-authored (ADR-030 D3/ADR-039 D6 unchanged).
-            # approver_user_id records who approved (provenance, not authorship).
-            # approval_source="human" marks the HTTP confirm path (ADR-040 D4).
-            tool_call_event = Event(
-                id=generate_event_id(),
-                room_id=rid,
-                type=EventType.TOOL_CALL,
-                author=build_author(pending_meta.initiating_agent),
-                timestamp=now_ms(),
-                content="",
-                metadata=ToolCallMeta(
-                    tool_name=pending_meta.tool_name,
-                    call_id=pending_meta.call_id,
-                    params=pending_meta.params,
-                    approver_user_id=_approver_user_id,  # ADR-039 D6
-                    approval_source="human",  # ADR-040 D4
-                ).model_dump(),
+            # Approve path: delegate to shared writer helper (ADR-040 D3).
+            # The helper re-checks room-state + still-pending (guards must be inside — the
+            # sweeper uses the same helper after a stale reader discovery pass).
+            result = _writer_approve_helper(
+                ctx, rid, body.pending_event_id, "human", _approver_user_id, loop
             )
-            try:
-                ctx.writer_store.append(tool_call_event)
-            except (RoomNotFoundError, InvalidParentError, MetadataValidationError) as exc:
-                raise _ConfirmAppendError(str(exc)) from exc
-
-            # Idempotency layer 2: executor's full-room call_id guard handles duplicates.
-            try:
-                execute_pending_tool_calls(
-                    window_events=[tool_call_event],
-                    room_id=rid,
-                    event_store=ctx.writer_store,
-                    mcp_sessions=ctx.mcp_sessions,
-                    local_tools=ctx.local_tools,
-                    llm_router=ctx.llm_router,
+            if isinstance(result, _ApproveOk):
+                return ConfirmResponse(
+                    appended_event=result.appended_event,
+                    turn_events=result.turn_events,
                 )
-            except Exception as exc:
-                # stage="execute": TOOL_CALL already appended — do NOT re-confirm.
-                raise _ConfirmExecuteError(str(exc), tool_call_event.id) from exc
-
-            new_events = ctx.writer_store.get_room_events(rid)[pre_cursor:]
-            loop.call_soon_threadsafe(ctx.bus.publish, rid, new_events)
-            return ConfirmResponse(appended_event=tool_call_event, turn_events=new_events)
+            if isinstance(result, _ApproveSkipped):
+                raise _ConfirmAppendError(result.reason)
+            raise _ConfirmExecuteError(result.reason, result.event_id)
 
         return await loop.run_in_executor(ctx.writer_executor, _confirm_on_writer)
 
@@ -1073,7 +1269,24 @@ def create_app(config_dir: Path, db_path: Path) -> FastAPI:
         # request time without a closure (ADR-039 D4 Y1 absorption).
         app.state.ctx = ctx
         _register_routes(app, ctx)
+
+        # Start COUNTDOWN sweeper if enabled (ADR-040 D1/D7 / P4.6-4).
+        _sweeper_task: asyncio.Task[None] | None = None
+        if ctx.countdown_auto_fire.enabled:
+            _server_start_ms = now_ms()
+            _loop = asyncio.get_running_loop()
+            _sweeper_task = asyncio.create_task(
+                _countdown_sweeper(ctx, ctx.countdown_auto_fire, _loop, _server_start_ms),
+                name="countdown-sweeper",
+            )
+
         yield
+
+        # Tear down sweeper before ctx.shutdown() (cancel cleanly, no pending-task warning).
+        if _sweeper_task is not None:
+            _sweeper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _sweeper_task
         ctx.shutdown()
 
     app = FastAPI(
