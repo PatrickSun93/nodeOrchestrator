@@ -840,6 +840,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             # tool_name/params/author come from the gate-produced record, NEVER from the request.
             # TOOL_CALL stays agent-authored (ADR-030 D3/ADR-039 D6 unchanged).
             # approver_user_id records who approved (provenance, not authorship).
+            # approval_source="human" marks the HTTP confirm path (ADR-040 D4).
             tool_call_event = Event(
                 id=generate_event_id(),
                 room_id=rid,
@@ -852,6 +853,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     call_id=pending_meta.call_id,
                     params=pending_meta.params,
                     approver_user_id=_approver_user_id,  # ADR-039 D6
+                    approval_source="human",  # ADR-040 D4
                 ).model_dump(),
             )
             try:
