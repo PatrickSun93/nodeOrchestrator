@@ -1,7 +1,24 @@
 task_id: P4.5
-state: awaiting_junior_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-06-06T17:43:07.414601Z'
+last_transition_at: '2026-06-07T01:58:59.378975Z'
 cycle_started_at: '2026-06-06T16:00:43.091983Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-07T01:58:59.378975Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: closed
+  reason: 'P4.5 merged (PR #60, merge 6f14c7f). First human-identity trust boundary.
+    Impl-stage dual-lens all clean: R0-A round-6 clean (deep concurrent-reader rework
+    RW6-RW8: hang fix then per-thread WAL reader pool across routes+middleware replacing
+    shared reader connection so concurrent authenticated reads no longer race + honest
+    inscription RW7-routes/RW8-middleware), R0-B clean, plan-vs-impl clean. ADR-039
+    Accepted + ADR-025/026/030/038 annotated. Gates: ruff + mypy(files=src,tests 275)
+    + full pytest 2221 passed; 16-concurrent-auth + concurrent-subscribers 10/10 no-hang.
+    Constitutional spine byte-frozen (scoring.py zero-diff, no new LLMPurpose, executor+gate
+    unchanged, confirm idempotency preserved, backend-authoritative, principal server-derived).
+    Residuals inscribed (D10): RB-AUTHZ, TLS-at-deployment, deferred-D2/MCP-OAuth,
+    token-no-expiry, session-no-idle-expiry, credential-posture, cross-origin-SameSite;
+    two below-bar noting (disabled-user verify_password scrypt-skip, logout-positive-test).
+    Closing.'
 requires_cross_family_review: true
