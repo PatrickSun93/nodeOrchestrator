@@ -801,21 +801,7 @@ async def select_model_and_provider(
 
 ### P1.2 — 自治度评分系统 ✅ Closed
 
-> (P1.2 早已 closed;以下 commit timeline / "Pending" 行为当时推进快照,按 §7 banner 视为历史。)
-
-**Commit timeline**:
-
-| Stage | Commit | Date | Status |
-|---|---|---|---|
-| P1.2-R0 carryover(6 个 P1.1 retro 补测 + test-coverage standard 文档化) | `12b6259` → `cca89b0` → `b2bbf21` → `3b3b7a9` | 2026-05-08 → 05-11 | ✅ Landed |
-| P1.2-C1(ADR-005 + senior-planner workflow 首次成文) | `80a41b3` | 2026-05-20 AM | ✅ Landed |
-| P1.2-C2(接口冻结) | `da65165` | 2026-05-20 AM | ✅ Landed |
-| R0-A 2 个 🟡 doc-drift 修复 | `7379576` → `ecae9ef`(PR #1 merge) | 2026-05-20 | ✅ Landed |
-| C3 prep(`ThresholdConfig` schema-level invariant) | `d20ad0b` | 2026-05-20 | ✅ Landed |
-| P1.2-C3 senior plan + ADR-006 Proposed | `54c673c` | 2026-05-20 PM | ✅ Drafted |
-| P1.2-C3 architect ack: ADR-006 Accepted + plan revisions | `299b3be` → `c4458d3`(PR #2 merge) | 2026-05-20 PM | ✅ Landed |
-| P1.2-C3(impl: `score` / `decide_tier` / `gate` + tests + ADR-005 §5(c) revision) | — | — | ⏳ Pending junior dispatch |
-| P1.2-C4(loader impl + event 发射集成 + e2e) | — | — | ⏳ Pending |
+> **历史注记**:P1.2 早已 closed(产品现处 P4-done)。逐 commit 的 in-flight 推进记录(2026-05 的 R0/C1/C2/C3/C4 阶段表 + 当时 ⏳ Pending 行)已 stale、低价值,故省略——需要时见 `git log`(`P1.2-*` commits)+ `docs/retrospectives/P1.2.md`。canonical 决策记录见下。
 
 **Canonical decision record**: ADR-005(自治度评分 — 6→1 维度收敛 + 3 档 AutonomyTier + tools.yaml/agent.yaml schema 拆分 + user_intent-as-modifier + autonomy_decision EventType)。补充:ADR-006(Unknown tool_id 语义,Accepted 2026-05-20 — 首个 senior-drafts-ADR 非-bootstrap 实例)。
 
@@ -998,7 +984,7 @@ P4 = 完整化:退役 P1–P3 显式 deferred 的 residual + 完成被推迟的�
 | **P4.7-BE** | 插件管理端点(realizes ADR-038 D5 + ADR-039 D5/D9;无新 ADR) | — | #62 |
 | **P4.7-FE** | GUI 高级/配置层(login/auth、plugin-management、config;light frontend track) | — | #63 |
 
-宪法脊柱 8 片全程守住(门控=代码、discovery≠permission、无 content-gen 之外的新 routing/judgment `LLMPurpose`;见各 ADR Status)。**F(scale/concurrency)+ D4** 判定 out-of-scope(仅 P4.5 的 reader-concurrency 修复拉入)。in-window 另有 **#55** gui-restyle(设计系统应用)+ **#64** UI format-hygiene(8 prettier + openapi-codegen 锁定 plugin/auth 合约)。
+宪法脊柱 8 片全程守住:`tools/executor.py` 的 `_execute_local_call`(gate→execute 派发 seam)自 P3.4-C2 引入(`29fb5cf`)起 **逐 slice 零 diff**——P4 八片每个 impl-stage 的 R0-A/R0-B 均复核确认(宪法脊柱不变量,代码内 `selection.py` / `plugins/code.py` / `subprocess_tools.py` 注释亦标 byte-frozen);加之门控=代码、discovery≠permission、无 content-gen 之外的新 routing/judgment `LLMPurpose`(见各 ADR Status)。**F(scale/concurrency)+ D4** 判定 out-of-scope(仅 P4.5 的 reader-concurrency 修复拉入)。in-window 另有 **#55** gui-restyle(设计系统应用)+ **#64** UI format-hygiene(8 prettier + openapi-codegen 锁定 plugin/auth 合约)。
 
 ---
 
