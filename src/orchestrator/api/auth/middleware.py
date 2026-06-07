@@ -74,7 +74,7 @@ async def _resolve_principal(request: Request) -> Any:
     """Resolve Principal from session cookie or Bearer token.
 
     Reads ctx from request.app.state (set at lifespan startup or in
-    _make_test_app). Uses the reader connection for non-blocking auth.
+    _make_test_app). Uses the per-thread WAL reader pool for non-blocking auth.
     Returns Principal or None.
     """
     ctx = getattr(request.app.state, "ctx", None)
@@ -82,14 +82,17 @@ async def _resolve_principal(request: Request) -> Any:
         return None
 
     loop = asyncio.get_running_loop()
-    reader_conn = ctx.reader_store.conn
+    # Each lambda calls ctx.get_reader_conn() at run-time on its reader_executor
+    # worker thread, resolving that thread's own per-thread SQLite connection
+    # (RW8 fix: the old reader_conn = ctx.reader_store.conn captured the shared
+    # connection on the async loop thread — same race as the pre-RW7 WS handler).
 
     # 1. Try session cookie first (GUI path)
     session_id = request.cookies.get("session_id")
     if session_id:
         principal = await loop.run_in_executor(
             ctx.reader_executor,
-            lambda: validate_session(reader_conn, session_id),
+            lambda: validate_session(ctx.get_reader_conn(), session_id),
         )
         if principal is not None:
             return principal
@@ -100,7 +103,7 @@ async def _resolve_principal(request: Request) -> Any:
         raw_token = auth[7:]
         principal = await loop.run_in_executor(
             ctx.reader_executor,
-            lambda: validate_token(reader_conn, raw_token),
+            lambda: validate_token(ctx.get_reader_conn(), raw_token),
         )
         if principal is not None:
             return principal
