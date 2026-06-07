@@ -14,30 +14,13 @@ export type ConfirmRequest = components["schemas"]["ConfirmRequest"];
 export type ConfirmResponse = components["schemas"]["ConfirmResponse"];
 export type ConfirmError = components["schemas"]["ConfirmError"];
 
-// Plugin management types (ADR-038 D5 / P4.7-BE — not in openapi.json, hand-typed)
-export interface PluginInfo {
-  plugin_id: string;
-  enabled: boolean;
-  version: string | null;
-  provenance: string;
-  provenance_kind: string | null;
-  fetched: boolean;
-}
+// Plugin management types (ADR-038 D5 — codegen-locked via openapi.json)
+export type PluginInfo = components["schemas"]["_PluginInfo"];
+export type PluginWriteResponse = components["schemas"]["_PluginWriteResponse"];
+export type AdmitRequest = components["schemas"]["_AdmitRequest"];
 
-export interface PluginWriteResponse {
-  effect: "next_restart";
-}
-
-export interface AdmitRequest {
-  source_url: string;
-  digest: string;
-  version?: string | null;
-}
-
-// Auth types (ADR-039 D3 / P4.7-BE)
-export interface LoginResponse {
-  user_id: string;
-}
+// Auth types (ADR-039 D3 — codegen-locked via openapi.json)
+export type LoginResponse = components["schemas"]["_LoginResponse"];
 
 export class AuthError extends Error {
   constructor() {
@@ -153,8 +136,8 @@ export function login(userId: string, password: string): Promise<LoginResponse> 
   });
 }
 
-export function logout(): Promise<{ status: string }> {
-  return request<{ status: string }>(`${BASE}/logout`, { method: "POST" });
+export function logout(): Promise<components["schemas"]["_LogoutResponse"]> {
+  return request<components["schemas"]["_LogoutResponse"]>(`${BASE}/logout`, { method: "POST" });
 }
 
 // Auth probe: calls GET /rooms/{fake-id} — returns true if authenticated (404), false if 401.

@@ -5,6 +5,62 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/login": {
+      "post": {
+        "summary": " Login",
+        "operationId": "_login_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_LoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/logout": {
+      "post": {
+        "summary": " Logout",
+        "operationId": "_logout_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_LogoutResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/rooms": {
       "post": {
         "summary": " Create Room",
@@ -210,7 +266,7 @@
     "/rooms/{room_id}/intent": {
       "post": {
         "summary": " Post Intent",
-        "description": "Write path: forge-check \u2192 append \u2192 run_turn \u2192 cursor-diff \u2192 publish.\n\nSecurity spine (ADR-025 D4):\n  - author hardcoded \"user\" \u2014 cannot be forged by client\n  - id + timestamp server-stamped\n  - type allowlist enforced before any append (fail-closed)\n  - metadata validated by validate_metadata (shape-only, not authority)\nError semantics (ADR-025 D5, R0-B Y3):\n  - append-fail \u2192 _AppendFailedError \u2192 422 IntentError{stage:\"append\"}\n  - turn-fail  \u2192 _TurnFailedError  \u2192 500 IntentError{stage:\"turn\"}",
+        "description": "Write path: forge-check \u2192 append \u2192 run_turn \u2192 cursor-diff \u2192 publish.\n\nSecurity spine (ADR-025 D4 / ADR-039 D1/D7):\n  - author stamped server-side from the verified principal (P4.5-3)\n  - id + timestamp server-stamped\n  - type allowlist enforced before any append (fail-closed)\n  - metadata validated by validate_metadata (shape-only, not authority)\nError semantics (ADR-025 D5, R0-B Y3):\n  - append-fail \u2192 _AppendFailedError \u2192 422 IntentError{stage:\"append\"}\n  - turn-fail  \u2192 _TurnFailedError  \u2192 500 IntentError{stage:\"turn\"}",
         "operationId": "_post_intent_rooms__room_id__intent_post",
         "parameters": [
           {
@@ -270,7 +326,7 @@
     "/rooms/{room_id}/confirm": {
       "post": {
         "summary": " Post Confirm",
-        "description": "Confirm or cancel a pending gated tool call (ADR-030 D3).\n\nHandler logic (backend-authoritative, atomic on writer_executor):\n1. Resolve room; find the TOOL_CALL_PENDING by pending_event_id.\n2. Room-state gate: closed room \u2192 ConfirmError{stage:'append', reason:'room_closed'}.\n3. Still-pending check (layer 1) \u2014 position-anchored after the pending event.\n4. cancel \u2192 append TOOL_CALL_CANCELLED, return.\n5. approve \u2192 append agent-authored TOOL_CALL from record, execute, publish.\n\nNo decision surface: gate decision already made; human approval second factor only.",
+        "description": "Confirm or cancel a pending gated tool call (ADR-030 D3).\n\nHandler logic (backend-authoritative, atomic on writer_executor):\n1. Resolve room; find the TOOL_CALL_PENDING by pending_event_id.\n2. Room-state gate: closed room \u2192 ConfirmError{stage:'append', reason:'room_closed'}.\n3. Still-pending check (layer 1) \u2014 position-anchored after the pending event.\n4. cancel \u2192 append TOOL_CALL_CANCELLED (with approver_user_id from principal).\n5. approve \u2192 append agent-authored TOOL_CALL from record (with approver_user_id).\n\nNo decision surface: gate decision already made; human approval second factor only.\nADR-039 D6: approver provenance recorded from the authenticated principal.\nD5 checkpoint seam #1: authenticated \u21d2 allowed; role check would gate here.",
         "operationId": "_post_confirm_rooms__room_id__confirm_post",
         "parameters": [
           {
@@ -323,6 +379,195 @@
               }
             },
             "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/plugins": {
+      "get": {
+        "summary": " Get Plugins",
+        "description": "List declared plugin registry entries (id/provenance/enabled/version/fetched).\n\nRuns on ctx.reader_executor (G2 absorb, R0-A-on-plan).\nlast-load-result column deferred as named residual (Y1=(a), ADR-038 D5 T5).",
+        "operationId": "_get_plugins_plugins_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/_PluginInfo"
+                  },
+                  "type": "array",
+                  "title": "Response  Get Plugins Plugins Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plugins/{plugin_id}/enable": {
+      "post": {
+        "summary": " Enable Plugin",
+        "operationId": "_enable_plugin_plugins__plugin_id__enable_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PluginWriteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plugins/{plugin_id}/disable": {
+      "post": {
+        "summary": " Disable Plugin",
+        "operationId": "_disable_plugin_plugins__plugin_id__disable_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PluginWriteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plugins/{plugin_id}/admit": {
+      "post": {
+        "summary": " Admit Plugin",
+        "operationId": "_admit_plugin_plugins__plugin_id__admit_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_AdmitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PluginWriteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plugins/{plugin_id}": {
+      "delete": {
+        "summary": " Delete Plugin",
+        "operationId": "_delete_plugin_plugins__plugin_id__delete",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PluginWriteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -875,6 +1120,37 @@
         ],
         "title": "ValidationError"
       },
+      "_AdmitRequest": {
+        "properties": {
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_url",
+          "digest"
+        ],
+        "title": "_AdmitRequest",
+        "description": "Request body for POST /plugins/{id}/admit.\n\nextra=forbid is the forge guard (ADR-039 D7 / mirrors _LoginRequest).\nversion is optional; source_url+digest are required (pinned-bundle intent)."
+      },
       "_CreateRoomBody": {
         "properties": {
           "type": {
@@ -888,6 +1164,119 @@
         ],
         "title": "_CreateRoomBody",
         "description": "Request body for POST /rooms."
+      },
+      "_LoginRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "user_id",
+          "password"
+        ],
+        "title": "_LoginRequest",
+        "description": "Request body for POST /login (ADR-039 D3). extra=forbid is the forge guard."
+      },
+      "_LoginResponse": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "title": "_LoginResponse",
+        "description": "Response body for POST /login (ADR-039 D3). Documents OpenAPI contract."
+      },
+      "_LogoutResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "_LogoutResponse",
+        "description": "Response body for POST /logout (ADR-039 D3). Documents OpenAPI contract."
+      },
+      "_PluginInfo": {
+        "properties": {
+          "plugin_id": {
+            "type": "string",
+            "title": "Plugin Id"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "provenance": {
+            "type": "string",
+            "title": "Provenance"
+          },
+          "provenance_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance Kind"
+          },
+          "fetched": {
+            "type": "boolean",
+            "title": "Fetched"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plugin_id",
+          "enabled",
+          "version",
+          "provenance",
+          "provenance_kind",
+          "fetched"
+        ],
+        "title": "_PluginInfo",
+        "description": "Single entry in GET /plugins response (ADR-038 D5)."
+      },
+      "_PluginWriteResponse": {
+        "properties": {
+          "effect": {
+            "type": "string",
+            "title": "Effect",
+            "default": "next_restart"
+          }
+        },
+        "type": "object",
+        "title": "_PluginWriteResponse",
+        "description": "Response for all plugin write operations (boot-only; ADR-038 D2 / DP1a)."
       }
     }
   }
