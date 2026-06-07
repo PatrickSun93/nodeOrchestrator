@@ -28,6 +28,7 @@ from orchestrator.core.event import (
     Event,
     EventType,
     RoomId,
+    TimestampMs,
     ToolCallMeta,
     ToolCallPendingMeta,
     build_author,
@@ -128,13 +129,27 @@ def process_tool_calls(
         else:
             # COUNTDOWN_CONFIRM / HARD_CONFIRM: persist the full payload so
             # the confirm endpoint can reconstruct and execute it (ADR-030 D1).
+            pending_ts = now_ms()
+            # ADR-040 D2: stamp expires_at iff COUNTDOWN + enabled + reversibility ≥ floor.
+            # HARD_CONFIRM always stays None (4a). The gate decision (score/decide_tier) is
+            # byte-unchanged — the stamp runs AFTER the tier is decided, never alters it.
+            expires_at: TimestampMs | None = None
+            if (
+                result.tier == AutonomyTier.COUNTDOWN_CONFIRM
+                and countdown_auto_fire is not None
+                and countdown_auto_fire.enabled
+            ):
+                tool_meta = tools.get(tc.name)
+                rev_floor = countdown_auto_fire.reversibility_floor
+                if tool_meta is not None and tool_meta.reversibility >= rev_floor:
+                    expires_at = TimestampMs(pending_ts + countdown_auto_fire.window_s * 1000)
             event_store.append(
                 Event(
                     id=generate_event_id(),
                     room_id=room_id,
                     type=EventType.TOOL_CALL_PENDING,
                     author=build_author(agent_id),
-                    timestamp=now_ms(),
+                    timestamp=pending_ts,
                     content="",
                     metadata=ToolCallPendingMeta(
                         tool_name=tc.name,
@@ -142,6 +157,7 @@ def process_tool_calls(
                         params=tc.arguments,
                         tier=cast(Literal["countdown_confirm", "hard_confirm"], result.tier.value),
                         initiating_agent=agent_id,
+                        expires_at=expires_at,
                     ).model_dump(),
                 )
             )

@@ -355,7 +355,11 @@ class ToolCallPendingMeta(_BaseMeta):
     branch — persists the full payload of a gated call so the confirm endpoint
     can later reconstruct it without trusting client-supplied fields.
 
-    Field set is locked by the constitutional test covering the B1 atomic.
+    ``expires_at`` is an absolute epoch-ms deadline stamped at gate time for
+    COUNTDOWN_CONFIRM calls when auto-fire is enabled and reversibility ≥ floor
+    (ADR-040 D1/D2). ``None`` otherwise (HARD calls and disabled auto-fire).
+    Immutable once written (store is append-only). Field set is pinned by the
+    constitutional test in ``tests/core/test_constitution.py``.
     """
 
     tool_name: str = Field(min_length=1)
@@ -363,6 +367,7 @@ class ToolCallPendingMeta(_BaseMeta):
     params: dict[str, Any] = Field(default_factory=dict)
     tier: Literal["countdown_confirm", "hard_confirm"]
     initiating_agent: str = Field(min_length=1)
+    expires_at: TimestampMs | None = None
 
 
 class ToolCallCancelledMeta(_BaseMeta):
