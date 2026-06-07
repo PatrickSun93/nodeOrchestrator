@@ -15,6 +15,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from orchestrator.autonomy.config import CountdownAutoFireConfig
 from orchestrator.autonomy.emission import emit_gate_decision
 from orchestrator.autonomy.scoring import (
     AutonomyTier,
@@ -64,6 +65,7 @@ def process_tool_calls(
     event_store: EventStore,
     tools: dict[str, ToolMeta],
     thresholds: ThresholdConfig,
+    countdown_auto_fire: CountdownAutoFireConfig | None = None,
 ) -> ToolDispatchResult:
     """For each tool call: build Operation, call emit_gate_decision,
     and for AUTO_EXECUTE only, append a tool_call event. See ADR-013."""

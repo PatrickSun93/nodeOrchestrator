@@ -41,6 +41,7 @@ from orchestrator.api.wire import (
     Room,
     Snapshot,
 )
+from orchestrator.autonomy.config import CountdownAutoFireConfig, load_countdown_auto_fire_config
 from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.bootstrap import load_and_validate_llm_layer
 from orchestrator.core.event import (
@@ -118,6 +119,10 @@ class AppContext:
     # its own SQLite connection. reader_store is the fallback for tests/single-thread use.
     reader_local: threading.local = field(default_factory=threading.local)
     reader_conns: list[sqlite3.Connection] = field(default_factory=list)
+    # COUNTDOWN auto-fire config (ADR-040 D7). Default OFF (fail-closed) for test compat.
+    countdown_auto_fire: CountdownAutoFireConfig = field(
+        default_factory=CountdownAutoFireConfig
+    )
 
     def get_reader_store(self) -> EventStore:
         """Return the per-thread EventStore for the calling reader_executor worker.
@@ -326,6 +331,11 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     skills = load_skills(config_dir / "skills")
     tools = load_tools_config(config_dir / "tools.yaml")
 
+    # COUNTDOWN auto-fire config (ADR-040 D7 / P4.6-1). Absent → disabled (fail-closed).
+    countdown_auto_fire_cfg = load_countdown_auto_fire_config(
+        config_dir / "autonomy.yaml"
+    )
+
     # Merge MCP tool registry + retain sessions (ADR-028 D2 — fixes session-discard).
     # Graceful: unavailable servers are warned+skipped (skip_unavailable=True).
     from orchestrator.mcp.adapter import build_mcp_tool_registry_and_sessions_from_config
@@ -436,6 +446,7 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         sandbox_root=sandbox_root,
         reader_local=_reader_local,
         reader_conns=_reader_conns,
+        countdown_auto_fire=countdown_auto_fire_cfg,
     )
 
 
@@ -647,6 +658,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     llm_router=ctx.llm_router,
                     regex_registry=ctx.regex_registry,
                     tools=ctx.tools,
+                    countdown_auto_fire=ctx.countdown_auto_fire,
                 )
             except Exception as exc:
                 raise _TurnFailedError(str(exc), user_event.id) from exc
@@ -706,6 +718,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     available_skills=ctx.available_skills,
                     regex_registry=ctx.regex_registry,
                     tools=ctx.tools,
+                    countdown_auto_fire=ctx.countdown_auto_fire,
                 )
 
                 # Execute TOOL_CALL events from this re-dispatch pass.
