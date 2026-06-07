@@ -29,7 +29,12 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.autonomy.scoring import DecisionTrace
-from orchestrator.core.event import AutonomyDecisionMetadata, AutonomyRefusalMetadata
+from orchestrator.core.event import (
+    AutonomyDecisionMetadata,
+    AutonomyRefusalMetadata,
+    ToolCallMeta,
+    ToolCallPendingMeta,
+)
 
 if TYPE_CHECKING:
     from .conftest import PopulatedFixture
@@ -251,4 +256,41 @@ def test_constitution_core_does_not_import_memory() -> None:
         "orchestrator.core imports from orchestrator.memory — layering violation.\n"
         "core → memory direction is forbidden (ADR-016 D8 deliberate-duplication):\n"
         + "\n".join(violations)
+    )
+
+
+def test_constitution_tool_call_pending_meta_field_set_pin() -> None:
+    """``ToolCallPendingMeta`` field set is exactly the canonical six fields (ADR-040 / P4.6-6(i)).
+
+    Adding or removing a field changes the durable pending record contract — every stamped
+    ``TOOL_CALL_PENDING`` event in the store is affected. Any change requires an ADR amendment
+    and must update this test explicitly; silent drift is a constitutional violation.
+    """
+    expected = {"tool_name", "call_id", "params", "tier", "initiating_agent", "expires_at"}
+    actual = set(ToolCallPendingMeta.model_fields)
+    missing = expected - actual
+    extra = actual - expected
+    assert not missing and not extra, (
+        "ToolCallPendingMeta field set has drifted.\n"
+        f"Missing: {sorted(missing)}\nExtra: {sorted(extra)}\n"
+        "Fix: update ToolCallPendingMeta in core/event.py and this test's expected set. "
+        "Any field change is an ADR amendment (ADR-040 D1)."
+    )
+
+
+def test_constitution_tool_call_meta_field_set_pin() -> None:
+    """``ToolCallMeta`` field set is exactly the canonical five fields (ADR-040 / P4.6-6(i)).
+
+    Adding or removing a field changes the executed TOOL_CALL audit record. Any change
+    requires an ADR amendment and must update this test explicitly.
+    """
+    expected = {"tool_name", "call_id", "params", "approver_user_id", "approval_source"}
+    actual = set(ToolCallMeta.model_fields)
+    missing = expected - actual
+    extra = actual - expected
+    assert not missing and not extra, (
+        "ToolCallMeta field set has drifted.\n"
+        f"Missing: {sorted(missing)}\nExtra: {sorted(extra)}\n"
+        "Fix: update ToolCallMeta in core/event.py and this test's expected set. "
+        "Any field change is an ADR amendment (ADR-040 D4)."
     )

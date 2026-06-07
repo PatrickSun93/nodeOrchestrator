@@ -1,0 +1,14 @@
+# COUNTDOWN auto-fire config (ADR-040 D7).
+# Default: disabled (fail-closed, opt-in). Set enabled: true to allow
+# timer-actuated fires for the COUNTDOWN tier.
+#
+# window_s          — cancel window in seconds (default 300 = 5 min).
+# sweep_interval_s  — sweeper wake interval (default 30 s).
+# reversibility_floor — minimum reversibility score for auto-fire (0-10,
+#                       default 5; below-floor COUNTDOWNs wait for a human).
+
+countdown_auto_fire:
+  enabled: false
+  window_s: 300
+  sweep_interval_s: 30
+  reversibility_floor: 5

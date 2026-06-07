@@ -210,12 +210,18 @@ class ToolCallMeta(_BaseMeta):
     P4.5-5). Nullable for backward-compat: pre-P4.5 events have no approver.
     The still-pending scan never inspects this field — it keys on type+call_id.
     The executed TOOL_CALL stays agent-authored; this field records who approved.
+
+    `approval_source` records how the call was approved (ADR-040 D4).
+    ``"human"`` — HTTP confirm endpoint; ``"auto_timer"`` — sweeper.
+    ``None`` — AUTO_EXECUTE tier (no approval needed) or pre-P4.6 legacy event.
+    Field set is pinned by the constitutional test in tests/core/test_constitution.py.
     """
 
     tool_name: str = Field(min_length=1)
     call_id: str = Field(min_length=1)
     params: dict[str, Any] = Field(default_factory=dict)
     approver_user_id: str | None = None
+    approval_source: Literal["human", "auto_timer"] | None = None
 
 
 class ToolResultMeta(_BaseMeta):
@@ -355,7 +361,11 @@ class ToolCallPendingMeta(_BaseMeta):
     branch — persists the full payload of a gated call so the confirm endpoint
     can later reconstruct it without trusting client-supplied fields.
 
-    Field set is locked by the constitutional test covering the B1 atomic.
+    ``expires_at`` is an absolute epoch-ms deadline stamped at gate time for
+    COUNTDOWN_CONFIRM calls when auto-fire is enabled and reversibility ≥ floor
+    (ADR-040 D1/D2). ``None`` otherwise (HARD calls and disabled auto-fire).
+    Immutable once written (store is append-only). Field set is pinned by the
+    constitutional test in ``tests/core/test_constitution.py``.
     """
 
     tool_name: str = Field(min_length=1)
@@ -363,6 +373,7 @@ class ToolCallPendingMeta(_BaseMeta):
     params: dict[str, Any] = Field(default_factory=dict)
     tier: Literal["countdown_confirm", "hard_confirm"]
     initiating_agent: str = Field(min_length=1)
+    expires_at: TimestampMs | None = None
 
 
 class ToolCallCancelledMeta(_BaseMeta):

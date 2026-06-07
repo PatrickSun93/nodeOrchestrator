@@ -391,6 +391,15 @@ class EventStore:
             created_at=TimestampMs(row["created_at"]),
         )
 
+    def list_room_ids(self) -> list[RoomId]:
+        """Return all room ids in the store (ADR-040 D9 / P4.6-5).
+
+        Read-only; no writes. Safe to call on a reader connection.
+        Returns ``[]`` on an empty store.
+        """
+        rows = self.conn.execute("SELECT id FROM rooms ORDER BY created_at ASC").fetchall()
+        return [RoomId(row["id"]) for row in rows]
+
     # -- relations cache ------------------------------------------------
 
     def get_relations_for(self, event_id: EventId) -> list[Relation]:

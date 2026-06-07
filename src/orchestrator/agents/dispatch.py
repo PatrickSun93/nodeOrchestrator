@@ -24,6 +24,7 @@ from orchestrator.agents.selection import build_agent_context
 from orchestrator.agents.snapshot_dispatch import produce_and_emit_snapshot
 from orchestrator.agents.speaking import should_agent_speak
 from orchestrator.agents.tool_dispatch import process_tool_calls
+from orchestrator.autonomy.config import CountdownAutoFireConfig
 from orchestrator.autonomy.scoring import ThresholdConfig, ToolMeta
 from orchestrator.core.event import (
     Event,
@@ -62,6 +63,7 @@ def dispatch_turn(
     available_skills: dict[str, Skill],
     regex_registry: dict[tuple[str, int], re.Pattern[str]],
     tools: dict[str, ToolMeta],
+    countdown_auto_fire: CountdownAutoFireConfig | None = None,
 ) -> TurnResult:
     """Dispatch one turn to all eligible agents, sequentially.
 
@@ -160,6 +162,7 @@ def dispatch_turn(
                     threshold_confirm=agent.llm_config.autonomy_thresholds.threshold_confirm,
                     user_intent_modifier=agent.llm_config.autonomy_thresholds.user_intent_modifier,
                 ),
+                countdown_auto_fire=countdown_auto_fire,
             )
             _log.info(
                 "agent %s tool-call dispatch: %d calls, tiers=%s",
