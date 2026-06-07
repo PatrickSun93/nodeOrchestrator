@@ -1,6 +1,6 @@
 # P4 roadmap — deferred-completeness / 完整化 (scope-decision surface for the architect)
 
-**Status:** Proposed by architect-partner — 2026-06-04. **This is the P4 scope-decision artifact** (mirrors `docs/process/P3-roadmap.md`). It **collects every item explicitly deferred to P4** (grepped across ADRs + retro candidates + handoff), groups them into a dependency-ordered slice breakdown, surfaces scope-ambition options + a recommended start, and classifies each candidate's security weight + ADR need. **The architect ratifies scope, priority, and starting slice — this doc does not decide them.** No slice is briefed until the architect ratifies.
+**Status:** ✅ **COMPLETE — 2026-06-07** (originally Proposed by architect-partner — 2026-06-04). All 8 ratified slices are closed + merged (P4.1 → P4.7-FE; PRs #53–64; ADR-033..040 Accepted) — see the realized-outcome table in §4. The architect ratified the **phased** ambition (§6) and started at **P4.1** (§7); **F (scale/concurrency hardening)** was ruled **out of P4 scope** (only the P4.5 reader-concurrency fix was pulled in). The body below is preserved as the original scope-decision record. **This is the P4 scope-decision artifact** (mirrors `docs/process/P3-roadmap.md`). It **collects every item explicitly deferred to P4** (grepped across ADRs + retro candidates + handoff), groups them into a dependency-ordered slice breakdown, surfaces scope-ambition options + a recommended start, and classifies each candidate's security weight + ADR need. **The architect ratifies scope, priority, and starting slice — this doc does not decide them.** No slice is briefed until the architect ratifies.
 
 ---
 
@@ -99,6 +99,23 @@ COMPLETENESS / POLISH
   P4.7  GUI advanced/config layers               (E1 + E2 + E3)  ← trails the mgmt endpoints from P4.4/P4.5
   P4.8  (optional) scale/concurrency hardening    (F + D4)        ← only if the architect rules F in-scope
 ```
+
+**✅ Realized outcome (2026-06-07)** — the lean below was followed (phased ambition, P4.1 start); P4.7 split into a backend (mgmt endpoints) + frontend (GUI) track; P4.8/F ruled out of scope:
+
+| Slice | Shipped | ADR | PR |
+|---|---|---|---|
+| **P4.1** turn-loop + read-only code-intel (B1 + B2) | ✅ closed | ADR-033 (+ amends ADR-028 D3/D4, ADR-011) | #53 |
+| **P4.2-B3** subprocess local tools | ✅ closed | ADR-034 | #54 |
+| **P4.2-B4** network local tools | ✅ closed | ADR-035 | #56 |
+| **P4.2-B5** mutation local tools | ✅ closed | ADR-036 | #57 |
+| **P4.3** container syscall/egress sandbox (A1) | ✅ closed | ADR-037 | #58 |
+| **P4.4** plugin registry + lifecycle + admission/signature + namespacing (A2–A5) | ✅ closed | ADR-038 | #59 |
+| **P4.5** auth / identity / multi-user (D1 + D2 + D3) | ✅ closed | ADR-039 | #60 |
+| **P4.6** COUNTDOWN auto-fire-on-timer (C1) | ✅ closed | ADR-040 | #61 |
+| **P4.7-BE** plugin-management endpoints (E-track backend) | ✅ closed | — (realizes ADR-038 D5 + ADR-039 D5/D9; no new ADR) | #62 |
+| **P4.7-FE** GUI advanced/config layers (E1 + E2 + E3) | ✅ closed | — (light frontend track; single-lens R0-A) | #63 |
+
+*In-window UI changes outside the ledger slices:* **#55** gui-restyle (design-system application) + **#64** UI format-hygiene (8 prettier'd CSS files + N3 openapi-codegen lock of the plugin/auth contracts). **F (scale/concurrency hardening) + D4** were ruled out of P4 scope (only the P4.5 per-thread WAL reader-pool fix was pulled in).
 
 **Dependency order:** within **A**, the sandbox (A1/P4.3) is the foundation — registry/lifecycle/signature (A2-A4/P4.4) only make sense once fetched code runs safely, so P4.3 → P4.4. **B1 (turn-loop)** is independent of the tool impls but *multiplies* their value; **B2 (read-only)** is the lowest-risk first tool surface and is exactly what the flagship bug-fix/code-review scenarios need (handoff §14). **D1 (auth)** is foundational for D2/D3. **E (GUI)** binds the API contract + needs the new management endpoints from P4.4/P4.5, so it trails them.
 
