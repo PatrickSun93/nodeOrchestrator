@@ -11,12 +11,16 @@
   padding: 13px 15px;
   border: 1px solid var(--hairline);
   box-shadow: var(--shadow-card);
-  transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
+  transition:
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 }
 
 .card:hover {
   transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(16, 24, 40, 0.05), 0 10px 24px rgba(16, 24, 40, 0.07);
+  box-shadow:
+    0 2px 4px rgba(16, 24, 40, 0.05),
+    0 10px 24px rgba(16, 24, 40, 0.07);
 }
 
 .hard {
@@ -42,7 +46,9 @@
   cursor: pointer;
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
-  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition:
+    background var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 .btn:disabled {

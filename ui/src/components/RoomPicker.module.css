@@ -50,7 +50,9 @@
   font-weight: var(--weight-medium);
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition:
+    background var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 .btn:hover {
