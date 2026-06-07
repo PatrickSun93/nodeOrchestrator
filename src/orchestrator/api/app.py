@@ -125,6 +125,11 @@ class AppContext:
     countdown_auto_fire: CountdownAutoFireConfig = field(
         default_factory=CountdownAutoFireConfig
     )
+    # config_dir: retained so plugin management routes can resolve config/plugins.yaml.
+    # D-A: _plugin_registry is a local in _build_context (not retained on AppContext);
+    # config_dir is not recoverable from sandbox_root (sandbox_root = config_dir.parent).
+    # Default-valued for backward compat with existing test AppContext constructions.
+    config_dir: Path = field(default_factory=Path.cwd)
 
     def get_reader_store(self) -> EventStore:
         """Return the per-thread EventStore for the calling reader_executor worker.
@@ -678,6 +683,7 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         reader_local=_reader_local,
         reader_conns=_reader_conns,
         countdown_auto_fire=countdown_auto_fire_cfg,
+        config_dir=config_dir,
     )
 
 
