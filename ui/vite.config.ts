@@ -8,6 +8,9 @@ export default defineConfig({
     proxy: {
       "/rooms": "http://127.0.0.1:8000",
       "/events": "http://127.0.0.1:8000",
+      "/plugins": "http://127.0.0.1:8000",
+      "/login": "http://127.0.0.1:8000",
+      "/logout": "http://127.0.0.1:8000",
     },
   },
   test: {

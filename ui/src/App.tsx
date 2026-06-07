@@ -1,10 +1,16 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { IconSparkles } from "@tabler/icons-react";
 import { useRoomStore } from "./store.ts";
-import { getEvents, getSnapshot } from "./api/client.ts";
+import { getEvents, getSnapshot, getRoom, set401Handler, probeAuth, logout } from "./api/client.ts";
+import { useAuthStore } from "./authStore.ts";
 import { RoomPicker } from "./components/RoomPicker.tsx";
 import { RoomCreate } from "./components/RoomCreate.tsx";
 import { RoomView } from "./components/RoomView.tsx";
+import { LoginPage } from "./components/LoginPage.tsx";
+import { NavBar } from "./components/NavBar.tsx";
+import { PluginsPage } from "./components/PluginsPage.tsx";
+import { ConfigPage } from "./components/ConfigPage.tsx";
+import type { NavView } from "./components/NavBar.tsx";
 import styles from "./App.module.css";
 
 /**
@@ -22,10 +28,28 @@ export default function App() {
   const roomId = useRoomStore((s) => s.roomId);
   const reset = useRoomStore((s) => s.reset);
   const [leaveSummary, setLeaveSummary] = useState<LeaveSummary | null>(null);
+  const [view, setView] = useState<NavView>("lobby");
+
+  const { status: authStatus, userId } = useAuthStore();
+  const setAuthenticated = useAuthStore((s) => s.setAuthenticated);
+  const setUnauthenticated = useAuthStore((s) => s.setUnauthenticated);
+
+  // Wire global 401 handler — any API call that 401s redirects to login.
+  useEffect(() => {
+    set401Handler(setUnauthenticated);
+    return () => set401Handler(null);
+  }, [setUnauthenticated]);
+
+  // Auth probe on mount: hit a protected endpoint; 401 → login, else → authenticated.
+  useEffect(() => {
+    probeAuth().then((authed) => {
+      if (authed) setAuthenticated("");
+      else setUnauthenticated();
+    });
+  }, [setAuthenticated, setUnauthenticated]);
 
   const handleLeave = useCallback(async () => {
     if (!roomId) return;
-    // Fetch snapshot to generate leave summary
     try {
       const snap = await getSnapshot(roomId);
       setLeaveSummary({
@@ -42,7 +66,6 @@ export default function App() {
   const handleReturn = useCallback(
     async (returnRoomId: string) => {
       if (!leaveSummary) return;
-      // Reload events to calculate catch-up count
       const setRoom = useRoomStore.getState().setRoom;
       try {
         const [events, room] = await Promise.all([
@@ -52,11 +75,10 @@ export default function App() {
         const newEvents = events.length - leaveSummary.eventCountOnLeave;
         setRoom(returnRoomId, room.room_type as Parameters<typeof setRoom>[1]);
         if (newEvents > 0) {
-          // Catch-up notice (pattern 5 return)
           alert(`离开后有 ${newEvents} 条新消息`);
         }
       } catch {
-        const roomData = await import("./api/client.ts").then((m) => m.getRoom(returnRoomId));
+        const roomData = await getRoom(returnRoomId);
         setRoom(returnRoomId, roomData.type);
       }
       setLeaveSummary(null);
@@ -64,6 +86,34 @@ export default function App() {
     [leaveSummary],
   );
 
+  const handleLogout = useCallback(async () => {
+    try {
+      await logout();
+    } catch {
+      // Logout failed silently — clear local auth state regardless.
+    }
+    setUnauthenticated();
+  }, [setUnauthenticated]);
+
+  // Loading state while auth probe runs.
+  if (authStatus === "checking") {
+    return (
+      <div className={styles.app} style={{ justifyContent: "center", alignItems: "center" }}>
+        <div className={styles.lobbyBrand}>
+          <div className={styles.avatar}>
+            <IconSparkles size={18} />
+          </div>
+          <span className={styles.wordmark}>Orchestrator</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus === "unauthenticated") {
+    return <LoginPage />;
+  }
+
+  // Authenticated — room view takes over the full screen.
   if (roomId) {
     return (
       <div className={styles.app}>
@@ -74,35 +124,42 @@ export default function App() {
 
   return (
     <div className={styles.app}>
-      <div className={styles.lobbyWrap}>
-        <div className={styles.lobbyBrand}>
-          <div className={styles.avatar}>
-            <IconSparkles size={18} />
+      <NavBar view={view} onView={setView} userId={userId} onLogout={() => void handleLogout()} />
+
+      {view === "plugins" && <PluginsPage />}
+      {view === "config" && <ConfigPage />}
+      {view === "lobby" && (
+        <div className={styles.lobbyWrap}>
+          <div className={styles.lobbyBrand}>
+            <div className={styles.avatar}>
+              <IconSparkles size={18} />
+            </div>
+            <span className={styles.wordmark}>Orchestrator</span>
           </div>
-          <span className={styles.wordmark}>Orchestrator</span>
-        </div>
-        <p className={styles.lobbyTag}>想清楚一件事，和能挑战你想法的助手一起。</p>
-        {leaveSummary && (
-          <div className={styles.leaveSummary} data-testid="leave-summary">
-            <p>
-              已离开房间。本次会话共 {leaveSummary.eventCountOnLeave} 条消息
-              {leaveSummary.decisionCount > 0 && `，作出了 ${leaveSummary.decisionCount} 个决定`}。
-            </p>
-            <button
-              className={styles.returnBtn}
-              data-testid="return-room-btn"
-              onClick={() => void handleReturn(leaveSummary.roomId)}
-            >
-              返回房间
-            </button>
+          <p className={styles.lobbyTag}>想清楚一件事，和能挑战你想法的助手一起。</p>
+          {leaveSummary && (
+            <div className={styles.leaveSummary} data-testid="leave-summary">
+              <p>
+                已离开房间。本次会话共 {leaveSummary.eventCountOnLeave} 条消息
+                {leaveSummary.decisionCount > 0 &&
+                  `，作出了 ${leaveSummary.decisionCount} 个决定`}。
+              </p>
+              <button
+                className={styles.returnBtn}
+                data-testid="return-room-btn"
+                onClick={() => void handleReturn(leaveSummary.roomId)}
+              >
+                返回房间
+              </button>
+            </div>
+          )}
+          <div className={styles.lobby}>
+            <RoomCreate />
+            <div className={styles.divider}>或者</div>
+            <RoomPicker />
           </div>
-        )}
-        <div className={styles.lobby}>
-          <RoomCreate />
-          <div className={styles.divider}>或者</div>
-          <RoomPicker />
         </div>
-      </div>
+      )}
     </div>
   );
 }
