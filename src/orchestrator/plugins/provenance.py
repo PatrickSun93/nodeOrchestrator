@@ -39,6 +39,8 @@ Unified registry (ADR-038 D1):
 from __future__ import annotations
 
 import dataclasses
+import os
+import tempfile
 from pathlib import Path
 from typing import Literal
 
@@ -364,3 +366,56 @@ def load_plugin_registry(path: Path | None) -> PluginRegistry:
         )
 
     return registry
+
+
+def write_plugin_registry(path: Path, registry: PluginRegistry) -> None:
+    """Write the unified plugin registry to path atomically.
+
+    Serializes registry to the plugins:-list YAML shape, round-trip-validates
+    the serialized form through load_plugin_registry before persisting, then
+    atomically replaces path via temp-in-same-dir + os.replace.
+
+    Raises (ConfigError, yaml.YAMLError) if the round-trip fails; the
+    pre-existing file at path is left byte-unchanged (no torn write).
+
+    ADR-038 D5 / DP3b: the round-trip guard mirrors the boot refuse-all
+    catch set (app.py:506) — any write that would fail the boot parser is
+    rejected before it can produce a REGISTRY_REFUSE_ALL sentinel at boot.
+    """
+    entries: list[dict[str, object]] = []
+    for entry in registry.values():
+        d: dict[str, object] = {"plugin_id": entry.plugin_id, "enabled": entry.enabled}
+        if entry.version is not None:
+            d["version"] = entry.version
+        if entry.source_url is not None:
+            d["source_url"] = entry.source_url
+        if entry.digest is not None:
+            d["digest"] = entry.digest
+        if entry.plugin_subprocess_env:
+            d["plugin_subprocess_env"] = dict(entry.plugin_subprocess_env)
+        entries.append(d)
+
+    serialized = yaml.safe_dump({"plugins": entries}, allow_unicode=True, sort_keys=False)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_str = tempfile.mkstemp(dir=path.parent, prefix=".plugins_tmp_", suffix=".yaml")
+    tmp_path = Path(tmp_str)
+    try:
+        os.write(fd, serialized.encode("utf-8"))
+        os.close(fd)
+        fd = -1
+
+        # Round-trip validate: mirrors boot parse catch set (app.py:506).
+        # Raises (ConfigError, yaml.YAMLError) if the serialized form would
+        # trigger REGISTRY_REFUSE_ALL at boot — reject before persisting.
+        load_plugin_registry(tmp_path)
+
+        os.replace(str(tmp_path), str(path))
+    except BaseException:
+        try:
+            if fd >= 0:
+                os.close(fd)
+        except OSError:
+            pass
+        tmp_path.unlink(missing_ok=True)
+        raise
