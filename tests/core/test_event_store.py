@@ -320,6 +320,29 @@ class TestRoomStorage:
     def test_get_room_unknown_returns_none(self, in_memory_event_store: EventStore) -> None:
         assert in_memory_event_store.get_room(RoomId("room_x")) is None
 
+    def test_list_room_ids_empty(self, in_memory_event_store: EventStore) -> None:
+        assert in_memory_event_store.list_room_ids() == []
+
+    def test_list_room_ids_populated(self, in_memory_event_store: EventStore) -> None:
+        store = in_memory_event_store
+        r1 = Room(id=generate_room_id(), type=RoomType.RESEARCH, state="open")
+        r2 = Room(id=generate_room_id(), type=RoomType.FREE_CHAT, state="open")
+        store.append_room(r1)
+        store.append_room(r2)
+        ids = store.list_room_ids()
+        assert len(ids) == 2
+        assert r1.id in ids
+        assert r2.id in ids
+
+    def test_list_room_ids_read_only(self, in_memory_event_store: EventStore) -> None:
+        store = in_memory_event_store
+        store.append_room(Room(id=generate_room_id(), type=RoomType.RESEARCH, state="open"))
+        ids = store.list_room_ids()
+        assert len(ids) == 1
+        # list_room_ids is a reader — modifying the returned list does not affect the store
+        ids.clear()
+        assert len(store.list_room_ids()) == 1
+
 
 # ---------------------------------------------------------------------------
 # append_in_transaction (ADR-016 D11 / P1.6.5-2)
