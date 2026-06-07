@@ -1,10 +1,10 @@
 ---
 task_id: P4.5
 round: R0-A
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
-  yellow: 1
+  yellow: 0
   green: 7
 verdict_history:
   - round: 1
@@ -27,6 +27,10 @@ verdict_history:
     impl_head: d3faf50
     verdict: needs_architect
     summary: "Senior inscribed the per-thread reader model (d3faf50: ADR-039 line 19/52/137 + ADR-025 D6 annotation) — accurate for routes + WS. BUT tracing the inscription's 'validated on the per-thread WAL reader pool' claim against the impl exposed that RW7's per-thread fix was INCOMPLETE → NEW 🟡 Y8: the HTTP auth middleware (src/orchestrator/api/auth/middleware.py) was NEVER touched by RW7 (its file-set = app.py + conftest + test_concurrency) and still captures the SHARED ctx.reader_store.conn (middleware.py:85) then runs validate_session/validate_token on it via the 4-worker reader_executor (middleware.py:92, :103) — the exact Y6 shared-connection race, in the HIGHEST-traffic auth path (_resolve_principal runs on every protected HTTP request). grep confirms middleware.py:85 is the ONLY remaining shared-conn reader usage in src/. EMPIRICALLY REPRODUCED by me (40 concurrent authed HTTP reqs → 30×404 OK + 6×spurious-401 [valid bearer token rejected] + 4×InterfaceError 'bad parameter or other API misuse' [SQLite concurrent-single-conn corruption]). Fail-closed (reject/500, never grant — NO auth bypass) but a real multi-user correctness/availability bug (P4.5's core path rejects legitimate users under concurrency) + makes d3faf50's ADR-039 line 52/137 inaccurate for the HTTP path (HR#5). Uncaught earlier: round-4 grepped app.py not auth/middleware.py (my miss); the suite is green because no test exercises concurrent HTTP-through-middleware (the concurrency test is WS-replay-only). Architect routed α-RW8: apply RW7's _room_stream pattern to middleware.py — drop the reader_conn=ctx.reader_store.conn capture (line 85), resolve ctx.get_reader_conn() INSIDE each lambda (lines 92, 103) at run-time on the worker thread + add a concurrent-HTTP-auth regression test; then middleware is the last shared-conn site migrated, the inscription becomes accurate → round-6 clean. Y1-Y4 + Y6 (routes/WS) + Y7 (inscription written) still hold; 2 below-bar residuals persist. Verdict needs_architect — not clean until RW8 migrates the middleware + the regression test lands (round-6)."
+  - round: 6
+    impl_head: 7d919d1
+    verdict: clean
+    summary: "RW8 (7d919d1) fixed Y8 → CLEAN (verified by me). middleware._resolve_principal dropped the shared reader_conn=ctx.reader_store.conn capture; both lambdas now call ctx.get_reader_conn() at run-time on the worker thread (middleware.py:92/103) — identical to RW7's _room_stream fix. grep confirms ZERO shared-conn reader usage remains in src/ (only the get_reader_conn fallback + shutdown + an explanatory comment). My round-5 reproduction re-run post-RW8: 3 rounds × 40 concurrent authed HTTP reqs = 120/120 clean 404, ZERO spurious-401, ZERO InterfaceError (round-5 had 6×401 + 4×InterfaceError per 40) → Y8 race ELIMINATED. New regression test TestConcurrentHttpAuth (16 concurrent authed GET, asserts all-200 + no-hang + no-errors) 10/10 PASS — closes the coverage gap that hid Y8. Inscription now ACCURATE: ADR-039 L52/L137 + ADR-025 D6 credit RW7 (routes) + RW8 (middleware), 'both HTTP and WS auth surfaces', no longer overstating (Y7 fully resolved). Gates: ruff 0 / mypy 275 / full pytest exit 0, 0 failed (2221 passed incl. the new test). ALL findings resolved: Y1-Y4 (RW2-RW5), Y5 hang (RW6), Y6 routes/WS race (RW7), Y7 inscription (d3faf50 + RW8 correction), Y8 middleware race (RW8); RW8 touched only middleware.py + test_concurrency.py + 2 ADRs (no Y1-Y4 code). 2 below-bar residuals remain noting-not-blocking (verify_password disabled-branch pre-scrypt; authenticated-/logout positive path untested). Verdict → clean. P4.5 R0-A endgame: human-identity trust boundary fail-closed, constitutional spine byte-frozen, per-thread WAL reader pool complete across HTTP+WS auth, ADRs honest."
 reviewer: architect-partner
 date: 2026-06-06
 reviewed_artifacts:
@@ -40,7 +44,7 @@ contract:
   - docs/decisions/ADR-039-auth-identity-model.md (Accepted 2026-06-06)
   - docs/process/senior-plans/P4.5.md
 against: claude/P4.5-impl @ 7924b36 (8 atomic commits over origin/main)
-gates: ruff ✅ · mypy ✅ (275 files) · pytest — suite GREEN but a COVERAGE GAP hid Y8 (no concurrent-HTTP-auth test; the concurrency test is WS-replay-only). Y8 EMPIRICALLY reproduced by me out-of-suite — 40 concurrent authed reqs → 6 spurious-401 + 4 InterfaceError. verdict needs_architect on Y8 (middleware shared-conn race — see verdict_history R5 + Round 5 §). [history — R4 Y7 inscription; R3 Y6 code-fixed by RW7; R2 Y5 hang fixed by RW6; R1 373✅]
+gates: ruff ✅ (exit 0) · mypy ✅ (275 files) · pytest — R6 FULLY GREEN (full suite exit 0, 0 failed, 2221 passed · my 40-concurrent Y8 repro 120/120 clean-404 · TestConcurrentHttpAuth 10/10). verdict CLEAN — Y8 eliminated, inscription accurate, all findings resolved. [history — R5 Y8 found+empirically-reproduced (RW8 fixed); R4 Y7 inscription; R3 Y6; R2 Y5 hang; R1 4🟡]
 ---
 
 # R0-A on impl — P4.5: the first human-identity trust boundary (ADR-039 D1–D10)
@@ -301,3 +305,42 @@ RW7 migrated the route handlers + WS to per-thread connections but **never touch
 
 - **`verify_password` disabled-user branch** (`users.py:201-202`) returns before scrypt — weaker oracle than the not-found path Y4 fixed; out of Y4's scope.
 - **Authenticated-`/logout` success path** (`_logout` + `revoke_sessions_for_user`) — only the unauthenticated-401 case is tested; the success path is an untested minor coverage gap (mirrors `revoke_session`).
+
+---
+
+## Round 6 — verdict-bump re-review (RC-10): Y8 fixed (RW8), all findings resolved → **`clean`** (P4.5 R0-A endgame)
+
+**Dispatch.** Junior pushed RW8 (`7d919d1`): extended the per-thread reader pool to the HTTP auth middleware + added a concurrent-HTTP-auth regression test + corrected the `d3faf50` inscription wording. Round-6 = final verification. **Route nothing.**
+
+**Verdict: `clean`.** Y8 is eliminated, the inscription is now accurate, every prior finding holds, and the full suite is stably green. The P4.5 human-identity trust boundary is fail-closed, the constitutional spine is byte-frozen, and the per-thread WAL reader pool is complete across both HTTP and WS auth surfaces.
+
+### RW8 (`7d919d1`) verification
+
+| Checkpoint | Verified |
+|---|---|
+| **(1) middleware auth on the per-thread pool; Y8 race gone** | `_resolve_principal` dropped `reader_conn = ctx.reader_store.conn`; both lambdas now call `ctx.get_reader_conn()` at run-time on the worker thread (`middleware.py:92/103`) — identical to RW7's `_room_stream` fix. `grep` confirms **zero** shared-conn reader usage remains in `src/` (only the `get_reader_conn` fallback + shutdown + an explanatory comment). |
+| **(2) the 16-concurrent auth test covers the path** | `TestConcurrentHttpAuth` fires 16 concurrent authed `GET /rooms/{id}/events` (a protected route → `_resolve_principal` → `validate_token` on the pool) and asserts **all-200 + no-hang + no-errors** — it fails pre-RW8 (shared-conn race), passes post-RW8. Closes the coverage gap that hid Y8. |
+| **(3) inscription now accurate** | ADR-039 L52/L137 + the ADR-025 D6 note now credit **RW7 (routes) + RW8 (middleware)** and state the per-thread pool covers "both HTTP and WS auth surfaces" — no longer overstating (Y7 fully resolved). |
+
+**My independent re-check (the round-5 reproduction, re-run post-RW8):** 3 rounds × 40 concurrent authed HTTP requests = **120/120 clean `404`, zero spurious-`401`, zero `InterfaceError`** (round-5 showed 6×401 + 4×InterfaceError per 40). The race is gone.
+
+**Gates (re-run by me, round 6):** ruff exit 0 · mypy "no issues, 275 files" · **full pytest exit 0, 0 failed (2221 passed**, incl. the new concurrent-auth test) · `TestConcurrentHttpAuth` 10/10.
+
+### Finding ledger — all resolved
+
+| Finding | Resolved by |
+|---|---|
+| Y1-impl (`/logout` public + `/health*` prefix; unauth writer-revoke) | RW3 `adf7053` |
+| Y2 (`_post_intent` `else "user"` fail-open) | RW4 `f114522` |
+| Y3 (cookie-path + WS-reject-before-accept coverage) | RW2 `1cf34f9` |
+| Y4 (verify-timing / docstrings / D10 residuals) | RW5 `5add58b` |
+| Y5 (CI-deadlock concurrency hang) | RW6 `bb8f47a` |
+| Y6 (prod reader shared-conn race — routes/WS) | RW7 `d2b5566` |
+| Y7 (ADR reader-model inscription) | `d3faf50` + RW8 correction |
+| Y8 (HTTP auth middleware shared-conn race) | RW8 `7d919d1` |
+
+**Below-bar residuals (carried forward as noting-not-blocking; not P4.5 blockers):**
+- `verify_password` disabled-user branch returns before scrypt (`users.py:201-202`) — weaker oracle than the not-found path Y4 fixed.
+- Authenticated-`/logout` success path / `revoke_sessions_for_user` has no positive test (the protected-route 401 is tested).
+
+**R0-A lens: `clean`.** Ready for architect synthesis with the senior plan-vs-impl + R0-B lenses.
