@@ -110,6 +110,8 @@ shift, not a pure rename**. The new enum has exactly three values:
 - `COUNTDOWN_CONFIRM` when `threshold_confirm <= score < threshold_auto`
 - `HARD_CONFIRM` when `score < threshold_confirm`
 
+**[Annotated ADR-040, Accepted 2026-06-07 (P4.6): the COUNTDOWN tier's *consequence* now includes an optional server-side timer (the durable `expires_at` field + in-process sweeper). The tier-decision logic (`decide_tier`) is byte-frozen — COUNTDOWN is still the output of the reversibility scoring, not a timer decision. The timer is a *scheduler over an already-gated COUNTDOWN call*; it actuates, never decides. See ADR-040 for the full design. HARD_CONFIRM never acquires a timer (ADR-040 D2/4a).]**
+
 The old `FORBIDDEN` value is gone — refusal is the Hard Guards
 layer's job, not the scorer's. `APPROVAL_REQUIRED` and
 `NOTIFY_AND_EXECUTE` collapse into the new tier shape. Future
