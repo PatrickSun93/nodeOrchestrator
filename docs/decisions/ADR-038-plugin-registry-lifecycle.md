@@ -96,18 +96,20 @@ Cross-plugin name collisions relax from **fail-closed-refuse** to **deterministi
 
 ### D5 — The P4.7 management-endpoint forward-contract (pinned here, built in P4.7) + residual set
 
-**Management-endpoint contract (backend-authoritative, ADR-026 HR#2 — pinned, NOT implemented in P4.4):** the GUI-facing surface E2 (plugin-management UI, roadmap §E2) binds in P4.7 is a **read + intent** contract over the registry; every write **edits `config/plugins.yaml`** and takes effect **at next restart** (boot-only, D2):
+**Management-endpoint contract (backend-authoritative, ADR-026 HR#2 — pinned in P4.4; backend endpoints built in P4.7-BE 2026-06-07):** the GUI-facing surface E2 (plugin-management UI, roadmap §E2) binds in P4.7 is a **read + intent** contract over the registry; every write **edits `config/plugins.yaml`** and takes effect **at next restart** (boot-only, D2):
 
 | Endpoint | Semantics |
 |---|---|
-| `GET /plugins` | List declared plugins + resolved state (id, provenance [derived], enabled, version, last-load result). Read-only. |
+| `GET /plugins` | List declared plugins + configured state (id, provenance [derived], enabled, version, fetched-indicator). Read-only. **Note: `last-load result` column is deferred as a named residual — see P4.7-BE annotation below.** |
 | `POST /plugins/{id}/enable` · `/disable` | Set `enabled` in the registry. Effect next restart. |
-| `POST /plugins/{id}/admit` | Author/replace a fetched entry (source_url + digest + version). Effect next restart. |
-| `DELETE /plugins/{id}` | Remove the entry (and/or signal dir removal). Effect next restart. |
+| `POST /plugins/{id}/admit` | Author a fetched entry (source_url + digest + version). Effect next restart. Author-entry-only (DP1-i); no `fetch_plugin_bundle` call — fetch is out-of-band. |
+| `DELETE /plugins/{id}` | Remove the entry. Effect next restart. |
 
 The config UI **sends intent, never decides** (ADR-026 HR#2). No UI and no endpoint code ship in P4.4 (frontend track).
 
 **[Annotated P4.5 → ADR-039, Accepted 2026-06-06: the authz dimension of this forward-contract is now pinned. These management endpoints are **operator actions requiring an authenticated principal** (ADR-039 D9 / D5): any authenticated user under DP3a (all-or-nothing operator); the D5 checkpoint seam #2 is where a role check (DP3b) would later gate. No endpoint code is built in P4.5 — P4.7 builds against an authz-aware contract rather than inheriting an authz-blind one (inscribe-before-producer). The no-RBAC residual (`RB-AUTHZ`) is inscribed in ADR-039 D10.]**
+
+**[Annotated P4.7-BE 2026-06-07: backend plugin-management endpoints built. DP1(a) boot-only realized: all five endpoints (GET /plugins, POST /plugins/{id}/enable·disable·admit, DELETE /plugins/{id}) mutate `config/plugins.yaml` and respond `{"effect":"next_restart"}` — zero live AppContext mutation (ADR-038 D2 verbatim). DP1-i admit=author-entry-only realized: `POST /plugins/{id}/admit` authors the registry entry; no `fetch_plugin_bundle` call; the digest-before-extract gauntlet (ADR-031 D5) is unchanged and mandatory at the separate out-of-band fetch step. The write path is fail-closed: `write_plugin_registry` round-trip-validates the serialized form through `load_plugin_registry` before persisting (mirrors the boot refuse-all catch set `(ConfigError, yaml.YAMLError)`, app.py:506) — any write whose result would fail the boot parser is rejected before it can produce a `REGISTRY_REFUSE_ALL` sentinel. Atomic temp-in-same-dir + `os.replace` prevents torn writes. ADR-039 D5 seam #2 code first lands here (planted on enable/disable/DELETE); `POST /plugins/{id}/admit` gets its own finer seam #2-admit comment (admit introduces new fetched code into the trust boundary — strictly higher-trust than enable/disable toggling already-vetted code; a future DP3b may gate who-may-admit stricter). **Y1=(a) realized-vs-pinned honesty (architect-ratified, R0-A-on-plan):** the GET column `last-load result` (this table, original) is **deferred as a named residual** (see residual set below). Faithfully reporting boot load outcome requires retaining a per-plugin boot load-report out of `load_plugins` (`loader.py:61` `PluginLoadResult` carries only merged contributions) — modifying the byte-frozen spine Lens B certifies — disproportionate to a single GUI display column. GET returns: `plugin_id`, `enabled`, `version`, `provenance` (derived from filesystem roots, never a registry field), `provenance_kind` (for declared-not-yet-on-disk entries), `fetched` (source_url+digest present). `plugin_subprocess_env` values not echoed. Provenance fallback for admitted-but-not-yet-fetched entries (G3 absorb): reports `declared-not-yet-on-disk` with kind inferred from fetched-indicator.]**
 
 **Residuals P4.4 leaves (inscribe, don't soften — roadmap §10):**
 
@@ -116,6 +118,16 @@ The config UI **sends intent, never decides** (ADR-026 HR#2). No UI and no endpo
 - **Runtime-store deferred** — the registry is a config file (D1); a mutable backend-owned store (the GUI-driven live-management substrate) is the additive step, not built.
 - **Persistent sandboxed-plugin process deferred** (DP4b forward-watch) — per-call stays (ADR-037 D3, unchanged); a long-lived warm in-sandbox process (e.g. an in-sandbox stdio MCP server) would reverse/extend ADR-037 D3 with its own cross-call state-leak surface — **not** in P4.4.
 - **Registry only as fail-closed as its parser** (D1/D2) — a malformed/over-broad entry refuses, never admits; the malformed-registry→refuse-all posture is the registry-granularity ADR-031-D4 discipline.
+
+**Residuals P4.7-BE leaves (inscribed at impl 2026-06-07):**
+
+- **`RB-AUTHZ`** (ADR-039 D10) — endpoints are authenticated⇒allowed; any authenticated (or compromised) account can admit/enable/disable any plugin (the highest-trust actuator). Persists until DP3b (a role model at seam #2 / the admit-finer-seam).
+- **`RB-ADMIT`** (D3, carried) — admit-via-endpoint inherits no-author-identity / no-revocation / no-update-trust; the endpoint authors operator intent and does not change the integrity floor.
+- **Boot-only / no-live-management** (D2, DP1a) — writes show intent that lands at next restart; GET renders configured intent, not live running state. Running AppContext is not mutated.
+- **`last-load-result` deferred (architect-ratified Y1=(a), R0-A-on-plan)** — GET omits the boot-outcome column; returns four columns + fetched-indicator instead of the pinned five. Reason: faithfully reporting the boot load outcome requires a new per-plugin boot load-report retained on AppContext, which means modifying `load_plugins` — the byte-frozen spine Lens B certifies — disproportionate to a single GUI display column. `load_plugins` stays byte-frozen.
+- **Config-mgmt E3 deferred** (scope-A) — MCP/agent/model/autonomy config endpoints have no pinned contract; a follow-on BE slice + ADR-041 if ever.
+- **Rate-limiting** on the POST/DELETE /plugins/* write chokepoints — deferred named residual (ADR-039 D10; post-auth per-identity limiter applies when built).
+- **admit-author-only → refused-at-boot-until-fetched** (DP1-i) — an admitted entry whose bytes are not yet on disk is refused at next boot until the separate out-of-band fetch runs.
 
 ---
 
