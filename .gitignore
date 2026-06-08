@@ -58,3 +58,15 @@ Thumbs.db
 # Local infra scripts (tmux launcher, notify-reviewers, etc. — contain
 # hardcoded paths + ~/.deepseek-env source; not portable, per-machine)
 scripts/
+
+# Root-level playwright install (used by docs/screenshot.mjs)
+node_modules/
+package-lock.json
+package.json
+
+# Config files with credentials / local paths (only *.example are tracked)
+config/llm_providers.yaml
+config/llm_models.yaml
+config/llm_override.yaml
+config/email.yaml
+config/web_search.yaml
