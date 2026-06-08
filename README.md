@@ -1,102 +1,129 @@
-# Orchestrator 项目 — 交接文档 v2
+# Orchestrator
 
-**v2 改动**:加入 P0 实施成果、LLM 三层架构、P1 重新拆分、ADR 索引。
+**AI research and decision assistant — honest interlocutor, not obedient executor.**
 
-这个目录包含两份文档,**一起读**:
+Orchestrator is a multi-agent conversation platform for independent developers who want to think things through rather than just get answers. The agents push back, ask questions, and surface disagreement — they won't make decisions for you, but they'll sharpen yours.
 
-## 📋 handoff.md(主要文档)
+The assistant rooms are backed by a multi-agent orchestrator, an append-only event stream, an autonomy gate (AUTO / COUNTDOWN / HARD-confirm), a sandboxed plugin system, and multi-user authentication.
 
-**用途**:给 Claude Code 的工作交接文档。结构化、可执行。
+---
 
-**v2 新增/修订内容**:
-- 第 3.4 节:LLM 三层解耦原则
-- 第 4.4 节:Agent 数据模型加 `llm_config` 字段
-- 第 5.5 节(完全新增):LLM 层三层配置架构 — 详细设计
-- 第 7 节:P0 状态更新,P1 重新拆分(从 5 个 PR 改为 6 个,加入 P1.0 垂直切片)
-- 第 8 节:反 pattern 加入 LLM 层专项
-- 第 10 节:项目结构加入 `src/orchestrator/llm/` 目录
-- 第 12 节(新增):用户场景描述,默认配置基于 Claude Max + DeepSeek + Ollama/oMLX
-- 第 13 节:工作建议加 LLM 调用纪律 + 配置纪律
-- 第 15 节(新增):ADR 索引
+## Features
 
-**Claude Code 工作时主要参考这个**。
+- **Multi-agent rooms** — each room runs a configurable set of agents (facilitator, skeptic, investigator, planner, …) that respond to user messages and each other via an event stream
+- **Autonomy gate** — every tool call is classified by risk score; low-risk ops fire automatically (AUTO), medium ops start a countdown that you can cancel (COUNTDOWN), high-risk ops require explicit confirmation (HARD)
+- **Event-sourced history** — all room activity is an append-only event log; snapshots are derived, never authoritative
+- **Sandboxed plugins** — plugins run under a syscall allowlist (seccomp / landlock); the plugin registry and lifecycle endpoints are managed through the GUI or REST API
+- **Three-layer LLM config** — providers / models / per-agent config are independent; switch from DeepSeek to a local Ollama without touching agent definitions
+- **MCP support** — connect external tools (filesystem, database, remote services) via the Model Context Protocol
+- **Multi-user auth** — session-cookie auth, fail-closed (no unauthenticated access), per-thread WAL reader pool
+- **GUI** — React frontend with chat view, plugin management (E2), and config overview (E3)
 
-## 📚 chat-history.md(配套文档)
+---
 
-**用途**:记录设计推理过程。理解每个决策"为什么"是这样。
+## Installation
 
-**v2 新增章节**:
-- 第 16 节:P0 实施过程(接口冻结 → 实现 → ADR 三段式工作模式 + 6 个选择的 review)
-- 第 17 节:LLM 层三层配置架构(三层解耦的来源、Router 约束求解、LLMPurpose 设计)
-- 第 18 节:Model 选择策略(Claude Code 模型清单、Effort level、默认分配推理、Fail-fast 校验)
-- 第 19 节:P1 重新拆分推理(垂直切片优先、LLM 层提前、E2E 每 PR 都做)
-- 第 20 节:Claude Code 协作中的 dissent 模式(meta 教训)
+### Requirements
 
-**Claude Code 在 handoff.md 不清晰时查这个**。
+- Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/)
+- Node.js ≥ 24 (frontend only)
 
-## 阅读顺序建议
+### Backend
 
-**第一次阅读**(全面理解项目):
+```bash
+# Install Python deps (api + mcp extras are required to run the server)
+uv sync --extra api --extra mcp
 
-1. 读 handoff.md 第 1-3 节(项目是什么、12 条原则、核心架构原则)
-2. 跳到 chat-history.md 第 8 节(决策路径代码化原则——最重要的工程原则)
-3. 回到 handoff.md 第 4-5 节(数据模型、必须实现的组件)
-4. 读 chat-history.md 第 17-18 节(LLM 层设计推理)
-5. 读 handoff.md 剩余部分
-
-**深入设计推理**(理解为什么这么设计):
-
-1. 读 handoff.md 第 5.5 节(LLM 层完整设计)
-2. 读 chat-history.md 第 17-18 节(为什么三层、为什么这么选 model)
-3. 读 chat-history.md 第 19 节(P1 拆分推理)
-4. 读 chat-history.md 第 16 节(P0 经验,接口冻结的工作模式)
-
-## 工作流建议
-
-```
-开始一个新模块
-  ↓
-查 handoff.md 对应章节(知道做什么)
-  ↓
-查 chat-history.md 对应章节(知道为什么)
-  ↓
-查 docs/decisions/ADR-*.md(查关键决策的细节)
-  ↓
-有歧义 → 问用户,不要假设
-  ↓
-开写代码
-  ↓
-写完 → 检查 12 条原则 + 反 pattern
-  ↓
-重大决策 → 写新 ADR
+# Copy and fill in config templates
+for f in config/*.example; do cp "$f" "${f%.example}"; done
+# Now edit config/llm_providers.yaml and config/llm_models.yaml
+# to point at your LLM provider(s). See the comments in each file.
 ```
 
-## 重要提醒
+Config files that need your credentials / endpoints:
 
-⚠️ **chat-history.md 是讨论过程,不是需求文档**
+| File | Purpose |
+|---|---|
+| `config/llm_providers.yaml` | LLM provider connections (DeepSeek, Ollama, Claude Code CLI, …) |
+| `config/llm_models.yaml` | Model profiles (provider, capabilities, context window) |
+| `config/llm_override.yaml` | Optional global model override for all agents |
+| `config/email.yaml` | Optional email tool |
+| `config/web_search.yaml` | Optional web search tool |
 
-里面有的方向被推翻了(比如最早设计让 agent 自评发言权,后来被否决)。**最终结论以 handoff.md 为准**,history 是上下文。
+### Frontend
 
-⚠️ **设计有大量 deliberate trade-offs**
+```bash
+cd ui && npm install
+```
 
-不要"优化"看起来奇怪的设计——那些设计大概率是有意为之。不确定时问用户。
+---
 
-⚠️ **核心原则:让 AI 做更少,让代码做更多**
+## Running
 
-看到任何"让 LLM 判断 X"的冲动,先想能不能用代码做。
+### 1. Create the first user
 
-⚠️ **借用外部原则前确认场景**
+Auth is fail-closed — the server won't start a remote bind without at least one user, and there is no unauthenticated signup endpoint. Bootstrap the first account:
 
-P0 实施过程中发现:Claude Code 借用的"读取宽容、写入严格"原则(网络协议)、"`IF NOT EXISTS` 全用"(简单粗暴幂等)在具体场景下都是错的。**听起来对但场景不对的论证最危险**——比明显错误更难发现。
+```bash
+# Interactive (prompts for password):
+uv run python -m orchestrator.api.admin create-user <your-username>
 
-⚠️ **每个 PR 主动暴露 3-5 个"值得 challenge"的选择**
+# Non-interactive (e.g. in a script):
+ORCHESTRATOR_ADMIN_PASSWORD=<password> uv run python -m orchestrator.api.admin create-user <your-username>
+```
 
-不是"我做完了你 review",而是"我做完了,这些选择我倾向 A 但有 B C D 可能,你看看"。这是 honest interlocutor 在协作层的应用。
+### 2. Start the backend
 
-## 项目状态(2026 年 6 月)
+```bash
+uv run python -m orchestrator.api --config config/ --db data/rooms.db
+# Binds to 127.0.0.1:8000 by default.
+# Use --host / --port to change. Non-loopback binds require TLS at the proxy layer.
+```
 
-**P0–P4 全部完成(2026-06-07)。** 产品已走完 P1(地基:event store / LLM 三层 / 自治度 gate / skills / 多 agent / 状态机 / 跨房间记忆)、P2(跨房间记忆 + 用户偏好 + re-entry + 平台演化)、P3(完整产品:facilitator / API / GUI / MCP / 插件 / confirm-then-execute / 远程)、P4(完整化:turn-loop / 完整本地工具面 / syscall 沙箱 / 插件 registry+lifecycle / auth+multi-user / auto-fire / GUI 高级层)。阶段详情见 `handoff.md` §7 + `docs/process/P3-roadmap.md` / `docs/process/P4-roadmap.md`。
+### 3. Start the frontend
 
-**ADR 索引**:ADR-001..040 全部 Accepted(无 ADR-004 — 折入 ADR-003;ADR-008 为 dev-harness 状态机)。权威索引见 `handoff.md` §15;原文在 `docs/decisions/`。
+```bash
+cd ui && npm run dev
+# Vite dev server on http://localhost:5173
+# Proxies /rooms /events /plugins /login /logout → :8000
+```
 
-每次重大设计决策做新 ADR。后续的人(包括未来的 Claude Code 自己)能从 ADR 看到决策为什么这样做。
+Open `http://localhost:5173`, log in, create a room, start thinking.
+
+---
+
+## Screenshots
+
+### Login
+
+![Login page](docs/images/01-login.png)
+
+### Lobby — create or join a room
+
+![Lobby](docs/images/02-lobby.png)
+
+### Plugin management
+
+![Plugin management](docs/images/03-plugins.png)
+
+### Config overview
+
+![Config overview](docs/images/04-config.png)
+
+---
+
+## Design & dev docs
+
+- [`handoff.md`](handoff.md) — architecture, design principles, ADR index
+- [`docs/architecture/`](docs/architecture/) — ADR documents (ADR-001..040)
+- [`docs/decisions/`](docs/decisions/) — full ADR text
+
+---
+
+## Re-generating screenshots
+
+```bash
+# Prerequisites: backend + frontend running, a "demo" user created
+LD_LIBRARY_PATH=/tmp node docs/screenshot.mjs
+# (LD_LIBRARY_PATH workaround is only needed on systems missing libasound2)
+```
