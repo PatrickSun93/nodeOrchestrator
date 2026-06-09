@@ -1,6 +1,6 @@
 # ADR-041: Deterministic staged analysis pipeline (P5.1a primitive)
 
-**Status:** Proposed — 2026-06-08
+**Status:** Accepted (architect, 2026-06-09) — plan-stage dual-lens cleared (R0-A-on-plan 0🔴3🟡 + R0-B-on-plan cross-family clean/4🟡-precision); architect routed §5 fork = D2 (analyze-branch duplicates ~30 lines, interactive `_write_and_turn` byte-untouched), F1 = T2 definition-persistence + T5 manual-trigger in-scope for P5.1a, F3 = owner-only `/pipelines*` access, and F2/N1 + R0-B Y1–Y4 absorbed (α). RC-3: senior did **not** self-accept. Originally Proposed 2026-06-08.
 **Scope:** The deterministic, staged, headless **pipeline primitive** introduced by
 P5.1a: the `fetch → fan-out(analyze×N) → reduce` stage-runner, its execution model
 over the existing agent-turn substrate, the multi-source read abstraction
