@@ -335,6 +335,47 @@ class _PipelineRunResponse(BaseModel):
     error: str | None
 
 
+# ---------------------------------------------------------------------------
+# Schedule management request/response models (ADR-042 D9 / P5.1b-5)
+# ---------------------------------------------------------------------------
+
+
+class _ScheduleCreateRequest(BaseModel):
+    """Request body for POST /pipelines/{id}/schedules.
+
+    extra=forbid: forge guard.  owner_user_id is NOT accepted from the body —
+    it is derived server-side from request.state.principal (ADR-039 D1).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: str
+    expr: str
+
+
+class _ScheduleResponse(BaseModel):
+    """Response for a single schedule record."""
+
+    model_config = ConfigDict(frozen=True)
+
+    schedule_id: str
+    pipeline_id: str
+    owner_user_id: str
+    kind: str
+    expr: str
+    next_fire: int
+    enabled: bool
+    created_at: int
+
+
+class _ScheduleEnableRequest(BaseModel):
+    """Request body for PATCH /pipelines/{id}/schedules/{sid}."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool
+
+
 def _writer_approve_helper(
     ctx: AppContext,
     rid: RoomId,
@@ -1907,6 +1948,208 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             )
 
         return await loop.run_in_executor(ctx.writer_executor, _run_on_writer)
+
+    # ---------------------------------------------------------------------------
+    # Schedule management endpoints (ADR-042 D9 / P5.1b-5)
+    # All routes: owner-private (owner from parent pipeline), fail-closed auth.
+    # principal derived server-side — never from the body (ADR-039 D1).
+    # ---------------------------------------------------------------------------
+
+    @app.post(
+        "/pipelines/{pipeline_id}/schedules",
+        response_model=_ScheduleResponse,
+        status_code=201,
+    )
+    async def _create_schedule(
+        pipeline_id: str, body: _ScheduleCreateRequest, request: Request
+    ) -> _ScheduleResponse:
+        """Create a schedule for a pipeline (owner-private; 403 for non-owner).
+
+        ``kind=cron`` is rejected with 422 (deferred — ADR-042 D3 Y1 routing).
+        """
+        from orchestrator.pipeline.schedule import (
+            compute_next_fire,
+            validate_schedule_expr,
+        )
+        from orchestrator.pipeline.store import (
+            create_schedule,
+            get_pipeline,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        # Validate expr + kind before touching the DB; 422 on invalid or deferred.
+        try:
+            validate_schedule_expr(body.kind, body.expr)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        # Owner check on reader.
+        pipeline = await loop.run_in_executor(
+            ctx.reader_executor,
+            lambda: get_pipeline(ctx.get_reader_conn(), pipeline_id),
+        )
+        if pipeline is None:
+            raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
+        if pipeline.owner_user_id != _principal.user_id:
+            raise HTTPException(status_code=403, detail="access denied: not the owner")
+
+        def _write() -> _ScheduleResponse:
+            initial_next_fire = compute_next_fire(body.kind, body.expr, now_ms())
+            record = create_schedule(
+                ctx.writer_store.conn,
+                pipeline_id=pipeline_id,
+                owner_user_id=_principal.user_id,
+                kind=body.kind,
+                expr=body.expr,
+                next_fire=initial_next_fire,
+            )
+            return _ScheduleResponse(
+                schedule_id=record.schedule_id,
+                pipeline_id=record.pipeline_id,
+                owner_user_id=record.owner_user_id,
+                kind=record.kind,
+                expr=record.expr,
+                next_fire=record.next_fire,
+                enabled=record.enabled,
+                created_at=record.created_at,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.get(
+        "/pipelines/{pipeline_id}/schedules",
+        response_model=list[_ScheduleResponse],
+    )
+    async def _list_schedules(
+        pipeline_id: str, request: Request
+    ) -> list[_ScheduleResponse]:
+        """List schedules for a pipeline (owner-private)."""
+        from orchestrator.pipeline.store import get_pipeline, list_schedules_for_pipeline
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _read() -> list[_ScheduleResponse]:
+            pipeline = get_pipeline(ctx.get_reader_conn(), pipeline_id)
+            if pipeline is None:
+                return []
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            records = list_schedules_for_pipeline(ctx.get_reader_conn(), pipeline_id)
+            return [
+                _ScheduleResponse(
+                    schedule_id=r.schedule_id,
+                    pipeline_id=r.pipeline_id,
+                    owner_user_id=r.owner_user_id,
+                    kind=r.kind,
+                    expr=r.expr,
+                    next_fire=r.next_fire,
+                    enabled=r.enabled,
+                    created_at=r.created_at,
+                )
+                for r in records
+            ]
+
+        return await loop.run_in_executor(ctx.reader_executor, _read)
+
+    @app.delete(
+        "/pipelines/{pipeline_id}/schedules/{schedule_id}",
+        status_code=204,
+    )
+    async def _delete_schedule(
+        pipeline_id: str, schedule_id: str, request: Request
+    ) -> None:
+        """Delete a schedule (owner-private)."""
+        from orchestrator.pipeline.store import delete_schedule, get_pipeline, get_schedule
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> None:
+            pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
+            if pipeline is None:
+                raise HTTPException(
+                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
+                )
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            sched = get_schedule(ctx.writer_store.conn, schedule_id)
+            if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            delete_schedule(ctx.writer_store.conn, schedule_id)
+
+        await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.patch(
+        "/pipelines/{pipeline_id}/schedules/{schedule_id}",
+        response_model=_ScheduleResponse,
+    )
+    async def _patch_schedule(
+        pipeline_id: str,
+        schedule_id: str,
+        body: _ScheduleEnableRequest,
+        request: Request,
+    ) -> _ScheduleResponse:
+        """Enable or disable a schedule (owner-private).
+
+        On re-enable, recomputes next_fire from now so a long-disabled schedule
+        does not fire immediately.
+        """
+        from orchestrator.pipeline.schedule import compute_next_fire
+        from orchestrator.pipeline.store import (
+            get_pipeline,
+            get_schedule,
+            set_schedule_enabled,
+            update_schedule_next_fire,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _ScheduleResponse:
+            pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
+            if pipeline is None:
+                raise HTTPException(
+                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
+                )
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            sched = get_schedule(ctx.writer_store.conn, schedule_id)
+            if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            set_schedule_enabled(ctx.writer_store.conn, schedule_id, body.enabled)
+            # On re-enable: recompute next_fire from now (avoid immediate stale fire).
+            if body.enabled:
+                new_next_fire = compute_next_fire(sched.kind, sched.expr, now_ms())
+                update_schedule_next_fire(ctx.writer_store.conn, schedule_id, new_next_fire)
+            updated = get_schedule(ctx.writer_store.conn, schedule_id)
+            assert updated is not None
+            return _ScheduleResponse(
+                schedule_id=updated.schedule_id,
+                pipeline_id=updated.pipeline_id,
+                owner_user_id=updated.owner_user_id,
+                kind=updated.kind,
+                expr=updated.expr,
+                next_fire=updated.next_fire,
+                enabled=updated.enabled,
+                created_at=updated.created_at,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
 
 
 def _configure(app: FastAPI) -> None:
