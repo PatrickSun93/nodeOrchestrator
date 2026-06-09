@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from orchestrator.agents.dispatch import LLMRouterProtocol
+from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.core.event import EventType, RoomId
 from orchestrator.core.event_store import EventStore
 from orchestrator.llm.purposes import LLMPurpose
@@ -30,6 +31,7 @@ from orchestrator.pipeline.runner import (
 )
 from orchestrator.pipeline.schema import PipelineDefinition
 from orchestrator.sources.schema import Source
+from orchestrator.tools.local import build_local_tool_registry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -451,24 +453,32 @@ def test_run_pipeline_anchor_event_embeds_run_id(tmp_path: Path) -> None:
 
 
 def test_analyze_branch_multi_pass_redispatch(tmp_path: Path) -> None:
-    """F-deadloop: re-dispatch loop executes pass 1 when pass 0 emits a tool call+result."""
+    """F-deadloop: re-dispatch loop executes pass 1 when pass 0 emits a real TOOL_CALL+TOOL_RESULT.
+
+    Uses get_current_time (reversibility=10 >= threshold_auto=8) → AUTO_EXECUTE tier →
+    process_tool_calls emits a genuine TOOL_CALL event; execute_pending_tool_calls appends
+    TOOL_RESULT.  The re-dispatch loop must find both and call the router a second time.
+
+    Vacuity guard: revert runner.py line `prev_pass_cursor = prev_cursor` to
+    `prev_pass_cursor = len(deps.writer_store.get_room_events(room_id))` and this test
+    MUST fail (router gets only 2 calls instead of 3).  Restore the fix → PASS.
+    """
     from orchestrator.llm.types import ToolCall
 
     store = _make_store()
     (tmp_path / "d.txt").write_text("data", encoding="utf-8")
 
     call_count = 0
-    re_dispatch_executed = False
 
     def _side_effect(request: Any) -> LLMResponse:
-        nonlocal call_count, re_dispatch_executed
+        nonlocal call_count
         call_count += 1
         if call_count == 1:
-            # Pass 0: return a tool call so the re-dispatch loop has something to see.
+            # Pass 0: AUTO tool call → TOOL_CALL + TOOL_RESULT events written to store
             return LLMResponse(
                 request_id=generate_request_id(),
                 content="calling tool",
-                tool_calls=[ToolCall(id="tc1", name="read_file", arguments={"path": "d.txt"})],
+                tool_calls=[ToolCall(id="tc1", name="get_current_time", arguments={})],
                 model_id_requested=ModelId("m1"),
                 model_id_used=ModelId("m1"),
                 provider_id_used=ProviderId("p1"),
@@ -476,23 +486,37 @@ def test_analyze_branch_multi_pass_redispatch(tmp_path: Path) -> None:
                 latency_ms=50,
                 finish_reason="tool_use",
             )
-        if call_count == 2:
-            # Pass 1 re-dispatch — this should be reached with the F-deadloop fix.
-            re_dispatch_executed = True
-            return _llm_response("re-dispatch result")
-        # reduce call
-        return _llm_response("summary")
+        # Call 2: re-dispatch pass 1 (reached only if re-dispatch loop is live)
+        # Call 3: reduce
+        return _llm_response("result")
 
     router = MagicMock(spec=LLMRouterProtocol)
     router.call.side_effect = _side_effect
-    deps = _make_deps(store, router, tmp_path)
+
+    # Real AUTO tool: reversibility=10 >= threshold_auto=8 → process_tool_calls emits
+    # TOOL_CALL event so the re-dispatch loop has real events to detect.
+    deps = PipelineDeps(
+        writer_store=store,
+        llm_router=router,
+        tools={"get_current_time": ToolMeta(reversibility=10)},
+        mcp_sessions={},
+        local_tools=build_local_tool_registry(tmp_path),
+        sandbox_root=tmp_path,
+        bus=None,
+    )
 
     defn = PipelineDefinition(
         sources=[Source(kind="file", locator="d.txt")],
         analysis_prompts=["Analyze"],
     )
     run_pipeline("p", defn, deps=deps, owner_user_id="alice")
-    assert re_dispatch_executed, "re-dispatch loop (pass 1) was never entered — dead loop bug"
+
+    # analyze(pass-0) + re-dispatch(pass-1) + reduce = 3 calls
+    # With the dead-loop bug: loop breaks immediately → only 2 calls (analyze + reduce)
+    assert router.call.call_count == 3, (
+        f"Expected 3 router calls (analyze + re-dispatch + reduce), "
+        f"got {router.call.call_count}; re-dispatch loop may be dead"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ from orchestrator.api.app import AppContext, _make_test_app
 from orchestrator.api.auth.session import create_token
 from orchestrator.api.auth.users import create_user, init_auth_schema
 from orchestrator.api.pubsub import RoomEventBus
+from orchestrator.core.event import RoomId
 from orchestrator.core.event_store import EventStore
 from orchestrator.llm.types import (
     LLMResponse,
@@ -323,3 +324,27 @@ def test_run_pipeline_unauthenticated(
     with TestClient(pipeline_app, raise_server_exceptions=True) as unauth:
         resp = unauth.post(f"/pipelines/{pipeline_id}/run")
     assert resp.status_code in (401, 403)
+
+
+def test_run_pipeline_run_id_matches_anchor_event(
+    pipeline_app: FastAPI, pipeline_ctx: AppContext
+) -> None:
+    """N1: run_id in API response equals run_id embedded in the room run-anchor event."""
+    with _client_for(pipeline_app, pipeline_ctx, _USER_A) as client:
+        create_resp = client.post("/pipelines", json=_VALID_BODY)
+        assert create_resp.status_code == 201
+        pipeline_id = create_resp.json()["pipeline_id"]
+
+        run_resp = client.post(f"/pipelines/{pipeline_id}/run")
+
+    assert run_resp.status_code == 200
+    data = run_resp.json()
+    run_id: str = data["run_id"]
+    room_id: str = data["room_id"]
+
+    events = pipeline_ctx.writer_store.get_room_events(RoomId(room_id))
+    assert events, "pipeline run room has no events"
+    anchor = events[0]  # run anchor is always the first event
+    assert run_id in anchor.content, (
+        f"run_id {run_id!r} not found in anchor event content {anchor.content!r}"
+    )
