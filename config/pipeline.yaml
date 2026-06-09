@@ -1,0 +1,7 @@
+# Pipeline scheduler configuration (ADR-042 D7).
+# Default OFF (fail-closed) — set enabled: true to start the recurring sweeper.
+# Absent file or absent section → disabled (same as below).
+# Malformed section → server refuses to start (refuse-start posture).
+pipeline_scheduler:
+  enabled: false
+  sweep_interval_s: 60

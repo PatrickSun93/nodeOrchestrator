@@ -72,6 +72,7 @@ from orchestrator.derived.snapshot import produce_snapshot
 from orchestrator.llm.config_loader import load_tools_config
 from orchestrator.llm.types import LLMRequest, LLMResponse
 from orchestrator.mcp.client import MCPSession
+from orchestrator.pipeline.config import PipelineSchedulerConfig, load_pipeline_scheduler_config
 from orchestrator.skills.loader import load_skills
 from orchestrator.skills.schema import Skill
 from orchestrator.tools.executor import LocalToolRegistry, execute_pending_tool_calls
@@ -123,6 +124,8 @@ class AppContext:
     reader_conns: list[sqlite3.Connection] = field(default_factory=list)
     # COUNTDOWN auto-fire config (ADR-040 D7). Default OFF (fail-closed) for test compat.
     countdown_auto_fire: CountdownAutoFireConfig = field(default_factory=CountdownAutoFireConfig)
+    # Pipeline scheduler config (ADR-042 D7). Default OFF (fail-closed) for test compat.
+    pipeline_scheduler: PipelineSchedulerConfig = field(default_factory=PipelineSchedulerConfig)
     # config_dir: retained so plugin management routes can resolve config/plugins.yaml.
     # D-A: _plugin_registry is a local in _build_context (not retained on AppContext);
     # config_dir is not recoverable from sandbox_root (sandbox_root = config_dir.parent).
@@ -674,6 +677,9 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     # COUNTDOWN auto-fire config (ADR-040 D7 / P4.6-1). Absent → disabled (fail-closed).
     countdown_auto_fire_cfg = load_countdown_auto_fire_config(config_dir / "autonomy.yaml")
 
+    # Pipeline scheduler config (ADR-042 D7 / P5.1b-3). Absent → disabled (fail-closed).
+    pipeline_scheduler_cfg = load_pipeline_scheduler_config(config_dir / "pipeline.yaml")
+
     # Merge MCP tool registry + retain sessions (ADR-028 D2 — fixes session-discard).
     # Graceful: unavailable servers are warned+skipped (skip_unavailable=True).
     from orchestrator.mcp.adapter import build_mcp_tool_registry_and_sessions_from_config
@@ -785,6 +791,7 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         reader_local=_reader_local,
         reader_conns=_reader_conns,
         countdown_auto_fire=countdown_auto_fire_cfg,
+        pipeline_scheduler=pipeline_scheduler_cfg,
         config_dir=config_dir,
     )
 
