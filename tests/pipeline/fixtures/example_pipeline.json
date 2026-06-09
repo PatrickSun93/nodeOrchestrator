@@ -1,0 +1,27 @@
+{
+  "sources": [
+    {
+      "kind": "web",
+      "locator": "https://example.com/news",
+      "options": {"max_bytes": 524288, "timeout_s": 15.0}
+    },
+    {
+      "kind": "rss",
+      "locator": "https://example.com/feed.xml",
+      "options": {"max_bytes": 524288, "timeout_s": 15.0}
+    },
+    {
+      "kind": "file",
+      "locator": "data/latest_report.txt",
+      "options": {"max_bytes": 524288, "timeout_s": 15.0}
+    }
+  ],
+  "analysis_prompts": [
+    "Identify the top 3 most significant trends in the provided content. Be concise and specific.",
+    "List any risks or warnings mentioned. If none, say so explicitly.",
+    "Summarize the key facts as a bulleted list suitable for a brief."
+  ],
+  "output_config": {
+    "room_prefix": "pipeline"
+  }
+}
