@@ -21,7 +21,7 @@ Both `web` and `rss` sources flow through the **identical SSRF floor** as `web_f
 
 `file` sources are path-sandboxed via `tools/local.py:_check_path`: traversal and symlink-escape are rejected; reads are bounded.
 
-RSS/Atom XML parsing uses `_SafeXMLParser` (blocking `EntityDeclHandler`) to prevent XXE injection and billion-laughs entity expansion.
+RSS/Atom XML parsing uses `defusedxml` (`forbid_dtd=True`) to prevent XXE injection and billion-laughs entity expansion.  The protection is position-independent: DOCTYPE declarations are rejected at the parser level regardless of comment or PI padding in the prolog.
 
 ## Cross-reference
 

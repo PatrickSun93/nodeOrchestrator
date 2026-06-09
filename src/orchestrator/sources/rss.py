@@ -1,42 +1,25 @@
-"""RSS/Atom source reader — SSRF-floored fetch + XXE-safe XML parse (ADR-041 D4)."""
+"""RSS/Atom source reader — SSRF-floored fetch + XXE-safe XML parse (ADR-041 D4).
+
+XXE/billion-laughs defence: defusedxml (forbid_dtd=True) is position-independent
+and blocks DOCTYPE regardless of comment/PI padding in the prolog (ADR-041 D4).
+"""
 
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
+import defusedxml.ElementTree as _defused_ET
 import httpx
+from defusedxml import DTDForbidden, EntitiesForbidden
 
 from orchestrator.sources.schema import Source, SourceReadError, SourceReadResult
 from orchestrator.tools.net_trust import build_ssrf_client
 
 # ---------------------------------------------------------------------------
-# XXE / billion-laughs guard
+# Feed entry extraction (RSS 2.0 + Atom 1.0)
 # ---------------------------------------------------------------------------
 
 _ATOM_NS = "http://www.w3.org/2005/Atom"
-
-# Byte budget for the DOCTYPE pre-scan (DOCTYPE must precede the root element).
-_DOCTYPE_SCAN_BYTES = 8192
-
-
-def _check_no_entity_declarations(xml_text: str) -> None:
-    """Raise SourceReadError if xml_text contains DOCTYPE or ENTITY declarations.
-
-    Scans the first _DOCTYPE_SCAN_BYTES characters for `<!DOCTYPE` or `<!ENTITY`.
-    This pre-filter blocks both XXE (external entity injection) and billion-laughs
-    (internal entity expansion) without relying on the expat C-extension's internal
-    handler API (which is not portable across Python implementations).
-    """
-    head = xml_text[:_DOCTYPE_SCAN_BYTES].upper()
-    if "<!DOCTYPE" in head or "<!ENTITY" in head:
-        raise SourceReadError(
-            "rss_parse_failed: XML entity declarations are forbidden (XXE/billion-laughs guard)"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Feed entry extraction (RSS 2.0 + Atom 1.0)
-# ---------------------------------------------------------------------------
 
 
 def _element_text(el: ET.Element | None) -> str:
@@ -80,10 +63,17 @@ def _extract_entries_atom(root: ET.Element) -> list[dict[str, str]]:
 
 
 def _parse_feed(xml_text: str) -> list[dict[str, str]]:
-    """Parse RSS 2.0 or Atom 1.0 feed; raises SourceReadError on malformed XML."""
-    _check_no_entity_declarations(xml_text)
+    """Parse RSS 2.0 or Atom 1.0 feed; raises SourceReadError on malformed XML.
+
+    Uses defusedxml (forbid_dtd=True): blocks DOCTYPE at the parser level regardless
+    of comment/PI padding in the prolog — position-independent, no byte-window evasion.
+    """
     try:
-        root = ET.fromstring(xml_text)
+        root = _defused_ET.fromstring(xml_text, forbid_dtd=True)
+    except (DTDForbidden, EntitiesForbidden) as exc:
+        raise SourceReadError(
+            "rss_parse_failed: XML entity declarations are forbidden (XXE/billion-laughs guard)"
+        ) from exc
     except ET.ParseError as exc:
         raise SourceReadError(f"rss_parse_failed: {exc}") from exc
 
@@ -113,7 +103,7 @@ def read_rss_source(source: Source) -> SourceReadResult:
 
     Security:
     - Feed URL flows through the identical SSRF floor as web_fetch (no bypass).
-    - XML parsing blocks entity declarations (XXE/billion-laughs).
+    - XML parsing blocks DTD via defusedxml (forbid_dtd=True) — position-independent.
     - Malformed feeds raise SourceReadError (fail-closed, no crash).
 
     Returns rendered text listing each entry on separate lines; truncated if

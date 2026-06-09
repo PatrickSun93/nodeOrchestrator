@@ -145,6 +145,27 @@ def test_create_pipeline_run() -> None:
     assert run.started_at > 0
 
 
+def test_create_pipeline_run_with_caller_supplied_run_id() -> None:
+    """F-runid: caller-supplied run_id is used as-is (store row id == runner's id)."""
+    conn = _make_conn()
+    defn = _sample_definition()
+    pipeline = create_pipeline(conn, owner_user_id="alice", definition=defn)
+    caller_run_id = "prun_abc123fixed"
+    run = create_pipeline_run(
+        conn,
+        pipeline_id=pipeline.pipeline_id,
+        room_id="room_xyz",
+        owner_user_id="alice",
+        run_id=caller_run_id,
+    )
+    assert run.run_id == caller_run_id
+    row = conn.execute(
+        "SELECT run_id FROM pipeline_runs WHERE run_id = ?", (caller_run_id,)
+    ).fetchone()
+    assert row is not None
+    assert row[0] == caller_run_id
+
+
 def test_update_pipeline_run_status() -> None:
     conn = _make_conn()
     defn = _sample_definition()

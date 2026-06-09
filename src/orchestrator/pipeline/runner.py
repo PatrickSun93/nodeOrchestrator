@@ -32,6 +32,7 @@ from orchestrator.core.event import (
     EventType,
     RoomId,
     build_author,
+    build_user_author,
     generate_event_id,
     now_ms,
 )
@@ -162,8 +163,11 @@ def _run_analyze_branch(
         )
 
         # Bounded re-dispatch passes 1…N (mirrors api/app.py:989-1036).
+        # prev_cursor is the snapshot taken BEFORE pass-0 process_tool_calls, so the
+        # first iteration's window [prev_cursor:] contains the pass-0 TOOL_CALL +
+        # TOOL_RESULT events — making the re-dispatch loop live (ADR-041 D2).
         loop_start = time.monotonic()
-        prev_pass_cursor = len(deps.writer_store.get_room_events(room_id))
+        prev_pass_cursor = prev_cursor
 
         for _pass in range(_PIPELINE_MAX_PASSES):
             if time.monotonic() - loop_start >= _PIPELINE_MAX_WALL_CLOCK_S:
@@ -268,11 +272,13 @@ def run_pipeline(
     room_id = room.id
 
     # Anchor event for this run (parent_id for all run events).
+    # author = user who triggered the run (build_user_author stamps owner_user_id in the
+    # event stream so attribution is visible even without the pipeline_runs index row).
     run_anchor = Event(
         id=generate_event_id(),
         room_id=room_id,
         type=EventType.OBSERVATION,
-        author=build_author(PIPELINE_AGENT_ID),
+        author=build_user_author(owner_user_id),
         timestamp=now_ms(),
         content=f"Pipeline run started: pipeline_id={pipeline_id} run_id={run_id}",
     )
@@ -424,7 +430,7 @@ def run_pipeline(
     return PipelineRunResult(
         run_id=run_id,
         room_id=room_id,
-        succeeded=True,
+        succeeded=branches_succeeded > 0,
         branch_results=branch_results,
         summary=summary,
         sources_read=len(fetch_results),

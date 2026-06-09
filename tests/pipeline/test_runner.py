@@ -408,3 +408,164 @@ def test_countdown_auto_fire_none(tmp_path: Path) -> None:
     assert all(caf is None for caf in captured_caf), (
         f"countdown_auto_fire was not None for some calls: {captured_caf}"
     )
+
+
+# ---------------------------------------------------------------------------
+# F-runid: run_id correlation across runner/store boundary
+# ---------------------------------------------------------------------------
+
+
+def test_run_pipeline_run_id_is_stable(tmp_path: Path) -> None:
+    """F-runid: PipelineRunResult.run_id starts with 'prun_' and is stable."""
+    store = _make_store()
+    router = _mock_router("analysis", "summary")
+    deps = _make_deps(store, router, tmp_path)
+    (tmp_path / "d.txt").write_text("data", encoding="utf-8")
+    defn = PipelineDefinition(
+        sources=[Source(kind="file", locator="d.txt")],
+        analysis_prompts=["Analyze"],
+    )
+    result = run_pipeline("p", defn, deps=deps, owner_user_id="alice")
+    assert result.run_id.startswith("prun_")
+
+
+def test_run_pipeline_anchor_event_embeds_run_id(tmp_path: Path) -> None:
+    """F-runid: anchor event content contains the same run_id as PipelineRunResult."""
+    store = _make_store()
+    router = _mock_router("analysis", "summary")
+    deps = _make_deps(store, router, tmp_path)
+    (tmp_path / "d.txt").write_text("data", encoding="utf-8")
+    defn = PipelineDefinition(
+        sources=[Source(kind="file", locator="d.txt")],
+        analysis_prompts=["Analyze"],
+    )
+    result = run_pipeline("p", defn, deps=deps, owner_user_id="alice")
+    events = store.get_room_events(RoomId(result.room_id))
+    anchor = events[0]  # first event is the run anchor
+    assert result.run_id in anchor.content
+
+
+# ---------------------------------------------------------------------------
+# F-deadloop: multi-pass re-dispatch loop is live
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_branch_multi_pass_redispatch(tmp_path: Path) -> None:
+    """F-deadloop: re-dispatch loop executes pass 1 when pass 0 emits a tool call+result."""
+    from orchestrator.llm.types import ToolCall
+
+    store = _make_store()
+    (tmp_path / "d.txt").write_text("data", encoding="utf-8")
+
+    call_count = 0
+    re_dispatch_executed = False
+
+    def _side_effect(request: Any) -> LLMResponse:
+        nonlocal call_count, re_dispatch_executed
+        call_count += 1
+        if call_count == 1:
+            # Pass 0: return a tool call so the re-dispatch loop has something to see.
+            return LLMResponse(
+                request_id=generate_request_id(),
+                content="calling tool",
+                tool_calls=[ToolCall(id="tc1", name="read_file", arguments={"path": "d.txt"})],
+                model_id_requested=ModelId("m1"),
+                model_id_used=ModelId("m1"),
+                provider_id_used=ProviderId("p1"),
+                usage=Usage(input_tokens=10, output_tokens=5),
+                latency_ms=50,
+                finish_reason="tool_use",
+            )
+        if call_count == 2:
+            # Pass 1 re-dispatch — this should be reached with the F-deadloop fix.
+            re_dispatch_executed = True
+            return _llm_response("re-dispatch result")
+        # reduce call
+        return _llm_response("summary")
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = _side_effect
+    deps = _make_deps(store, router, tmp_path)
+
+    defn = PipelineDefinition(
+        sources=[Source(kind="file", locator="d.txt")],
+        analysis_prompts=["Analyze"],
+    )
+    run_pipeline("p", defn, deps=deps, owner_user_id="alice")
+    assert re_dispatch_executed, "re-dispatch loop (pass 1) was never entered — dead loop bug"
+
+
+# ---------------------------------------------------------------------------
+# F-succeeded: succeeded reflects reality
+# ---------------------------------------------------------------------------
+
+
+def test_run_pipeline_all_branches_fail_succeeded_false(tmp_path: Path) -> None:
+    """F-succeeded: when all branches fail, succeeded is False."""
+    store = _make_store()
+    (tmp_path / "d.txt").write_text("content", encoding="utf-8")
+
+    def _always_fails(request: Any) -> LLMResponse:
+        raise RuntimeError("all branches fail")
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = _always_fails
+    deps = _make_deps(store, router, tmp_path)
+
+    defn = PipelineDefinition(
+        sources=[Source(kind="file", locator="d.txt")],
+        analysis_prompts=["Prompt 0", "Prompt 1"],
+    )
+    result = run_pipeline("pipe_all_fail", defn, deps=deps, owner_user_id="alice")
+    assert not result.succeeded
+    assert result.branches_failed == 2
+    assert result.branches_succeeded == 0
+
+
+def test_run_pipeline_partial_success_succeeded_true(tmp_path: Path) -> None:
+    """F-succeeded: at least one branch succeeds → succeeded is True."""
+    store = _make_store()
+    (tmp_path / "d.txt").write_text("content", encoding="utf-8")
+
+    call_count = 0
+
+    def _first_fails(request: Any) -> LLMResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("branch 0 fails")
+        return _llm_response(f"ok {call_count}")
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = _first_fails
+    deps = _make_deps(store, router, tmp_path)
+
+    defn = PipelineDefinition(
+        sources=[Source(kind="file", locator="d.txt")],
+        analysis_prompts=["Prompt 0", "Prompt 1"],
+    )
+    result = run_pipeline("pipe_partial", defn, deps=deps, owner_user_id="alice")
+    assert result.succeeded
+    assert result.branches_succeeded == 1
+    assert result.branches_failed == 1
+
+
+# ---------------------------------------------------------------------------
+# F-ownerparam: owner_user_id is used inside the runner
+# ---------------------------------------------------------------------------
+
+
+def test_run_pipeline_anchor_event_author_is_owner(tmp_path: Path) -> None:
+    """F-ownerparam: run anchor event author reflects owner_user_id (user:alice)."""
+    store = _make_store()
+    router = _mock_router("analysis", "summary")
+    deps = _make_deps(store, router, tmp_path)
+    (tmp_path / "d.txt").write_text("data", encoding="utf-8")
+    defn = PipelineDefinition(
+        sources=[Source(kind="file", locator="d.txt")],
+        analysis_prompts=["Analyze"],
+    )
+    result = run_pipeline("p", defn, deps=deps, owner_user_id="alice")
+    events = store.get_room_events(RoomId(result.room_id))
+    anchor = events[0]
+    assert anchor.author == "user:alice"

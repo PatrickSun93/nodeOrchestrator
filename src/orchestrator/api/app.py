@@ -1681,15 +1681,17 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 deps=deps,
                 owner_user_id=owner_user_id,
             )
-            # Write pipeline_runs index row (T2)
+            # Write pipeline_runs index row (T2).
+            # Pass result.run_id so the store row id == the anchor event run_id
+            # (single run_id across the runner/store boundary — F-runid).
             run_record = create_pipeline_run(
                 ctx.writer_store.conn,
                 pipeline_id=pipeline_id,
                 room_id=result.room_id,
                 owner_user_id=owner_user_id,
+                run_id=result.run_id,
                 status="completed" if result.succeeded else "failed",
             )
-            # Use the run_id from the store record (canonical ID)
             return _PipelineRunResponse(
                 run_id=run_record.run_id,
                 room_id=result.room_id,

@@ -138,9 +138,15 @@ def create_pipeline_run(
     room_id: str,
     owner_user_id: str,
     status: str = "running",
+    run_id: str | None = None,
 ) -> PipelineRunRecord:
-    """Insert a pipeline_runs index row for a new run."""
-    run_id = f"prun_{uuid.uuid4().hex}"
+    """Insert a pipeline_runs index row for a new run.
+
+    If run_id is supplied (caller-generated), it is used as-is so the store row id
+    matches the id embedded in the run-anchor event (F-runid correlation).
+    """
+    if run_id is None:
+        run_id = f"prun_{uuid.uuid4().hex}"
     started_at = int(time.time() * 1000)
     conn.execute(
         "INSERT INTO pipeline_runs"
