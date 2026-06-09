@@ -28,6 +28,7 @@ from orchestrator.llm.types import (
     RequestId,
     Usage,
 )
+from orchestrator.pipeline.store import init_pipeline_schema
 
 # ---------------------------------------------------------------------------
 # Test auth credentials
@@ -84,6 +85,9 @@ def ctx(db_path: Path) -> Generator[AppContext, None, None]:
 
     # Initialize auth tables on writer (co-located in same DB, ADR-039 D2)
     init_auth_schema(writer_conn)
+
+    # Initialize pipeline tables on writer (co-located in same DB, ADR-041 D8)
+    init_pipeline_schema(writer_conn)
 
     # Create a test user for authenticated fixtures
     create_user(writer_conn, TEST_USER_ID, TEST_PASSWORD)

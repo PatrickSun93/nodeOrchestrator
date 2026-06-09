@@ -282,6 +282,56 @@ class _ApproveFailed(NamedTuple):
     event_id: EventId
 
 
+# ---------------------------------------------------------------------------
+# Pipeline request/response models (ADR-041 D7 / T5)
+# ---------------------------------------------------------------------------
+
+
+class _PipelineCreateRequest(BaseModel):
+    """Request body for POST /pipelines.
+
+    extra=forbid: forge guard (mirrors _LoginRequest).
+    owner_user_id is NOT accepted from the body — it is derived server-side
+    from request.state.principal (ADR-039 D1).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    sources: list[dict[str, object]]
+    analysis_prompts: list[str]
+    output_config: dict[str, object] = {}
+
+
+class _PipelineResponse(BaseModel):
+    """Response for a single pipeline definition."""
+
+    model_config = ConfigDict(frozen=True)
+
+    pipeline_id: str
+    owner_user_id: str
+    enabled: bool
+    created_at: int
+    sources: list[dict[str, object]]
+    analysis_prompts: list[str]
+    output_config: dict[str, object]
+
+
+class _PipelineRunResponse(BaseModel):
+    """Response for POST /pipelines/{id}/run."""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    room_id: str
+    pipeline_id: str
+    succeeded: bool
+    sources_read: int
+    branches_succeeded: int
+    branches_failed: int
+    summary: str
+    error: str | None
+
+
 def _writer_approve_helper(
     ctx: AppContext,
     rid: RoomId,
@@ -584,6 +634,11 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     from orchestrator.api.auth.users import init_auth_schema as _init_auth_schema
 
     _init_auth_schema(writer_conn)
+
+    # Initialize pipeline tables alongside auth tables (ADR-041 D8, co-located)
+    from orchestrator.pipeline.store import init_pipeline_schema as _init_pipeline_schema
+
+    _init_pipeline_schema(writer_conn)
 
     # Reader: per-thread connections eliminate the concurrent-read SQLite race.
     # WAL mode allows multiple simultaneous readers; each reader_executor worker
@@ -1469,6 +1524,185 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             pass
         finally:
             ctx.bus.unsubscribe(rid, q)
+
+    # ---------------------------------------------------------------------------
+    # Pipeline CRUD + manual trigger (ADR-041 D7/D8 / T5)
+    # All routes: owner-private, fail-closed auth (non-owner → 403).
+    # principal is server-derived from request.state (ADR-039 D1 — never from body).
+    # ---------------------------------------------------------------------------
+
+    @app.post("/pipelines", response_model=_PipelineResponse, status_code=201)
+    async def _create_pipeline(
+        body: _PipelineCreateRequest, request: Request
+    ) -> _PipelineResponse:
+        """Create a new pipeline definition. owner_user_id captured from principal."""
+        from orchestrator.pipeline.schema import OutputConfig, PipelineDefinition
+        from orchestrator.pipeline.store import create_pipeline
+        from orchestrator.sources.schema import Source
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        try:
+            sources = [Source.model_validate(s) for s in body.sources]
+            output_config = (
+                OutputConfig.model_validate(body.output_config)
+                if body.output_config
+                else OutputConfig()
+            )
+            defn = PipelineDefinition(
+                sources=sources,
+                analysis_prompts=body.analysis_prompts,
+                output_config=output_config,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=422, detail=f"invalid pipeline definition: {exc}"
+            ) from exc
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _PipelineResponse:
+            record = create_pipeline(
+                ctx.writer_store.conn,
+                owner_user_id=_principal.user_id,
+                definition=defn,
+            )
+            return _PipelineResponse(
+                pipeline_id=record.pipeline_id,
+                owner_user_id=record.owner_user_id,
+                enabled=record.enabled,
+                created_at=record.created_at,
+                sources=[s.model_dump() for s in record.definition.sources],
+                analysis_prompts=record.definition.analysis_prompts,
+                output_config=record.definition.output_config.model_dump(),
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.get("/pipelines", response_model=list[_PipelineResponse])
+    async def _list_pipelines(request: Request) -> list[_PipelineResponse]:
+        """List pipelines owned by the current principal (owner-private)."""
+        from orchestrator.pipeline.store import list_pipelines
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _read() -> list[_PipelineResponse]:
+            records = list_pipelines(ctx.get_reader_conn(), _principal.user_id)
+            return [
+                _PipelineResponse(
+                    pipeline_id=r.pipeline_id,
+                    owner_user_id=r.owner_user_id,
+                    enabled=r.enabled,
+                    created_at=r.created_at,
+                    sources=[s.model_dump() for s in r.definition.sources],
+                    analysis_prompts=r.definition.analysis_prompts,
+                    output_config=r.definition.output_config.model_dump(),
+                )
+                for r in records
+            ]
+
+        return await loop.run_in_executor(ctx.reader_executor, _read)
+
+    @app.get("/pipelines/{pipeline_id}", response_model=_PipelineResponse)
+    async def _get_pipeline(pipeline_id: str, request: Request) -> _PipelineResponse:
+        """Get a single pipeline definition (owner-private — 403 for non-owner)."""
+        from orchestrator.pipeline.store import get_pipeline
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+        record = await loop.run_in_executor(
+            ctx.reader_executor,
+            lambda: get_pipeline(ctx.get_reader_conn(), pipeline_id),
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
+        if record.owner_user_id != _principal.user_id:
+            raise HTTPException(status_code=403, detail="access denied: not the owner")
+        return _PipelineResponse(
+            pipeline_id=record.pipeline_id,
+            owner_user_id=record.owner_user_id,
+            enabled=record.enabled,
+            created_at=record.created_at,
+            sources=[s.model_dump() for s in record.definition.sources],
+            analysis_prompts=record.definition.analysis_prompts,
+            output_config=record.definition.output_config.model_dump(),
+        )
+
+    @app.post("/pipelines/{pipeline_id}/run", response_model=_PipelineRunResponse)
+    async def _run_pipeline(pipeline_id: str, request: Request) -> _PipelineRunResponse:
+        """Trigger a manual pipeline run (owner-private — 403 for non-owner).
+
+        Runs synchronously on writer_executor (mirrors _write_and_turn).
+        A pipeline_runs index row is written (T2).
+        """
+        from orchestrator.pipeline.runner import PipelineDeps, run_pipeline
+        from orchestrator.pipeline.store import (
+            create_pipeline_run,
+            get_pipeline,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        # Load definition on reader first (owner check)
+        record = await loop.run_in_executor(
+            ctx.reader_executor,
+            lambda: get_pipeline(ctx.get_reader_conn(), pipeline_id),
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
+        if record.owner_user_id != _principal.user_id:
+            raise HTTPException(status_code=403, detail="access denied: not the owner")
+
+        definition = record.definition
+        owner_user_id = _principal.user_id
+
+        def _run_on_writer() -> _PipelineRunResponse:
+            deps = PipelineDeps(
+                writer_store=ctx.writer_store,
+                llm_router=ctx.llm_router,
+                tools=ctx.tools,
+                mcp_sessions=ctx.mcp_sessions,
+                local_tools=ctx.local_tools,
+                sandbox_root=ctx.sandbox_root,
+                bus=ctx.bus,
+            )
+            result = run_pipeline(
+                pipeline_id,
+                definition,
+                deps=deps,
+                owner_user_id=owner_user_id,
+            )
+            # Write pipeline_runs index row (T2)
+            run_record = create_pipeline_run(
+                ctx.writer_store.conn,
+                pipeline_id=pipeline_id,
+                room_id=result.room_id,
+                owner_user_id=owner_user_id,
+                status="completed" if result.succeeded else "failed",
+            )
+            # Use the run_id from the store record (canonical ID)
+            return _PipelineRunResponse(
+                run_id=run_record.run_id,
+                room_id=result.room_id,
+                pipeline_id=pipeline_id,
+                succeeded=result.succeeded,
+                sources_read=result.sources_read,
+                branches_succeeded=result.branches_succeeded,
+                branches_failed=result.branches_failed,
+                summary=result.summary,
+                error=result.error,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _run_on_writer)
 
 
 def _configure(app: FastAPI) -> None:
