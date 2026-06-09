@@ -122,6 +122,25 @@ This reads as honestly as `RB-FS/NET` and `RB-AUTHZ` did — the deliberate weak
 - **ADR-005** (annotation) — the COUNTDOWN tier's *consequence* gains a timer; the **tier-decision logic is unchanged** (`decide_tier` byte-frozen).
 - **ADR-025 D6** (note) — a new **bounded background-task surface** (the sweeper) sits beside the single writer: it discovers on the reader path and actuates via the writer executor, preserving the single-writer-consistency + reader-liveness model.
 
+### P5.1b annotation (ADR-042 / `_schedule_sweeper`)
+
+> **`_schedule_sweeper`** (ADR-042 D1 / P5.1b) reuses this ADR's **pattern** — the
+> asyncio-task lifecycle, discover-on-reader / act-on-writer, `except CancelledError:
+> raise`, lifespan start-when-enabled + clean teardown — but **shares NONE of the
+> spine-critical actuation code**: `_countdown_sweeper`, `_discover_expired_pendings`, and
+> `_writer_approve_helper` are the `RB-AUTOFIRE` security crux (still-pending predicate +
+> writer-atomic actuation of a *gated* op). The schedule sweeper's logic is independent:
+> it discovers *due schedules* (not expired pendings) and its act is `run_pipeline` +
+> `create_pipeline_run` + re-arm — **never** `_writer_approve_helper`. Duplicating the
+> ~10-line skeleton is correct: **spine-untouched > DRY** for trivial control flow.
+>
+> **`RB-PIPELINE-SCHED`** (ADR-042 D8) is the **milder neighbor** of `RB-AUTOFIRE`:
+> `…-SCHED` initiates a *reversible* run with no human at *start* time; `RB-AUTOFIRE`
+> actuates a *gated* pending (possibly irreversible). The distinction: `RB-AUTOFIRE`
+> applies a *pre-gated, pre-approved pending*; `RB-PIPELINE-SCHED` starts a new
+> *reversible* run. `countdown_auto_fire=None` in every scheduled run ensures the two
+> residuals are categorically separate (ADR-041 D5 / ADR-042 D6).
+
 ## Considered alternatives
 
 - **DP1 (a) in-process per-pending timer / (c) external scheduler** — see D1 (loses restart-survival / over-builds).
