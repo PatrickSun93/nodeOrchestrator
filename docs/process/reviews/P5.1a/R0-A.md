@@ -3,9 +3,8 @@ task_id: P5.1a
 stage: R0-A (impl)
 reviewer: architect-partner
 verdict: needs_architect
-must_fix_before_accept: ["B1"]
 findings_count: 3
-findings: ["B1 (🔴 security must-fix): billion-laughs DoS reachable in RSS parser", "Y1 (🟡): bounded re-dispatch loop is dead code", "Y2 (🟡): succeeded hard-coded True → run status always 'completed'"]
+findings: ["B1 (🟡, revised 🔴→🟡 after empirical test): RSS XXE/billion-laughs floor — evadable pre-scan + doc claims a parser that doesn't exist; catastrophic case capped by libexpat — converges with senior Y1", "Y1 (🟡, R0-A-unique): bounded re-dispatch loop is dead code (empirically confirmed)", "Y2 (🟡): succeeded hard-coded True → run status always 'completed'"]
 lenses: ["A: pipeline safety + determinism", "B: spine no-regression"]
 reviewed_branch: "origin/claude/P5.1a-impl @ abe4d55 (5 atomics T1–T6, +2512 / 22 files, 0 deletions)"
 reviewed:
@@ -18,26 +17,35 @@ against:
   - "docs/decisions/ADR-041-deterministic-analysis-pipeline.md (D1–D10)"
 gates_independently_run: "isolated detached worktree @ abe4d55, uv sync --all-extras"
 gates_result: "ruff: All checks passed ✅ | mypy: Success, no issues in 297 source files ✅ | pytest: full suite green, exit 0 ✅ (+61 new tests: runner 13 / store 10 / sources 22 / api 14 / example 2)"
+correction_log: "B1 initially filed 🔴 (catastrophic billion-laughs DoS). Empirical retest (CPython 3.12 / libexpat ≥2.4) showed the amplification-factor limit blocks the catastrophic case (10^8 → ParseError 'amplification factor breached'; 10^6 still expands). Revised to 🟡 — converges with senior plan-vs-impl Y1. Original 🔴 framing preserved in git history (commit 97eede1)."
 date: "2026-06-09"
 ---
 
 # R0-A (impl) — P5.1a deterministic analysis pipeline
 
-> **⚠️ Verdict `needs_architect` — and one finding is a hard security stop.** The
-> constitutional spine and the entire Lens-B contract are **clean** (byte-frozen,
-> independently verified) and all three gates are **green**. But **B1 is a confirmed,
-> exploitable billion-laughs DoS** on the one greenfield attack surface the plan flagged
-> for adversarial testing — **do NOT Accept the impl until B1 is fixed** (recommend α →
-> `defusedxml`). Y1/Y2 are genuine α/β routing decisions. I surface + lean; you route.
+> **Verdict `needs_architect` — 3×🟡, no 🔴, no spine/safety regression.** The
+> constitutional spine and the whole Lens-B contract are **clean** (9 modules byte-frozen,
+> independently verified) and all three gates are **green**. Three findings need an α/β
+> routing call: **B1** (RSS XXE floor — evadable pre-scan + a doc that describes a parser
+> the code doesn't have; *converges with senior Y1*), **Y1** (the bounded re-dispatch loop
+> is dead code — *R0-A-unique, senior rated it working*), and **Y2** (`succeeded` always
+> True). I surface + lean; you route.
+>
+> **⚠️ Honest correction (read this).** I first filed **B1 as 🔴** ("catastrophic
+> whole-orchestrator billion-laughs DoS"). I then tested it harder and **was partly wrong**:
+> CPython 3.12's libexpat (≥2.4) amplification-factor limit **blocks** the catastrophic case
+> (a 10^8 payload raises `ParseError: limit on input amplification factor … breached`). What
+> survives is a *bounded* residual + a doc-honesty gap. **B1 is revised to 🟡.** The original
+> 🔴 reasoning is preserved in git (commit `97eede1`); see `correction_log`.
 
 ## Method
 
 Reviewed `origin/claude/P5.1a-impl @ abe4d55` **without checking out** the branch (shared
 worktree stayed on `main`; read via `git show`/`git diff origin/main...`). Ran the gates in
 an **isolated detached worktree** (`git worktree add --detach`, `uv sync --all-extras`) so
-the shared tree was never disturbed. Both ratified lenses applied: **A** = pipeline safety +
-determinism + SSRF/XXE/sandbox floors + no over-authorized output; **B** = spine
-no-regression. I also **empirically reproduced** B1 (Python 3.12.3) rather than asserting it.
+the shared tree was never disturbed. Both lenses applied. Where I make a security or
+correctness claim I **reproduced it empirically** (libexpat amplification test; a faithful
+cursor-arithmetic simulation for the dead loop) rather than asserting from reading.
 
 ## Lens B — spine no-regression: **CLEAN** ✅ (the whole contract held)
 
@@ -47,132 +55,118 @@ Every ADR-041 D9 invariant verified against the living diff:
 |---|---|
 | `_execute_local_call` + gate (`tool_dispatch.py`) + `executor.py` byte-frozen | ✅ **0 diff lines** |
 | `net_trust.py`, `local.py`, `event.py`, `room.py`, `dispatch.py`, `scoring.py`, `purposes.py` | ✅ **0 diff lines each** |
-| `_write_and_turn` / `_writer_approve_helper` / `_countdown_sweeper` / `_post_intent` | ✅ untouched — `app.py` diff is **pure addition** (models before `_writer_approve_helper`; routes appended; `0` deletions across all 22 files) |
-| **D2 fork honored** — gate+executor reused verbatim, ~30-line scaffolding duplicated, interactive spine byte-untouched | ✅ structurally met *(but the duplicated copy carries Y1 — see below)* |
+| `_write_and_turn` / `_writer_approve_helper` / `_countdown_sweeper` / `_post_intent` | ✅ untouched — `app.py` diff is **pure addition** (`0` deletions across all 22 files) |
+| **D2 fork honored** — gate+executor reused verbatim, ~30-line scaffolding duplicated, interactive spine byte-untouched | ✅ structurally met *(but the duplicated copy carries Y1)* |
 | No new `LLMPurpose` | ✅ `purposes.py` frozen; all 3 call sites `AGENT_RESPONSE`; `test_llm_purpose_is_agent_response` asserts it |
-| `countdown_auto_fire=None` at both `process_tool_calls` sites (no headless actuation) | ✅ `runner.py:160,196` + `test_countdown_auto_fire_none` |
+| `countdown_auto_fire=None` at both `process_tool_calls` sites | ✅ + `test_countdown_auto_fire_none` |
 | `ThresholdConfig(8,5,0)` explicit, no code-level default | ✅ `runner.py:67` + test |
-| No new `EventType` / `RoomType`; output = reversible `OBSERVATION` append, not gate-routed | ✅ `FREE_CHAT` reused; `test_output_room_is_free_chat` |
-| Backend-authoritative: `owner_user_id` server-derived from `request.state.principal`, never body | ✅ create-body is `extra="forbid"` with no `owner_user_id` field; `test_create_pipeline_owner_from_principal` |
-| Owner-private `/pipelines*` fail-closed | ✅ middleware allowlist is `{/login,/health}` only; non-owner → **403** on get/run; list own-only; unauth → 401/403 — all tested |
-| SSRF/sandbox floor reuse | ✅ web/rss via `build_ssrf_client`; file via `_check_path`; denied-IP + traversal + absolute-path **tested, not asserted** |
+| No new `EventType`/`RoomType`; output = reversible `OBSERVATION` append, not gate-routed | ✅ `FREE_CHAT` reused |
+| Backend-authoritative: `owner_user_id` server-derived from principal, never body | ✅ create-body `extra="forbid"`, no `owner_user_id` field; test present |
+| Owner-private `/pipelines*` fail-closed | ✅ middleware allowlist `{/login,/health}` only; non-owner → **403**; list own-only; unauth → 401/403 — all tested |
+| SSRF/sandbox floor reuse | ✅ web/rss via `build_ssrf_client`; file via `_check_path`; denied-IP + traversal + absolute-path **tested** |
 
-Lens B is the strongest part of this slice — the spine freeze is exemplary and the auth
-surface is genuinely fail-closed and well-tested.
+Lens B is the strongest part of this slice — exemplary spine freeze + a genuinely
+fail-closed, well-tested auth surface.
 
 ## Findings
 
-### B1 — 🔴 **security must-fix (recommend α)** — billion-laughs DoS is reachable in the RSS parser; the DOCTYPE byte-scan guard is evadable; and the docs claim a defense that isn't in the code
+### B1 — 🟡 **(revised 🔴→🟡)** route α/β — RSS XXE/billion-laughs floor: the DOCTYPE pre-scan is evadable, and the T6 doc describes a parser that does not exist *(converges with senior plan-vs-impl Y1)*
 
-- **Mechanism.** `sources/rss.py` defends XML parsing with a hand-rolled pre-scan
-  (`_check_no_entity_declarations`, `rss.py:22-32`) that inspects only **the first
-  `_DOCTYPE_SCAN_BYTES = 8192` characters** (`rss.py:19,30`) for `<!DOCTYPE`/`<!ENTITY`,
-  then calls plain `ET.fromstring` (`rss.py:86`). The comment deliberately rejects the
-  expat entity-handler approach as "not portable."
-- **Confirmed reachable (empirical, Py 3.12.3):**
-  1. `xml.etree.ElementTree` **expands internal entities** — a 3-level `&a;→&b;→&c;` chain
-     expanded a `<title>` to 1000 chars. (External `SYSTEM` entities *are* blocked by stdlib
-     — "undefined entity" — so classic file-read XXE is safe; the **billion-laughs** vector
-     is not.)
-  2. The 8192-char window is **evadable**: XML grammar permits comments in the prolog before
-     the DOCTYPE, so a `<!-- …9000 bytes… -->` pushes `<!DOCTYPE` to byte 9030. The guard
-     scans `[:8192]`, returns **False** (misses it), and `ET.fromstring` then processes the
-     DTD → entity expansion. A `&lol9;`-style payload (<1 KB on the wire — `max_bytes` does
-     **not** bound *expansion*) blows up to gigabytes in expat.
-- **Blast radius.** The run executes on `writer_executor` (`max_workers=1`). A billion-laughs
-  expansion there is **whole-orchestrator DoS** — it stalls every interactive turn too, not
-  just the pipeline. The feed *content* is third-party-controlled (owner configures a URL;
-  whoever serves it controls the bytes), and a malicious feed on a public host sails through
-  the SSRF floor.
-- **Acceptance criterion violated.** T1 / ADR-041 D4 require "billion-laughs/XXE **must not be
-  reachable**" and explicitly recommend `defusedxml`. The two tests
-  (`test_rss_parse_xxe_entity_blocked`, `test_rss_parse_billion_laughs_blocked`) only cover
-  **DOCTYPE-at-the-start** (which the scan catches), so the suite gives false assurance — the
-  padded-prolog evasion is untested *and* unguarded.
-- **Doc/impl mismatch (compounds it).** `docs/architecture/sources-vs-connectors.md` (T6)
-  states parsing "uses `_SafeXMLParser` (blocking `EntityDeclHandler`) to prevent XXE …and
-  billion-laughs." **No such class exists** in `rss.py`. The documented (and genuinely robust,
-  position-independent) mechanism was described but not built; the shipped byte-scan is the
-  evadable one.
-- **Lean (α — fix; this is not a β-defer candidate):** swap to `defusedxml` (`forbid_dtd=True`)
-  per the plan's own recommendation — robust, portable, and it makes the docs' claim true. (An
-  `EntityDeclHandler`-based parser or a whole-document DOCTYPE scan would also close it, but
-  `defusedxml` is the plan-sanctioned choice.) A safe-by-design slice should not ship with a
-  live unbounded-expansion path on the single writer. **Recommend you not Accept until fixed.**
+- **Mechanism.** `sources/rss.py:22-32` guards XML parsing with a pre-scan
+  (`_check_no_entity_declarations`) over **only the first `_DOCTYPE_SCAN_BYTES = 8192`
+  characters** (`rss.py:19,30`), then calls plain `ET.fromstring` (`rss.py:86`).
+- **Evadable (confirmed).** XML grammar permits prolog comments before the DOCTYPE, so a
+  `<!-- …>8192 bytes… -->` pushes `<!DOCTYPE` to byte ~9030; the scan reads `[:8192]`, misses
+  it, and `ET.fromstring` then processes the DTD. (`xml.etree` *does* expand internal
+  entities — verified: a 3-level chain expanded a title to 1000 chars; external `SYSTEM`
+  entities are blocked by stdlib, so file-read XXE is safe.)
+- **But the catastrophic case is capped (the correction).** CPython 3.12 ships libexpat ≥2.4
+  with billion-laughs **amplification-factor protection**. Empirically: 10^4 and 10^6 payloads
+  expand fully, but a 10^8 payload **raises** `ParseError: limit on input amplification factor
+  (from DTD and entities) breached`. So unbounded GB expansion is **not** reachable; the
+  practical residual is bounded (~tens of MB worst case, further bounded by the source
+  `max_bytes`) — a transient writer-thread blip, **not** the whole-orchestrator DoS I first
+  claimed.
+- **What's genuinely wrong (still worth routing):** (a) **doc/impl honesty** —
+  `docs/architecture/sources-vs-connectors.md` states parsing "uses `_SafeXMLParser` (blocking
+  `EntityDeclHandler`)"; **no such class exists** — an audit reader is told a parser-handler
+  enforces the floor when an evadable string pre-scan does. (b) The plan's literal T1 criterion
+  ("billion-laughs/XXE **must not be reachable**") is **technically violated** for bounded
+  expansion via the evasion, and the two tests only cover DOCTYPE-at-start, so the suite
+  doesn't exercise the bypass.
+- **Lean (you call):** **α** = switch to `defusedxml` (`forbid_dtd=True`) per the plan's own
+  recommendation (robust, position-independent, portable) **and** correct the doc to describe
+  the real mechanism — this both closes the bounded residual and makes the doc honest. A
+  lighter **β** = keep stdlib but scan the *whole* document for DOCTYPE (not an 8 KiB window)
+  + fix the doc. I lean α (it's what the doc already claims). *Senior independently filed this
+  as Y1 with the same evasion; we converge on 🟡.*
 
-### Y1 — 🟡 **route α/β** — the bounded re-dispatch loop in `_run_analyze_branch` is dead code (no analyze branch ever re-dispatches)
+### Y1 — 🟡 **route α/β — R0-A-unique (senior rated the loop working)** — the bounded re-dispatch loop in `_run_analyze_branch` is dead code
 
-- **Evidence.** The interactive reference (`_write_and_turn`) sets `prev_pass_cursor` **once,
-  before pass 0**, and reuses that same cursor as the pass-0 window *and* the loop's first
-  look-back — so iteration 1 sees pass-0's `TOOL_CALL`+`TOOL_RESULT` and can re-dispatch. The
-  runner instead uses a **separate** variable `prev_cursor` for the pass-0 window
-  (`runner.py:143`) and then **re-initializes** `prev_pass_cursor = len(events)` *after*
-  pass-0 execute (`runner.py:166`), immediately before the loop. So on iteration 1,
-  `events[prev_pass_cursor:]` is **empty** → `new_tool_calls == []` → `break`
-  (`runner.py:172-175`). The loop body is unreachable; the branch is capped at pass 0 (one LLM
-  call + one round of AUTO_EXECUTE).
-- **Consequence.** A branch can call a tool once but can never see the result and follow up.
-  ADR-041 D2's "re-dispatch on result events, bounded by the ADR-033 caps" is **inscribed but
-  inert**. No test catches it (`test_countdown_auto_fire_none` can't distinguish dead vs live).
-- **Not a safety issue** — fewer passes is strictly more conservative; nothing extra executes.
-  This is a correctness/honesty divergence, and a nice illustration of the D2-vs-B tradeoff you
-  routed: duplication bought a byte-frozen spine but gave the copy an independent bug the
-  original doesn't have.
-- **Lean (you call):** **α** = one-line fix (`prev_pass_cursor = prev_cursor`, mirroring the
-  interactive loop) + a multi-pass test; **β** = consciously accept single-pass analyze for the
-  P5.1a safe primitive (simpler, less surface), **delete the dead loop**, and correct ADR-041
-  D2 + the runner docstring to say "single bounded pass." Either is fine — but dead code that
-  reads as live + an unrealized ADR claim should not stand silently.
+- **Evidence (empirically confirmed).** The interactive reference (`_write_and_turn`) sets
+  `prev_pass_cursor` **once before pass 0** and reuses it, so iteration 1 sees pass-0's
+  `TOOL_CALL`+`TOOL_RESULT`. The runner instead uses a separate `prev_cursor` for the pass-0
+  window (`runner.py:143`) and **re-initializes** `prev_pass_cursor = len(events)` *after*
+  pass-0 execute (`runner.py:166`) — so iteration 1's window `events[prev_pass_cursor:]` is
+  **empty** → `new_tool_calls == []` → `break` (`runner.py:172-175`). A faithful simulation of
+  the exact cursor arithmetic confirms **0 loop-body executions**; with the one-line fix
+  (`prev_pass_cursor = prev_cursor`) the window holds 2 events and the body would run.
+- **Consequence.** Every analyze branch is capped at pass 0 (one LLM call + one round of
+  AUTO_EXECUTE). A branch can call a tool but can never see the result and follow up. ADR-041
+  D2's "re-dispatch on result events, bounded by ADR-033 caps" is **inscribed but inert**. No
+  test catches it (`test_countdown_auto_fire_none` can't distinguish dead vs live), and the
+  senior plan-vs-impl read it as "a bounded forced-single-agent loop" (working) — so this is a
+  net-new finding this round.
+- **Not a safety issue** — fewer passes is strictly more conservative. It's a correctness +
+  honesty divergence, and a clean illustration of the D2-vs-B tradeoff you routed: duplication
+  bought a byte-frozen spine but gave the copy a bug the original doesn't have.
+- **Lean (you call):** **α** = one-line fix + a multi-pass test; **β** = consciously accept
+  single-pass analyze for the P5.1a safe primitive (simpler, less surface), **delete the dead
+  loop**, and correct ADR-041 D2 + the runner docstring to "single bounded pass." Either is
+  fine — dead code that reads as live + an unrealized ADR claim shouldn't stand silently.
 
-### Y2 — 🟡 **route α/β** — `run_pipeline` hard-codes `succeeded=True`, so `pipeline_runs.status` is always `"completed"` — even when every source and every branch fails
+### Y2 — 🟡 **route α/β** — `run_pipeline` hard-codes `succeeded=True`, so `pipeline_runs.status` is always `"completed"` — even when every source and branch fails
 
-- **Evidence.** `runner.py:427` returns `succeeded=True` unconditionally (no path sets False).
-  `app.py` maps `status = "completed" if result.succeeded else "failed"` → always `"completed"`.
-  `test_run_pipeline_returns_run_result` documents this: a failing web source still yields
-  `succeeded=True`. The store has a `running → update_pipeline_run_status` lifecycle
-  (`store.py`, tested), but the endpoint **never uses it** — it writes one terminal row *after*
-  the run returns, so an in-flight run is invisible and a run that *raises* writes **no row** +
-  500s.
-- **Consequence.** The run-status surface can't distinguish success from total failure
-  (observability/honesty gap; no safety impact). The `branches_succeeded/failed` counts carry
-  the real story, making the top-level boolean actively misleading.
-- **Lean (you call):** **α** = make `succeeded` reflect reality (e.g. `branches_succeeded > 0`,
-  or write a `"running"` row first then update) ; **β** = rename `succeeded → completed`
-  ("ran to completion without crashing") and accept that for P5.1a. Either resolves the
-  mislabel; the current always-True shouldn't ship unflagged.
+- **Evidence.** `runner.py:427` returns `succeeded=True` unconditionally. `app.py` maps
+  `status = "completed" if result.succeeded else "failed"` → always `"completed"`;
+  `test_run_pipeline_returns_run_result` documents a failing source still yielding
+  `succeeded=True`. The store has a `running → update_pipeline_run_status` lifecycle (tested)
+  but the endpoint never uses it — it writes one terminal row *after* the run, so an in-flight
+  run is invisible and a run that *raises* writes **no row** + 500s. *(Senior noted the same in
+  green-notes; I rate it route-worthy because the index is the T2 audit surface.)*
+- **Lean (you call):** **α** = make `succeeded` reflect reality (`branches_succeeded > 0`, or a
+  `running`-then-update row) ; **β** = rename `succeeded → completed` and accept that semantics
+  for P5.1a. Either resolves the mislabel.
 
-### Nits (🟢 — recording, no routing needed)
+### Nits (🟢 — recording)
 
-- **N1** `output_config.room_prefix` (schema + example fixture) is **unused** — the runner names
-  the room `room_<uuid>`, ignoring the prefix. Dead config advertised in the example.
-- **N2** Two `run_id`s per run: `store.create_pipeline_run` mints the canonical `prun_…` (used in
-  the response), while `runner.run_pipeline` mints a **different** `prun_…` embedded in the
-  run-anchor `OBSERVATION`. The index row's `run_id` ≠ the room anchor's → can't join
-  index→room-events by `run_id` (the `room_id` join still works). Low traceability wart.
-- **N3** The reduce call wraps **branch outputs** with the "Source data (fetched this run …)"
-  header — defensively fine (they're downstream of untrusted data) but the "fetched this run"
-  label is inaccurate for LLM-generated branch text. Cosmetic.
+- **N1** `output_config.room_prefix` (schema + example) is **unused** — runner names the room
+  `room_<uuid>`. Dead config advertised in the example.
+- **N2** Dual `run_id` — `store.create_pipeline_run` mints the canonical `prun_…` (returned),
+  while `runner.run_pipeline` mints a *different* `prun_…` embedded in the run-anchor
+  `OBSERVATION`; index→room-events can't join by `run_id` (`room_id` still works). *(= senior
+  Y2; senior rated it 🟡 — fine to bundle into the same routing round.)*
+- **N3** Reduce wraps **branch outputs** with the "Source data (fetched this run …)" header —
+  defensively fine, label mildly inaccurate. Cosmetic.
 
-## Strengths worth recording
+## Cross-review map (for your synthesis — senior plan-vs-impl + R0-A; R0-B-on-impl still pending)
 
-- The **spine byte-freeze is exemplary** — 9 constitution-critical modules at exactly 0 diff,
-  pure-addition `app.py`, the D2 reuse done as designed.
-- **Auth is genuinely fail-closed**: owner-derived-from-principal, owner-private 403, own-only
-  list — and *all of it tested* (non-owner, unauth, cross-user).
-- **SSRF + file-sandbox floors tested, not asserted** (denied-IP feed URL, traversal, absolute
-  path) — exactly the §4 forcing function.
-- The `external`-XXE half is correctly closed (stdlib blocks `SYSTEM` entities); the gap is
-  narrowly the internal-expansion/evasion path (B1).
-- Gates independently reproduced green (ruff + mypy 297 files + full pytest).
+| Finding | senior plan-vs-impl | R0-A (me) | Convergence |
+|---|---|---|---|
+| RSS XXE floor (evadable scan + phantom `_SafeXMLParser` doc) | 🟡 Y1 | 🟡 B1 (revised from 🔴) | **agree 🟡** — route α(defusedxml+doc) |
+| Dead re-dispatch loop | rated working ("bounded loop") | 🟡 Y1 | **R0-A-unique** — senior missed it |
+| `succeeded`=True always | green-note | 🟡 Y2 | overlap, I rate higher |
+| Dual `run_id` | 🟡 Y2 | 🟢 N2 | overlap, senior rates higher |
 
 ## What the architect does next
 
-1. **B1 — 🔴 do not Accept until fixed.** My read: the only sane route is **α** (`defusedxml`).
-   Confirm.
-2. **Y1** — α (fix the cursor → live re-dispatch) vs β (accept single-pass + delete dead loop +
-   correct ADR-041 D2). Your call.
-3. **Y2** — α (truthful `succeeded`) vs β (rename to `completed`). Your call.
-4. **ADR-041 Accept** stays yours (RC-3). This review is input, not a substitute — and it
-   carries one hard blocker (B1).
+1. **B1 / senior-Y1** (RSS floor) — α (`defusedxml` + correct the doc) vs β (whole-doc DOCTYPE
+   scan + doc fix). I lean α. *Not* a 🔴 after the libexpat retest, but the doc misrepresents a
+   security floor — worth closing.
+2. **Y1** (dead re-dispatch loop) — α (fix the cursor) vs β (accept single-pass + delete loop +
+   correct ADR-041 D2). My R0-A-unique find; your call.
+3. **Y2** (truthful `succeeded`) + N2 (dual `run_id`) — bundle; α-cleanup or β-defer.
+4. **ADR-041 Accept** stays yours (RC-3). This review is input; it now carries **no 🔴**.
 
-Routing nothing here — surface-only, per role. Awaiting your α/β string.
+Routing nothing here — surface-only, per role. Awaiting your α/β string (and R0-B-on-impl,
+still running, before you synthesize).
