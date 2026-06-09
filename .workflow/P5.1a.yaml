@@ -1,8 +1,8 @@
 task_id: P5.1a
-state: awaiting_architect_decision
-cycle: 2
-last_transition_at: '2026-06-09T18:46:26.968511Z'
-cycle_started_at: '2026-06-09T17:34:18.070257Z'
+state: awaiting_junior_impl
+cycle: 3
+last_transition_at: '2026-06-09T18:52:23.461951Z'
+cycle_started_at: '2026-06-09T18:52:23.461951Z'
 override_history:
 - timestamp: '2026-06-09T05:51:35.953117Z'
   actor: architect
@@ -34,4 +34,20 @@ override_history:
     restoring ADR-041 D2 multi-pass + multi-pass test), F-succeeded (reflect real
     success/failure), F-ownerparam (use owner_user_id in run_pipeline). Spine stays
     byte-frozen; no ADR amendment. See architect-routing-on-impl.md.'
+- timestamp: '2026-06-09T18:52:21.310700Z'
+  actor: architect
+  from_state: awaiting_senior_revision
+  to_state: awaiting_architect_decision
+  reason: Cycle-2 impl routing (α fix-test) is a code/test rework, not a plan-stage
+    senior_revision; post-commit hook auto-advanced on the routing artifact. Restoring
+    to take the documented impl-rework override path (architect_decision→junior_impl,
+    cycle++).
+- timestamp: '2026-06-09T18:52:23.461951Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-3 rework (ADR-008 Decision 11): α fix the vacuous F-deadloop regression
+    test (use a real AUTO tool so it fails on the reverted one-line) + fold in N1
+    API-level run_id correlation assertion. No product-code change (runner verified
+    correct), spine byte-frozen, no ADR amendment. See architect-routing-on-impl-cycle2.md.'
 requires_cross_family_review: true
