@@ -1,7 +1,11 @@
 # ADR-042: Recurring pipeline scheduler + schedule persistence + restart re-arm (P5.1b)
 
-**Status:** Proposed (senior-drafted for P5.1b, 2026-06-09) — extends ADR-041 per its
-D10 ("Extends this ADR (or ADR-042)"). Architect-ratified decision surface
+**Status:** Accepted (architect, 2026-06-09) — extends ADR-041 per its
+D10 ("Extends this ADR (or ADR-042)"). Plan-stage dual-lens cleared (R0-B-on-plan clean +
+R0-A-on-plan needs_architect, two surfaced unratified decisions routed in
+`docs/process/reviews/P5.1b/architect-routing-on-plan.md`: Y1 cron = (c) interval-only/defer-cron,
+Y2 schedule-mgmt endpoints = keep, N3 room-growth = acknowledged deferred-GC; senior absorbed, RC-3:
+senior did not self-accept). Originally Proposed (senior-drafted) 2026-06-09. Architect-ratified decision surface
 (`docs/process/architect-briefs/P5.1b.md` §"Architect ratification", all-by-lean B0–B6,
 commit `811412a`). `requires_cross_family_review: true` (set in `.workflow/P5.1b.yaml`):
 plan-stage **dual-lens** required (Lens A = scheduler safety + headless-initiation
