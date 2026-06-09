@@ -1,9 +1,9 @@
-"""Pipeline definition + run-index persistence (ADR-041 D8).
+"""Pipeline definition + run-index + schedule persistence (ADR-041 D8 / ADR-042 D2).
 
 Side tables co-located in the main DB, following the users/sessions precedent
 (api/auth/users.py:30-67). CREATE TABLE IF NOT EXISTS is idempotent.
 
-No schedule columns (cron/interval/next_fire) — those are P5.1b (ADR-041 D10).
+P5.1b adds the pipeline_schedules side table (ADR-042 D2).
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from orchestrator.pipeline.schema import (
     PipelineDefinition,
     PipelineRecord,
     PipelineRunRecord,
+    PipelineScheduleRecord,
 )
 
 # ---------------------------------------------------------------------------
@@ -39,6 +40,21 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     started_at    INTEGER NOT NULL,
     status        TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pipeline_schedules (
+    schedule_id   TEXT PRIMARY KEY,
+    pipeline_id   TEXT NOT NULL,
+    owner_user_id TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    expr          TEXT NOT NULL,
+    next_fire     INTEGER NOT NULL,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    created_at    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_schedules_due
+    ON pipeline_schedules (enabled, next_fire)
+    WHERE enabled = 1;
 """
 
 
@@ -174,5 +190,158 @@ def update_pipeline_run_status(
     conn.execute(
         "UPDATE pipeline_runs SET status = ? WHERE run_id = ?",
         (status, run_id),
+    )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Schedule CRUD (ADR-042 D2 / P5.1b-2)
+# ---------------------------------------------------------------------------
+
+
+def create_schedule(
+    conn: sqlite3.Connection,
+    *,
+    pipeline_id: str,
+    owner_user_id: str,
+    kind: str,
+    expr: str,
+    next_fire: int,
+) -> PipelineScheduleRecord:
+    """Insert a new pipeline schedule row; returns the created record."""
+    schedule_id = f"psch_{uuid.uuid4().hex}"
+    created_at = int(time.time() * 1000)
+    conn.execute(
+        "INSERT INTO pipeline_schedules"
+        " (schedule_id, pipeline_id, owner_user_id, kind, expr, next_fire, enabled, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+        (schedule_id, pipeline_id, owner_user_id, kind, expr, next_fire, created_at),
+    )
+    conn.commit()
+    return PipelineScheduleRecord(
+        schedule_id=schedule_id,
+        pipeline_id=pipeline_id,
+        owner_user_id=owner_user_id,
+        kind=kind,
+        expr=expr,
+        next_fire=next_fire,
+        enabled=True,
+        created_at=created_at,
+    )
+
+
+def get_schedule(
+    conn: sqlite3.Connection,
+    schedule_id: str,
+) -> PipelineScheduleRecord | None:
+    """Fetch one schedule by schedule_id.  Returns None if not found."""
+    row = conn.execute(
+        "SELECT schedule_id, pipeline_id, owner_user_id, kind, expr, next_fire, enabled, created_at"
+        " FROM pipeline_schedules WHERE schedule_id = ?",
+        (schedule_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    sid, pid, owner, kind, expr, next_fire, enabled, created_at = row
+    return PipelineScheduleRecord(
+        schedule_id=sid,
+        pipeline_id=pid,
+        owner_user_id=owner,
+        kind=kind,
+        expr=expr,
+        next_fire=next_fire,
+        enabled=bool(enabled),
+        created_at=created_at,
+    )
+
+
+def list_schedules_for_pipeline(
+    conn: sqlite3.Connection,
+    pipeline_id: str,
+) -> list[PipelineScheduleRecord]:
+    """List all schedules for a given pipeline, ordered by created_at."""
+    rows = conn.execute(
+        "SELECT schedule_id, pipeline_id, owner_user_id, kind, expr, next_fire, enabled, created_at"
+        " FROM pipeline_schedules WHERE pipeline_id = ? ORDER BY created_at ASC",
+        (pipeline_id,),
+    ).fetchall()
+    return [
+        PipelineScheduleRecord(
+            schedule_id=sid,
+            pipeline_id=pid,
+            owner_user_id=owner,
+            kind=kind,
+            expr=expr,
+            next_fire=next_fire,
+            enabled=bool(enabled),
+            created_at=created_at,
+        )
+        for sid, pid, owner, kind, expr, next_fire, enabled, created_at in rows
+    ]
+
+
+def list_due_schedules(
+    conn: sqlite3.Connection,
+    now_ms: int,
+) -> list[PipelineScheduleRecord]:
+    """Return enabled schedules whose next_fire is at or before now_ms.
+
+    Discovery query for the reader path (ADR-042 D4).  Results are approximate
+    (stale reader); the sweeper act re-checks authoritatively on the writer.
+    """
+    rows = conn.execute(
+        "SELECT schedule_id, pipeline_id, owner_user_id, kind, expr, next_fire, enabled, created_at"
+        " FROM pipeline_schedules WHERE enabled = 1 AND next_fire <= ?",
+        (now_ms,),
+    ).fetchall()
+    return [
+        PipelineScheduleRecord(
+            schedule_id=sid,
+            pipeline_id=pid,
+            owner_user_id=owner,
+            kind=kind,
+            expr=expr,
+            next_fire=next_fire,
+            enabled=bool(enabled),
+            created_at=created_at,
+        )
+        for sid, pid, owner, kind, expr, next_fire, enabled, created_at in rows
+    ]
+
+
+def update_schedule_next_fire(
+    conn: sqlite3.Connection,
+    schedule_id: str,
+    next_fire: int,
+) -> None:
+    """Advance next_fire for a schedule (claim step in ADR-042 D4 step 3)."""
+    conn.execute(
+        "UPDATE pipeline_schedules SET next_fire = ? WHERE schedule_id = ?",
+        (next_fire, schedule_id),
+    )
+    conn.commit()
+
+
+def set_schedule_enabled(
+    conn: sqlite3.Connection,
+    schedule_id: str,
+    enabled: bool,
+) -> None:
+    """Enable or disable a schedule."""
+    conn.execute(
+        "UPDATE pipeline_schedules SET enabled = ? WHERE schedule_id = ?",
+        (1 if enabled else 0, schedule_id),
+    )
+    conn.commit()
+
+
+def delete_schedule(
+    conn: sqlite3.Connection,
+    schedule_id: str,
+) -> None:
+    """Delete a schedule row."""
+    conn.execute(
+        "DELETE FROM pipeline_schedules WHERE schedule_id = ?",
+        (schedule_id,),
     )
     conn.commit()
