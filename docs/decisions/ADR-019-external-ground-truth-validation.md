@@ -138,3 +138,4 @@ Rule (c) is a standalone decision (the representation, the predicate, the adviso
 - `src/orchestrator/memory/{promotion.py,matcher.py,store.py}` — `promote_hypothesis` (sole actuator), `run_matcher` (advisory precedent), `_row_to_hypothesis` (reused by the reader).
 - `tests/memory/test_constitution.py` — no-LLM rglob (covers `validation.py`) + `test_matcher_advisory_orthogonality_ast_guard` (the AST shape rule (c) reuses).
 - `docs/retrospectives/P2.2-candidates.md` RC-23/RC-24 (substring-scan fragility — ADR-019 prose + the guard avoid). `docs/process/dual-lens-r0b.md` RC-15/RC-20.
+- **P5.1a / ADR-041 name-collision note:** `src/orchestrator/sources/` (ADR-041 D4) is the pipeline *read-input* abstraction (web/rss/file → text for analysis). It is the **opposite direction** from `connectors/` — `connectors/` is ground-truth *output*, `sources/` is data *input*. See `docs/architecture/sources-vs-connectors.md`.
