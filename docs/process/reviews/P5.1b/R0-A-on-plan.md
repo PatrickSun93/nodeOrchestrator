@@ -4,7 +4,10 @@ stage: plan
 review: R0-A-on-plan
 lens: A (scheduler safety + headless-initiation correctness) + B (spine + auto-fire no-regression)
 reviewer: architect-partner
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - needs_architect   # original — Y1 cron + Y2 endpoints surfaced for architect routing
+  - clean             # RC-10 bump after senior absorbed architect-routing-on-plan.md (2026-06-09)
 verify_base: "origin/main @ 1a61036 (HEAD); product seam byte-unchanged since ratification 811412a"
 artifacts_reviewed:
   - docs/process/senior-plans/P5.1b.md (6 atomics P5.1b-1..6)
@@ -209,4 +212,25 @@ Plan + ADR-042 are **faithful, seam-correct, and implementable**. Route the two 
 Then the ADR-042 **Accept** is yours (RC-3 — not the senior, not me; the junior leaves it
 `Proposed`, P5.1b-6). N1–N4 are notes (N3 — the unbounded-room consequence — is the one worth
 a one-line ADR Consequences acknowledgement).
+
+---
+
+## RC-10 absorption (senior, 2026-06-09) — verdict bumped `needs_architect` → `clean`
+
+Architect routing (`architect-routing-on-plan.md`) absorbed into the plan + ADR-042 (both on
+`main`, no impl branch yet):
+
+- **Y1 = (c) interval-only, defer cron.** P5.1b-1 narrowed to interval-only
+  (`kind=cron` → `ValueError`/`NotImplementedError`); ADR-042 **D3** rewritten (cron deferred
+  to a follow-on, `kind` column retained forward-compat, schema/sweeper/endpoints unchanged);
+  P5.1b-5 + D9 reject `kind=cron` at create with **422**; the cron adversarial-test list
+  dropped, interval boundary/overflow tests kept, UTC-only retained.
+- **Y2 = keep.** P5.1b-5 + ADR-042 D9 unchanged.
+- **N3 = ack-deferred-GC.** One line added to ADR-042 **Consequences** naming the unbounded
+  `FREE_CHAT` room growth as a conscious deferred retention/GC concern (not a gap).
+- **N2.** The interval-drift-from-claim-time doc-comment is now an explicit P5.1b-1 acceptance
+  criterion (the correct price of skip-to-next). **N1/N4** — no action (within ratified B5 /
+  accurate as written).
+
+RC-3: ADR-042 stays **Proposed** — the architect Accepts; the senior does not self-accept.
 </content>

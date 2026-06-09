@@ -140,28 +140,42 @@ the JSON `definition` blob:** `PipelineDefinition` is `frozen=True` and the JSON
 non-queryable, so every fire would rewrite the whole definition and the sweeper could not
 index due-ness.
 
-### D3. `next_fire` arithmetic is **code**, never an LLM judgment (constitutional carry-forward)
+### D3. `next_fire` arithmetic is **code**, never an LLM judgment — **interval-only in P5.1b; cron deferred** (architect-routed Y1 = (c))
 
 The computation of *when* a schedule next fires — `compute_next_fire(kind, expr, after_ms)`
 — is **pure deterministic code** in a new isolated module (`pipeline/schedule.py`):
 
-- **`interval`** → `next = after_ms + interval_s * 1000`.
-- **`cron`** → the next occurrence of a **standard 5-field cron expression** (`minute hour
-  day-of-month month day-of-week`, supporting `*`, lists `a,b`, ranges `a-b`, steps `*/n`)
-  strictly after `after_ms`, computed by a small self-contained evaluator (no new
-  third-party dependency — consistent with ADR-040 D1's no-new-dependency / single-process
-  posture). The cron evaluator is the **one substantive greenfield correctness surface** of
-  this slice (the RSS-parser analog of ADR-041) and **must be tested adversarially**
-  (Lens A): boundary minutes, month/day rollover, DOM-vs-DOW union semantics, leap handling,
-  malformed-expr rejection at create time. *(See "Considered alternatives" — if the
-  architect prefers a vetted dependency (`croniter`) or an interval-only P5.1b, the
-  `kind`/`expr` schema and the sweeper are unchanged; only this module swaps.)*
+- **`interval`** (implemented) → `next = after_ms + interval_s * 1000`. UTC epoch-ms; the act
+  recomputes from claim-time (D4/D5 skip-to-next), so an interval drifts by up to
+  `sweep_interval_s` per fire — the correct price of skip-to-next (computing from the old
+  `next_fire` would re-introduce the backfill storm B3 rejects).
+- **`cron`** (**deferred to a focused follow-on**) → not evaluated in P5.1b:
+  `validate_schedule_expr("cron", …)` raises `ValueError` and `compute_next_fire` raises
+  `NotImplementedError`; the schedule-create endpoint (D9) rejects `kind=cron` with **422**.
 
-**No new routing `LLMPurpose`.** Scheduling is cron/interval arithmetic = orchestration =
-code/config (ADR-041 §9). The **only** LLM in a scheduled run remains the analyze + reduce
-content-gen inside the unchanged `run_pipeline`. The scheduler **actuates, never decides**
-(ADR-040 D2 framing): the operator defined the schedule (**when**) and the pipeline
-(**what**); the timer only **initiates** the configured run at the configured time.
+**Why interval-only (architect routing, `architect-routing-on-plan.md` Y1).** The ratified
+B2 table named `kind ∈ {interval, cron}`, but *how* to evaluate cron was never in the
+decision surface (B0–B6 silent). A hand-rolled 5-field cron evaluator is exactly the
+**greenfield-correctness class** P5.1a cyc1 shipped as the RSS billion-laughs hole; keeping it
+**out** of the scheduler dual-lens (which exists to scrutinize the *scheduler*, not a parser)
+mirrors B0's own discipline of deferring incrementality to keep the slice tight. The scheduler
+crux (sibling sweeper + persistence + re-arm + residual + opt-in) is **fully exercisable with
+interval-only**. Cron evaluation lands in its own follow-on with a dedicated
+greenfield-correctness review. *(Rejected for P5.1b: (a) hand-rolled subset — the strong
+runner-up, honors the no-new-dep posture but adds the RSS-class surface to this dual-lens;
+(b) `croniter` — cuts against the project's 4-runtime-dependency conservatism, ADR-040 D1.)*
+
+**The `kind` column is retained for forward-compat — its presence never implies a working
+cron path.** This routing narrows **only** the arithmetic module: the `pipeline_schedules`
+schema (D2), the sibling sweeper (D1/D4), boot re-arm (D5), and the endpoint surface (D9) are
+**unchanged** — they are kind-agnostic; only `compute_next_fire`/`validate_schedule_expr`
+restrict to interval, and the create endpoint gates cron out at 422.
+
+**No new routing `LLMPurpose`.** Interval arithmetic = orchestration = code/config (ADR-041
+§9). The **only** LLM in a scheduled run remains the analyze + reduce content-gen inside the
+unchanged `run_pipeline`. The scheduler **actuates, never decides** (ADR-040 D2 framing): the
+operator defined the schedule (**when**) and the pipeline (**what**); the timer only
+**initiates** the configured run at the configured time.
 
 ### D4. Discover-on-reader / act-on-writer; **claim-then-run** re-arm + writer-side authoritative re-check (B1 act-split; the double-fire guard)
 
@@ -293,9 +307,11 @@ ADR-041 D7's "minimal definition CRUD ships so there is something to run" and it
 **owner-private** access posture (ADR-041 D7 / R0-A F3) under **fail-closed auth**
 (ADR-039 D1 — the principal is server-derived, never from the body):
 
-- **`POST /pipelines/{id}/schedules`** — create a schedule (validate `kind`/`expr`,
-  reject malformed cron at create time, compute the initial `next_fire =
-  compute_next_fire(kind, expr, now)`); owner of the parent pipeline only (403 otherwise).
+- **`POST /pipelines/{id}/schedules`** — create a schedule (`validate_schedule_expr(kind,
+  expr)` → 422 on malformed; per D3 this **rejects `kind=cron` with 422** until the cron
+  follow-on lands, so the `kind` column never implies a usable cron path; compute the initial
+  `next_fire = compute_next_fire(kind, expr, now)` for `interval`); owner of the parent
+  pipeline only (403 otherwise).
 - **`GET /pipelines/{id}/schedules`** — list the caller's schedules for that pipeline.
 - **`DELETE /pipelines/{id}/schedules/{schedule_id}`** and **`PATCH …`
   (enable/disable)** — owner only.
@@ -330,9 +346,12 @@ validation.)*
 - **B6 (b) amend ADR-041 in place** — rejected: ADR-041 scoped itself "P5.1a only";
   bundling dilutes both records and the focused dual-lens. ADR-042 keeps the scheduler a
   clean, separately-reviewable contract for P5.1c to bind to.
-- **D3 cron via `croniter` (new dep) / interval-only P5.1b** — the no-new-dependency
-  hand-rolled subset is the lean; both alternatives leave the schema + sweeper unchanged
-  (only `pipeline/schedule.py` swaps). Surfaced for the architect in the plan §5.
+- **D3 cron via hand-rolled 5-field subset / `croniter` (new dep)** — both **rejected for
+  P5.1b** (architect-routed Y1 = (c) interval-only): (a) hand-rolled is the strong runner-up
+  (honors the no-new-dep posture) but adds the RSS-class greenfield-correctness surface into
+  the *scheduler* dual-lens; (b) `croniter` cuts against the 4-runtime-dependency conservatism
+  (ADR-040 D1). Cron evaluation is deferred to a focused follow-on; all three options leave the
+  schema (D2) + sweeper (D1/D4) + endpoints (D9) unchanged — only `pipeline/schedule.py` differs.
 
 ## Consequences
 
@@ -349,10 +368,17 @@ validation.)*
   Accepted not softened.
 - A **second** bounded background task joins the lifecycle (ADR-025 D6) — it must shut down
   cleanly and never block the writer (discovery is read-path).
-- A self-contained **cron evaluator** (D3) is genuine new code with its own correctness
-  surface — floored to a documented 5-field subset, must be tested adversarially (Lens A).
+- **Cron is deferred** (D3, architect-routed Y1) — P5.1b is interval-only; the cron evaluator
+  (the RSS-class greenfield surface) lands in its own follow-on with a dedicated review. The
+  `kind` column ships but `kind=cron` is rejected at create (422) until then.
 - The `pipeline_schedules` table + the schedule endpoints add schema + API surface the
   P5.1c extension must respect.
+- **Unbounded `FREE_CHAT` room growth under automation (N3 — a conscious deferred concern,
+  not a gap).** Each run creates a fresh `FREE_CHAT` room (`runner.py:267-271`); under the
+  scheduler this becomes **unbounded over time** (an hourly schedule ≈ 720 rooms/month,
+  indefinitely). The output stays reversible (ADR-041 D5), so this is **resource/retention,
+  not safety**. Room/run **retention + GC is deliberately deferred** to a later slice (like
+  incrementality, B0) — named here explicitly so it is an intentional defer, not an oversight.
 
 **Neutral:** with the scheduler **OFF** (the default) behavior is **byte-identical to
 P5.1a** — no sweeper started, no boot re-arm, the new table simply unused; the manual `/run`
@@ -364,7 +390,7 @@ path is unchanged. The COUNTDOWN auto-fire spine is **byte-untouched** in either
 |---|---|
 | D1 sibling sweeper | **Low** — removable (off ⇒ never started); shares nothing spine-critical. |
 | D2 `pipeline_schedules` side table | **Medium** — the table shape binds P5.1c; additive, droppable with the feature. |
-| D3 `next_fire` arithmetic (code, no LLM) | **Do-not-reverse** (no-LLM-scheduling is a spine invariant) / **Medium** (cron-impl swappable). |
+| D3 `next_fire` arithmetic (code, no LLM; interval-only, cron deferred) | **Do-not-reverse** (no-LLM-scheduling is a spine invariant) / **Medium** (cron added later behind the retained `kind` column). |
 | D4 claim-then-run + writer re-check | **Do-not-reverse** — the still-due re-check + claim-first ordering is the double-fire crux. |
 | D5 boot re-arm = skip-to-next | **Low** — a read/UPDATE rule, tunable without schema change. |
 | D6 reversible-only / second-caller | **Do-not-reverse** — `countdown_auto_fire=None` is the safety floor P5.1c steps beyond. |
