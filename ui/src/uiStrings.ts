@@ -103,7 +103,7 @@ export function toolNameLabel(rawName: string): string {
 }
 
 export function authorLabel(author: string): string {
-  if (author === "user") return "你";
+  if (author === "user" || author.startsWith("user:")) return "你";
   if (author === "system") return "系统";
   if (author.startsWith("agent:")) {
     const agentId = author.slice("agent:".length);

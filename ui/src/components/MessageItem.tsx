@@ -52,7 +52,7 @@ function toolActivityDescription(event: Event): string {
 export function MessageItem({ event }: Props) {
   const author = authorLabel(event.author);
   const typeChip = eventTypeLabel(event.type);
-  const isUser = event.author === "user";
+  const isUser = event.author === "user" || event.author.startsWith("user:");
   const isToolActivity = TOOL_ACTIVITY_TYPES.has(event.type);
   const isDecision = DECISION_CLASS_TYPES.has(event.type);
   const isSystem = SYSTEM_AFFORDANCE_TYPES.has(event.type);
