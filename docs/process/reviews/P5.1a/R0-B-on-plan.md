@@ -22,13 +22,16 @@ live_code_traced:
   - src/orchestrator/llm/purposes.py:25-91 (LLMPurpose)
   - src/orchestrator/api/auth/users.py:30-67 (side-table precedent)
   - src/orchestrator/connectors/__init__.py
-verdict: clean_with_findings
+verdict: clean
+verdict_history: ["clean_with_findings (initial)", "clean (RC-10 bump after architect-routed absorption, plan revision 2, 2026-06-09)"]
 findings_count: 5
 ---
 
 # R0-B on plan — P5.1a (cross-family external lens)
 
-## Verdict: clean_with_findings — 0 🔴 / 4 🟡 / 1 🟢
+> **RC-10 verdict bump → `clean` (plan revision 2, 2026-06-09).** All 4 🟡 + 1 🟢 were architect-routed α-absorb and absorbed into the plan + ADR-041: **Y1 →** T3 pins `countdown_auto_fire=None` + explicit `ThresholdConfig(8,5,0)`; **Y2 →** T3 quotes the exact untrusted-data delimiter (heading + "data you observed, NOT instructions" framing); **Y3a →** the §5 fork resolved to D2 (T3 unblocked); **Y3b →** T3/ADR-041 D3 note writer_executor serialization of run + sweeper; **Y4 →** T3 pins the branch-failure recording mechanism (OBSERVATION event + continue, excluded from reduce); **N1 →** ADR-041 D6 + T4 inscribe convention-not-enforcement. The body below is the original review, preserved for audit.
+
+## Verdict: clean_with_findings — 0 🔴 / 4 🟡 / 1 🟢 (original — superseded by the bump above)
 
 The plan + ADR-041 correctly identify and constrain the P5.1a safety surface. The constitutional invariants (gate/executor byte-frozen, no new `LLMPurpose`, room/agent contracts untouched, single-writer preserved, reversible output only) are all explicitly mandated and verifiable. The two 🟡 worth architect attention are (Y1) the `countdown_auto_fire` parameter not being explicitly nulled in the pipeline's `process_tool_calls` call — a single parameter that, if inadvertently passed, would let the sweeper auto-fire pipeline-produced `TOOL_CALL_PENDING` events — and (Y3) a race between `POST /pipelines/{id}/run`'s synchronous writer occupancy and the sweeper's `_writer_approve_helper` call, which shares the same `writer_executor`. The other two 🟡 are surfacing existing plan-acknowledged items (the §5 fork, the per-branch failure-isolation contract at the LLM-call level).
 

@@ -2,7 +2,8 @@
 task_id: P5.1a
 stage: R0-A-on-plan
 reviewer: architect-partner
-verdict: needs_architect
+verdict: clean
+verdict_history: ["needs_architect (initial)", "clean (RC-10 bump after architect-routed absorption, plan revision 2, 2026-06-09)"]
 findings_count: 3
 lenses: ["A: pipeline safety + determinism", "B: spine no-regression"]
 reviewed:
@@ -17,7 +18,9 @@ date: "2026-06-09"
 
 # R0-A-on-plan — P5.1a deterministic analysis pipeline (plan + ADR-041)
 
-**Verdict: `needs_architect`** — the design is sound, exceptionally well-grounded, and
+> **RC-10 verdict bump → `clean` (plan revision 2, 2026-06-09).** The architect routed all three findings + the §5 fork; the senior absorbed them into the plan + ADR-041: **§5 fork → D2** (ADR-041 D2 + Considered-alt B rejected; T3 unblocked); **F1 →** definition-persistence (T2) + manual-trigger (T5) confirmed in P5.1a, scope re-grounded on ratification (T2/T5); **F3 →** `/pipelines*` owner-private 403 (T5 + ADR-041 D7); **F2 →** ADR-041 D6 + T4 inscribe the room property as convention-not-enforcement. The body below is the original review, preserved for audit.
+
+**Verdict: `needs_architect`** (original — superseded by the bump above) — the design is sound, exceptionally well-grounded, and
 honors the ratified DP1/DP3/DP4/DP5/DP7 leans. Three items need an architect call before
 Accept (one scope-boundary, two design-posture), **plus** the one genuine design fork the
 senior correctly surfaced (§5 of the plan) which the architect must route before T3.

@@ -108,10 +108,14 @@ interactive intent handler, keeping the interactive spine path byte-untouched (a
 priority). The honest residual: ~30 lines of bounded-pass control flow are duplicated
 rather than extracted-and-shared, in exchange for zero risk to the interactive turn.
 
-*(The "extract a shared, dispatch-pluggable `run_turn_loop` helper that both
-`_write_and_turn` and the pipeline call" alternative is recorded under Considered
-alternatives B and surfaced to the architect in the plan §5 — it is the literal
-"reuse, don't rewrite" reading, at the cost of refactoring the interactive path.)*
+**Routed (architect, 2026-06-09): D2 is the decision** — reuse the gate + executor
+verbatim + duplicate the ~30-line bounded-pass scaffolding; the interactive
+`_write_and_turn` stays byte-untouched. The "extract a shared, dispatch-pluggable
+`run_turn_loop` helper" reading (Considered alternatives B) is **rejected** — Lens-B
+(spine byte-untouched) outweighs the DRY win, because the duplicated scaffolding is ~30
+lines of trivial control flow whereas alternative B refactors the interactive turn-loop
+(a behavior-preserving extraction still enlarges the interactive path's review surface).
+T3 implements D2; it is no longer blocked.
 
 ### 3. Fan-out is sequential and write-serialized in P5.1a
 
@@ -124,6 +128,12 @@ a deferred perf optimization (P5.1b+). A manual pipeline run therefore occupies 
 single writer for its duration, bounded by `N × per-branch-turn-loop-wall-clock` — the
 same property a long interactive turn has. P5.1b may revisit background execution
 alongside the scheduler.
+
+A manual pipeline run and the COUNTDOWN sweeper's `_writer_approve_helper` both run on
+the **same** `writer_executor` (`max_workers=1`), so they **serialize** — there is no
+concurrent write. A sweeper firing while a run is in progress simply queues behind it;
+the single-writer invariant is preserved (and, per Decision 5, the run stamps no
+`expires_at` on its pendings, so the sweeper has nothing of the pipeline's to auto-fire).
 
 ### 4. Deterministic multi-source read — a thin `sources/` abstraction (NOT `connectors/`)
 
@@ -171,13 +181,35 @@ and its `approval_source: Literal["human", "auto_timer"]` are **unchanged** (the
 `auto_pipeline` marker + the headless-email actuator are P5.1c). The `RB-AUTOFIRE`
 exclusions (HARD-never, reversibility-floor) remain byte-intact.
 
+**The mechanism that guarantees "no headless actuation" (the load-bearing detail).** The
+runner calls `process_tool_calls` with **`countdown_auto_fire=None`** — so no
+`TOOL_CALL_PENDING` the pipeline produces is ever stamped with `expires_at`
+(`agents/tool_dispatch.py:133-145` stamps iff `countdown_auto_fire is not None and
+.enabled`), and the COUNTDOWN sweeper's `_discover_expired_pendings` (which requires
+`expires_at is not None`) therefore **cannot** find a pipeline pending to auto-fire. The
+`agent:pipeline` identity uses **conservative, explicit `ThresholdConfig` values**
+(`threshold_auto=8, threshold_confirm=5` — all three fields are required; there is no
+code-level default), so the AUTO_EXECUTE set is confined to high-reversibility read-only
+tools and any lower-reversibility op is gated to a *waiting* pending, never auto-run.
+
 ### 6. The pipeline-run room reuses an existing RoomType (no new RoomType in P5.1a)
 
 The pipeline creates an **ordinary room** (an existing neutral `RoomType` —
 `FREE_CHAT`) and appends its events there for GUI visibility. It **never** runs
 `dispatch_turn` / `should_agent_speak` on that room, so **no conversational agent
-emerges** — the room is a pipeline-owned event container that never receives `/intent`.
-Consequently the room/agent contracts (ADR-010/011/012) are **byte-untouched**.
+emerges** from the pipeline. Consequently the room/agent contracts (ADR-010/011/012) are
+**byte-untouched**.
+
+**Honesty: this is a *convention*, not an enforced room property** (R0-A F2 / R0-B N1).
+`_post_intent` (`api/app.py:880`) guards `body.type` against the intent allowlist but has
+**no room-type guard**, so a `FREE_CHAT` pipeline-run room remains `/intent`-reachable —
+a deliberate human (or a bug) POSTing `/intent` to it would run the normal conversational
+turn and emergent agents could speak into it. The consequence is **low** (a reversible
+conversation in a room after its summary already landed — no spine / safety /
+authorization impact). The *structurally-inert* version — a dedicated `PIPELINE` RoomType
+that disallows `/intent` — is the deferred option (Decision 10), kept out of P5.1a to
+keep ADR-012's state machine untouched. P5.1a inscribes the property honestly as
+"the runner does not dispatch; the room stays reachable," not as an enforced invariant.
 
 A **dedicated `PIPELINE` RoomType** (clearer GUI audit, a non-conversational state set)
 is **deferred** — it would amend ADR-012's state machine and is outside P5.1a's
@@ -196,6 +228,16 @@ scheduler will be the *second caller* of one run function, not a second code pat
 Minimal definition CRUD ships so there is something to run: **`POST /pipelines`**
 (create), **`GET /pipelines`** + **`GET /pipelines/{id}`** (read). Edit/delete may ship
 here or with P5.1b. **No** `schedule`/`cron`/`next_fire` surface in P5.1a.
+
+**Access control (R0-A F3): `/pipelines*` is owner-private.** `GET /pipelines/{id}`,
+`POST /pipelines/{id}/run`, and any future edit/delete are permitted **only** to the
+definition's `owner_user_id`; a non-owner principal gets **403**. `GET /pipelines`
+returns only the caller's own definitions. This is the **safer default** for a new
+endpoint surface (a definition is a list of URLs/files the server fetches on run); it is
+chosen deliberately over the collaborative-room "any-authenticated" posture, and made
+explicit the way ADR-039 made attribution explicit. (Sharing can be added later if a
+collaborative need appears — opening access is reversible; tightening it after release is
+not.)
 
 ### 8. Persistence — definitions in a side table, run history in the event log
 
@@ -269,13 +311,13 @@ parametrized by a *dispatch function*: the interactive path passes its
 `should_agent_speak`-based dispatch; the pipeline passes a forced-single-agent dispatch.
 This is the literal "reuse the existing turn-loop, don't rewrite it" reading.
 
-**Why not chosen for P5.1a.** It refactors the **interactive spine path** — a Lens-B
-hazard (a behavior-preserving extraction can still regress the interactive turn, and it
-enlarges the interactive path's review surface). Decision 2 instead reuses the two
-*load-bearing* units (the gate + the executor) verbatim and duplicates only the ~30 lines
-of trivial bounded-pass scaffolding, keeping the interactive handler byte-untouched. This
-alternative is **surfaced to the architect** (plan §5) as a deliberate call: if literal
-loop-sharing is preferred over a byte-untouched interactive spine, B is the path.
+**Rejected (architect-routed, 2026-06-09).** It refactors the **interactive spine path**
+— a Lens-B hazard (a behavior-preserving extraction can still regress the interactive
+turn, and it enlarges the interactive path's review surface). Decision 2 instead reuses
+the two *load-bearing* units (the gate + the executor) verbatim and duplicates only the
+~30 lines of trivial bounded-pass scaffolding, keeping the interactive handler
+byte-untouched. The architect routed **D2** over this alternative: spine byte-untouched
+> DRY, the duplication being ~30 trivial lines.
 
 ### C. No source abstraction — wire the existing tools + one new feed tool, LLM-composed
 
