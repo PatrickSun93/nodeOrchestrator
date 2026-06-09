@@ -2,164 +2,147 @@
 task_id: P5.1a
 review: plan-vs-impl
 reviewer: senior
-cycle: 2
+cycle: 3
 verdict: clean
-supersedes: "cycle-1 plan-vs-impl (needs_architect, Y1 RSS-XXE + Y2 dual run_id)"
+supersedes: "cycle-2 plan-vs-impl (clean, all-α rework @267da97)"
 plan: docs/process/senior-plans/P5.1a.md
 adr: ADR-041
-routing: docs/process/reviews/P5.1a/architect-routing-on-impl.md
+routing: docs/process/reviews/P5.1a/architect-routing-on-impl-cycle2.md
 impl_branch: origin/claude/P5.1a-impl
-impl_head: 267da97
+impl_head: 958d316
 reviewed_commits:
-  - 267da97  # P5.1a cycle-2 rework: all-α (B1 + F-runid + F-deadloop + F-succeeded + F-ownerparam)
+  - 958d316  # P5.1a cycle-3 rework: fix vacuous F-deadloop test + N1 run_id correlation
 date: "2026-06-09"
 summary: >
-  Cycle-2 re-review of the all-α rework (architect-routing-on-impl.md). All five
-  routed findings are absorbed faithfully and minimally, and both cycle-1 senior
-  🟡 (Y1 RSS-XXE doc/impl mismatch + padded-prolog evasion → B1; Y2 dual run_id →
-  F-runid) are resolved. B1: the 8 KiB byte pre-scan is replaced with
-  defusedxml(forbid_dtd=True) — position-independent, within ADR-041 D4's own
-  named floor (no amendment) — the doc now describes the real mechanism, and a
-  comment-padded-prolog evasion test reproduces R0-A's exploit and confirms it is
-  blocked. F-runid: the store accepts a caller-supplied run_id and the endpoint
-  threads result.run_id, so the pipeline_runs row id == the run-anchor event
-  run_id. F-deadloop: prev_pass_cursor = prev_cursor restores ADR-041 D2
-  multi-pass (verified prev_cursor is the pre-pass-0 snapshot). F-succeeded:
-  succeeded = branches_succeeded > 0. F-ownerparam: build_user_author(owner_user_id)
-  anchors the run. No plan-external expansion: spine byte-frozen across the full
-  range, no new LLMPurpose/EventType/RoomType, only the routed surfaces touched.
-  Verdict clean.
+  Cycle-3 re-review of the test-only rework routed by
+  architect-routing-on-impl-cycle2.md (α: fix the vacuous F-deadloop regression
+  test + fold in the N1 API-level run_id correlation assertion). The cycle-3 diff
+  (267da97→958d316) touches tests/ ONLY — zero product-code change, exactly as
+  the routing required and permitted. Both routed items land faithfully and
+  minimally. F-deadloop-test: test_analyze_branch_multi_pass_redispatch is
+  rewritten to inject a real AUTO tool (get_current_time, reversibility=10 ≥
+  threshold_auto=8) via explicit PipelineDeps + build_local_tool_registry,
+  mirroring R0-A's probe, so pass-0 emits a genuine TOOL_CALL+TOOL_RESULT and the
+  test asserts the re-dispatch ran (router.call.call_count == 3 — one of the two
+  sanctioned assertions). The cycle-2 vacuity defect is closed: empirically the
+  test now FAILS on the reverted one-line (prev_pass_cursor = len(...)) with
+  "got 2, expected 3" and PASSES on the fix — proven by reverting product line
+  170 in a throwaway worktree. N1: a new self-contained API test
+  (test_run_pipeline_run_id_matches_anchor_event) asserts the API-returned run_id
+  appears in the room run-anchor event content — substring containment on the
+  full id, satisfying "end-to-end, not just prefix". N2 left untouched (cosmetic,
+  routed no-action). No plan-external expansion; spine byte-frozen; no ADR-041
+  amendment. Verdict clean.
 ---
 
-# P5.1a — senior plan-vs-impl review (cycle 2)
+# P5.1a — senior plan-vs-impl review (cycle 3)
 
-**This file supersedes the cycle-1 plan-vs-impl review** (verdict
-`needs_architect`, findings Y1 RSS-XXE + Y2 dual run_id). Both cycle-1 🟡 are
-resolved below; the cycle-2 scope is the all-α rework commit `267da97` routed by
-`architect-routing-on-impl.md`.
+**This file supersedes the cycle-2 plan-vs-impl review** (verdict `clean`, all-α
+rework `@267da97`). The cycle-2 product code was verified clean there and is
+unchanged this cycle; the cycle-3 scope is the **test-only** rework commit
+`958d316` routed by `architect-routing-on-impl-cycle2.md` (α: fix the one
+remaining R0-A 🟡 — the vacuous F-deadloop regression test — plus fold in the N1
+API run_id correlation assertion).
 
-**Method.** Read-only on `main`; impl read via `git show 267da97` / `git diff
-origin/main...origin/claude/P5.1a-impl` (shared worktree — no checkout). Each
-routed finding was checked against (a) the routing disposition, (b) the cycle-1
-finding it answers, and (c) plan T1–T6 + ADR-041 for faithfulness and
-non-expansion. The spine-freeze (ADR-041 D9) was re-verified by a per-file
-diffstat over the full range.
+**Method.** Read-only on `main` (shared worktree — no checkout). The reviewed diff
+was read via `git diff 267da97 958d316`. To discharge the routing's load-bearing
+empirical requirement (the regression test *must fail on the reverted one-line and
+pass on the fix*), the impl tip `958d316` was checked out into a **throwaway
+detached worktree** (`/tmp/p51a-verify`, removed after) so the product code under
+test was present without disturbing the shared `main` checkout. There the two
+reworked tests were run on the fix (PASS), the F-deadloop product fix (runner.py
+line 170) was reverted to its buggy form and the runner test re-run (FAIL),
+the fix restored, and the full affected modules + lint/type gates run.
 
-## Routing → fix map (architect-routing-on-impl.md, all-α)
+## Scope guard — tests-only, zero product change
 
-| # | Sev | Cycle-1 origin | Fix landed | Verified faithful |
+`git diff --name-only 267da97 958d316`:
+
+| File | Δ |
+|---|---|
+| `tests/pipeline/test_runner.py` | +37 −13 (rewrite F-deadloop test) |
+| `tests/api/test_pipelines.py` | +25 (new N1 test) |
+
+No file outside `tests/` is touched. This matches the routing's explicit bound:
+*"No product-code change is required or permitted beyond the test (the runner code
+is verified correct); spine stays byte-frozen; no ADR-041 amendment."* ✅
+
+## Routing → fix map (architect-routing-on-impl-cycle2.md, all-α)
+
+| # | Sev | Fix routed | Fix landed | Verified faithful |
 |---|---|---|---|---|
-| **B1** | 🔴 | pvi-Y1 + R0A + R0B-F3 | `defusedxml(forbid_dtd=True)` + doc fix + padded-prolog test | ✅ |
-| F-runid | 🟡 | pvi-Y2 + R0B-F1 | store optional `run_id`; endpoint threads `result.run_id` | ✅ |
-| F-deadloop | 🟡 | R0A-Y1 | `prev_pass_cursor = prev_cursor` + multi-pass test | ✅ |
-| F-succeeded | 🟡 | R0A-Y2 | `succeeded = branches_succeeded > 0` + all-fail/partial tests | ✅ |
-| F-ownerparam | 🟡 | R0B-F2 | `build_user_author(owner_user_id)` anchors run + author test | ✅ |
+| **F-deadloop-test** | 🟡 | Rewrite to a real AUTO tool so pass-0 emits genuine TOOL_CALL+TOOL_RESULT; assert re-dispatch ran (call-count==3 OR pass-1 utterance after tool_result); test must fail on revert, pass on fix | Explicit `PipelineDeps(tools={"get_current_time": ToolMeta(reversibility=10)}, local_tools=build_local_tool_registry(tmp_path), …)`; asserts `router.call.call_count == 3` | ✅ (empirically fails-on-revert) |
+| N1 | 🟢→α | API test: returned `run_id` == in-room run-anchor `run_id`, end-to-end not just prefix | New `test_run_pipeline_run_id_matches_anchor_event`: `assert run_id in anchor.content` (full id, not a truncation) | ✅ |
+| N2 | 🟢 | no action (cosmetic mixed attribution) | untouched | ✅ |
 
-## Per-finding verification
+## Per-item verification
 
-### B1 (🔴) — RSS billion-laughs / XXE — resolved (closes cycle-1 Y1)
+### F-deadloop-test (🟡) — vacuous regression test → genuine guard
 
-- **Routing asked:** replace the hand-rolled byte-scan with `defusedxml`
-  (`forbid_dtd=True`) per ADR-041 D4's own recommendation; add a comment-padded
-  prolog test; make the doc describe the actual mechanism.
-- **What landed (`sources/rss.py`):** `_check_no_entity_declarations` /
-  `_DOCTYPE_SCAN_BYTES` are **deleted**; `_parse_feed` now calls
-  `defusedxml.ElementTree.fromstring(xml_text, forbid_dtd=True)` and maps
-  `DTDForbidden | EntitiesForbidden → SourceReadError` (fail-closed, no crash).
-  The malformed-XML `ET.ParseError` path is preserved.
-- **Why this closes the evasion:** `forbid_dtd=True` rejects the DOCTYPE at the
-  parser level, so the position of `<!DOCTYPE` in the prolog is irrelevant — the
-  8192-byte scan window the cycle-1 exploit padded past no longer exists. The new
-  test `test_rss_parse_comment_padded_prolog_doctype_blocked` builds the exact
-  R0-A payload (`<!-- {9000×'x'} --><!DOCTYPE foo [<!ENTITY x 'y'>]>…`) and
-  asserts `SourceReadError` — the reproduced exploit is now blocked.
-- **Floor / ADR:** `defusedxml` is one of T1's two named acceptable mechanisms
-  ("use `defusedxml` or `xml.etree` with entity resolution disabled") and is
-  ADR-041 D4's own recommendation → **no ADR amendment needed** (correctly none
-  taken). Dependency added cleanly: `defusedxml>=0.7` in `pyproject.toml`,
-  resolved to `0.7.1` in `uv.lock`, with a `[[tool.mypy.overrides]]
-  ignore_missing_imports` entry (defusedxml ships no stubs).
-- **Doc (`sources-vs-connectors.md`):** the phantom `_SafeXMLParser` /
-  `EntityDeclHandler` claim is removed; the note now reads "uses `defusedxml`
-  (`forbid_dtd=True`) … position-independent: DOCTYPE … rejected at the parser
-  level regardless of comment or PI padding." Doc now matches code.
+The cycle-2 test returned a fabricated `read_file` ToolCall but injected no real
+tool registry, so pass-0 wrote no `TOOL_CALL`/`TOOL_RESULT` events — the
+re-dispatch loop's `prev_pass_window` was empty on both fixed and reverted code,
+making the test pass identically either way (the recurrence of the cycle-1 B1
+"tests give false assurance" theme that the project's test-honesty bar requires us
+to close).
 
-### F-runid (🟡) — single run_id across runner↔store — resolved (closes cycle-1 Y2)
+The rework adopts R0-A's probe exactly:
 
-- `create_pipeline_run` gains an optional `run_id: str | None = None` (mints
-  `prun_{uuid4}` only when `None` — backward-compatible). The `/run` endpoint
-  passes `run_id=result.run_id`, and the stale "Use the run_id from the store
-  record" comment is removed. Consequence: `pipeline_runs.run_id` == the
-  `run_id=…` embedded in the run-anchor OBSERVATION — the dual-id ambiguity from
-  cycle-1 Y2 is gone; the index row and the run's events join on a single id.
-  Covered by `test_create_pipeline_run_with_caller_supplied_run_id` (store) +
-  `test_run_pipeline_run_id_is_stable` / `…_anchor_event_embeds_run_id` (runner).
+- Replaces the `_make_deps` helper with an explicit `PipelineDeps` that wires a
+  **real AUTO tool** — `tools={"get_current_time": ToolMeta(reversibility=10)}`
+  (10 ≥ `threshold_auto`=8 → AUTO_EXECUTE tier) plus
+  `local_tools=build_local_tool_registry(tmp_path)`. So pass-0's tool call is
+  genuinely processed: `process_tool_calls` emits a `TOOL_CALL` event and
+  `execute_pending_tool_calls` appends a `TOOL_RESULT`, giving the re-dispatch
+  loop real events to detect.
+- Pass-0 returns a `get_current_time` ToolCall; calls 2 (re-dispatch) and 3
+  (reduce) return plain results. The assertion is `router.call.call_count == 3`
+  — the first of the two sanctioned forms.
 
-### F-deadloop (🟡) — restores ADR-041 D2 multi-pass
+**Empirical proof (the load-bearing check):**
 
-- The one-line change `prev_pass_cursor = prev_cursor` (was re-snapshot
-  `len(get_room_events(room_id))` taken *after* pass-0 execution). **Verified:**
-  `prev_cursor` is captured at `runner.py` immediately *before* the pass-0
-  `process_tool_calls`, so the first re-dispatch iteration's window
-  `[prev_cursor:]` now contains the pass-0 `TOOL_CALL` + result events — the
-  loop is live and bounded by `_PIPELINE_MAX_PASSES` / `_PIPELINE_MAX_WALL_CLOCK_S`.
-  Before the fix the window was always empty → the loop broke on iteration 1
-  (the "dead loop"). This **restores D2 as written** (no ADR/plan change, exactly
-  as the routing noted). `test_analyze_branch_multi_pass_redispatch` drives a
-  pass-0 tool call and asserts pass-1 executes.
+- On the fix (`prev_pass_cursor = prev_cursor`, line 170): **PASS** — 3 router
+  calls (analyze + re-dispatch + reduce).
+- Reverting line 170 to the buggy `prev_pass_cursor = len(deps.writer_store.get_room_events(room_id))`:
+  **FAIL** — `AssertionError: Expected 3 router calls …, got 2; re-dispatch loop
+  may be dead` (`assert 2 == 3`).
 
-### F-succeeded (🟡) — status reflects reality
+The test now discriminates fixed vs dead-loop code. The cycle-2 vacuity defect is
+closed. ✅
 
-- `PipelineRunResult.succeeded = branches_succeeded > 0` (was hard-coded `True`).
-  All-branches-fail → `False` → `pipeline_runs.status="failed"`; partial/all
-  success → `True`. Both paths tested
-  (`…_all_branches_fail_succeeded_false`, `…_partial_success_succeeded_true`).
-  This retires the cycle-1 green-note that flagged the hard-coded `True`.
+### N1 (🟢, folded in) — API↔anchor run_id correlation
 
-### F-ownerparam (🟡) — owner_user_id is no longer a dead param
+`test_run_pipeline_run_id_matches_anchor_event` creates a pipeline as USER_A,
+POSTs `/run`, reads the API response `run_id`/`room_id`, fetches the room events
+from `writer_store`, and asserts `run_id in events[0].content` (the run anchor is
+always event 0). Substring containment on the **complete** run_id — not a prefix
+or truncated compare — closes the runner↔store↔API loop end-to-end, as routed.
+Complements the existing runner-level `test_run_pipeline_anchor_event_embeds_run_id`
+by tying the *API-returned* id to the embedded one. ✅
 
-- The run-anchor OBSERVATION author changes from `build_author(PIPELINE_AGENT_ID)`
-  to `build_user_author(owner_user_id)` (import added; symbol confirmed at
-  `core/event.py:460`), so the triggering user is attributed in the event stream
-  independent of the `pipeline_runs` index. Faithful to the routing intent
-  ("use it inside the runner / anchor the run"). Note: the per-branch analyze
-  **utterances** correctly remain `build_author(PIPELINE_AGENT_ID)` — the agent
-  speaks, the run is owned by the user; the split is coherent.
-  `test_run_pipeline_anchor_event_author_is_owner` covers it.
+### N2 — correctly left untouched
 
-## Non-expansion / no-regression (re-verified)
+Routed no-action (cosmetic run-anchor `user:<owner>` vs branch/output
+`agent:pipeline` attribution). No change appears. ✅
 
-- **Spine byte-frozen (ADR-041 D9).** Zero changes across the full range to
-  `agents/tool_dispatch.py` (gate), `tools/executor.py` (`_execute_local_call`),
-  `core/event.py` (`approval_source` Literal + EventType), `core/room.py`
-  (RoomType), `tools/net_trust.py`, `tools/local.py`. Confirmed by per-file
-  diffstat (empty).
-- **No new authorization / content surface.** No new `LLMPurpose`, `EventType`,
-  or `RoomType` member anywhere in the range (grep clean). The pipeline still
-  uses `AGENT_RESPONSE`, `OBSERVATION`/`SUMMARY_SNAPSHOT`, and `FREE_CHAT` only.
-  The D5 no-headless-actuation mechanism (`countdown_auto_fire=None` at both call
-  sites) and the conservative `ThresholdConfig(8,5,0)` are untouched by cycle-2.
-- **app.py cycle-2 footprint** is two comment-line deletions + the `run_id=`
-  kwarg — no logic drift on the endpoint, owner-private auth path untouched.
-- **No ADR-041 amendment** (correct — every fix lands inside an existing
-  decision: D4 named defusedxml; D2 is restored not changed; D7/D8 endpoint and
-  store shapes unchanged).
+## Non-expansion / spine-freeze
 
-## Residual green notes (no action)
+The diff adds only test imports (`RoomId`, `ToolMeta`, `build_local_tool_registry`)
+and test bodies. No product module, no `LLMPurpose`/`EventType`/`RoomType`, no
+ADR-041 surface is touched. The cycle-2 spine-freeze stands unchanged. No ADR
+amendment. ✅
 
-- **G1 (carried).** The `/run` endpoint still writes the `pipeline_runs` row
-  *after* `run_pipeline` returns with a terminal status, so no `running` row is
-  observable and a mid-run crash leaves no index row. Acceptable for the
-  synchronous P5.1a path; the create-running-then-update shape the store already
-  exposes (now also accepting a caller `run_id`) is the right pattern if P5.1b
-  makes runs background/async. Unchanged by cycle-2.
+## Gate evidence (throwaway worktree @958d316)
+
+- `pytest tests/pipeline/test_runner.py tests/api/test_pipelines.py` → **34 passed**.
+- Fail-on-revert: runner test FAILS (`got 2`) with the F-deadloop one-line reverted.
+- `ruff check` (both test files) → **All checks passed**.
+- `mypy` (both test files) → **Success: no issues found in 2 source files**.
 
 ## Verdict
 
-**clean.** All five routed findings (B1🔴 + four 🟡) are absorbed faithfully and
-minimally; both cycle-1 senior 🟡 are resolved; the implementation remains
-faithful to plan T1–T6 and ADR-041 (spine frozen, no new authorization surface,
-D2 multi-pass restored as written, no plan-external expansion). The cycle-2
-commit asserts gates green (ruff / mypy strict 297 files / pytest 2352); R0-A and
-R0-B will re-run and independently gate-verify in detached worktrees per the
-W-005 Route-B flow. No remaining senior concern.
+**clean.** The test-only rework absorbs the cycle-2 routing faithfully and
+minimally: the F-deadloop regression test is now a genuine guard (empirically
+fails on the reverted bug), N1 closes the run_id correlation end-to-end, N2 is
+correctly untouched, and there is zero product-code change. Senior did not
+self-accept (RC-3); the architect routes.
