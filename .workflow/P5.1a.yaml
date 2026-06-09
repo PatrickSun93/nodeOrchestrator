@@ -1,0 +1,17 @@
+task_id: P5.1a
+state: awaiting_senior_plan
+cycle: 1
+last_transition_at: '2026-06-09T05:51:35.953117Z'
+cycle_started_at: '2026-06-09T05:51:11.721903Z'
+override_history:
+- timestamp: '2026-06-09T05:51:35.953117Z'
+  actor: architect
+  from_state: awaiting_brief
+  to_state: awaiting_senior_plan
+  reason: P5.1a brief = the shared P5.1.md decision-surface (covers the whole wave);
+    decisions ratified in commit f720753 (DP0 wave + DP1 stage-runner + DP3 sources
+    + DP4 prompts-as-data + DP5 reversible-output + DP7 persistence). P5.1a scope
+    = deterministic pipeline primitive + multi-source read + dynamic per-branch prompts
+    + REVERSIBLE room/GUI summary output ONLY (NO scheduler[P5.1b], NO email[P5.1c]).
+    New ADR-041 (pipeline primitive). Advancing to senior plan.
+requires_cross_family_review: true
