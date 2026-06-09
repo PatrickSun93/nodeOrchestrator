@@ -541,6 +541,201 @@ async def _countdown_sweeper(
             _log.error("sweeper: unexpected error (loop continues): %s", exc, exc_info=True)
 
 
+def _discover_due_schedules(
+    ctx: AppContext,
+    now_ms_val: int,
+) -> list[str]:
+    """Return schedule_ids whose next_fire is at or before now_ms_val (reader path).
+
+    Runs on reader_executor so discovery never blocks the event loop.
+    Results are approximate (stale reader); the act re-checks authoritatively on the writer.
+    """
+    from orchestrator.pipeline.store import list_due_schedules as _list_due
+
+    records = _list_due(ctx.get_reader_conn(), now_ms_val)
+    return [r.schedule_id for r in records]
+
+
+def _schedule_act_on_writer(
+    ctx: AppContext,
+    schedule_id: str,
+    now_ms_val: int,
+) -> None:
+    """Authoritative act for one due schedule on the writer executor (ADR-042 D4).
+
+    Order (D4):
+      1. Re-read schedule on writer conn; skip if not still due+enabled.
+      2. Re-check parent pipeline; skip run if pipeline missing or disabled
+         (still advance next_fire so re-enable resumes cleanly).
+      3. Claim: advance next_fire BEFORE run (skip-to-next; crash-safe).
+      4. Run: run_pipeline → create_pipeline_run.
+
+    Never calls _countdown_sweeper, _discover_expired_pendings,
+    or _writer_approve_helper (D1 — sibling shares zero spine-critical code).
+    """
+    from orchestrator.pipeline.runner import PipelineDeps, run_pipeline
+    from orchestrator.pipeline.schedule import compute_next_fire
+    from orchestrator.pipeline.store import (
+        create_pipeline_run,
+        get_pipeline,
+        get_schedule,
+        update_schedule_next_fire,
+    )
+
+    writer_conn = ctx.writer_store.conn
+
+    # Step 1: authoritative re-read + still-due re-check.
+    schedule = get_schedule(writer_conn, schedule_id)
+    if schedule is None:
+        _log.debug("schedule-sweeper: schedule %s gone, skip", schedule_id)
+        return
+    if not schedule.enabled or schedule.next_fire > now_ms_val:
+        _log.debug(
+            "schedule-sweeper: schedule %s no longer due (enabled=%s next_fire=%d now=%d), skip",
+            schedule_id,
+            schedule.enabled,
+            schedule.next_fire,
+            now_ms_val,
+        )
+        return
+
+    # Step 2: re-check parent pipeline.
+    pipeline = get_pipeline(writer_conn, schedule.pipeline_id)
+    if pipeline is None:
+        _log.warning(
+            "schedule-sweeper: pipeline %s for schedule %s missing, skip",
+            schedule.pipeline_id,
+            schedule_id,
+        )
+        return
+
+    # Step 3: claim — advance next_fire BEFORE run (ADR-042 D4/D5 crash-safe).
+    new_next_fire = compute_next_fire(schedule.kind, schedule.expr, now_ms_val)
+    update_schedule_next_fire(writer_conn, schedule_id, new_next_fire)
+    _log.info(
+        "schedule-sweeper: claimed schedule %s, next_fire advanced to %d",
+        schedule_id,
+        new_next_fire,
+    )
+
+    if not pipeline.enabled:
+        # Pipeline disabled → advance next_fire (done above) but skip the run.
+        _log.info(
+            "schedule-sweeper: pipeline %s disabled, skipping run for schedule %s",
+            schedule.pipeline_id,
+            schedule_id,
+        )
+        return
+
+    # Step 4: run.
+    deps = PipelineDeps(
+        writer_store=ctx.writer_store,
+        llm_router=ctx.llm_router,
+        tools=ctx.tools,
+        mcp_sessions=ctx.mcp_sessions,
+        local_tools=ctx.local_tools,
+        sandbox_root=ctx.sandbox_root,
+        bus=ctx.bus,
+    )
+    try:
+        result = run_pipeline(
+            schedule.pipeline_id,
+            pipeline.definition,
+            deps=deps,
+            owner_user_id=schedule.owner_user_id,
+        )
+        create_pipeline_run(
+            writer_conn,
+            pipeline_id=schedule.pipeline_id,
+            room_id=result.room_id,
+            owner_user_id=schedule.owner_user_id,
+            run_id=result.run_id,
+            status="completed" if result.succeeded else "failed",
+        )
+        _log.info(
+            "schedule-sweeper: run %s for schedule %s pipeline %s %s",
+            result.run_id,
+            schedule_id,
+            schedule.pipeline_id,
+            "ok" if result.succeeded else "failed",
+        )
+    except Exception as exc:
+        _log.error(
+            "schedule-sweeper: run_pipeline failed for schedule %s: %s",
+            schedule_id,
+            exc,
+            exc_info=True,
+        )
+
+
+
+async def _schedule_sweeper(
+    ctx: AppContext,
+    cfg: PipelineSchedulerConfig,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Periodic sweeper: discovers due schedules + fires pipeline runs (ADR-042 D1).
+
+    Sibling to _countdown_sweeper; shares its shape but NONE of its code.
+    Started in lifespan only when cfg.enabled. Cancelled cleanly in teardown.
+    """
+    _log.info(
+        "schedule sweeper started (sweep_interval_s=%d)",
+        cfg.sweep_interval_s,
+    )
+    while True:
+        await asyncio.sleep(cfg.sweep_interval_s)
+        try:
+            current_ms = now_ms()
+            import functools as _functools
+
+            due_ids = await loop.run_in_executor(
+                ctx.reader_executor,
+                _functools.partial(_discover_due_schedules, ctx, current_ms),
+            )
+            for schedule_id in due_ids:
+                await loop.run_in_executor(
+                    ctx.writer_executor,
+                    _functools.partial(_schedule_act_on_writer, ctx, schedule_id, current_ms),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _log.error(
+                "schedule-sweeper: unexpected error (loop continues): %s", exc, exc_info=True
+            )
+
+
+def _rearm_schedules_on_boot(ctx: AppContext) -> None:
+    """Advance past-due enabled schedules forward without running them (ADR-042 D5).
+
+    Runs on the writer at lifespan startup, before the sweeper task is created.
+    Schedules whose next_fire is already in the future are left untouched.
+    """
+    from orchestrator.pipeline.schedule import compute_next_fire
+    from orchestrator.pipeline.store import (
+        list_due_schedules as _list_due,
+    )
+    from orchestrator.pipeline.store import (
+        update_schedule_next_fire,
+    )
+
+    current_ms = now_ms()
+    writer_conn = ctx.writer_store.conn
+    past_due = _list_due(writer_conn, current_ms)
+    for schedule in past_due:
+        new_next_fire = compute_next_fire(schedule.kind, schedule.expr, current_ms)
+        update_schedule_next_fire(writer_conn, schedule.schedule_id, new_next_fire)
+        _log.info(
+            "boot re-arm: schedule %s advanced from %d to %d (skip-to-next)",
+            schedule.schedule_id,
+            schedule.next_fire,
+            new_next_fire,
+        )
+    if past_due:
+        _log.info("boot re-arm: advanced %d past-due schedule(s)", len(past_due))
+
+
 class _NoopLLMRouter:
     """Placeholder until P3.2-4 installs RealLLMRouter via _build_context."""
 
@@ -1756,13 +1951,28 @@ def create_app(config_dir: Path, db_path: Path) -> FastAPI:
                 name="countdown-sweeper",
             )
 
+        # Start pipeline schedule sweeper if enabled (ADR-042 D1/D7 / P5.1b-4).
+        _schedule_sweeper_task: asyncio.Task[None] | None = None
+        if ctx.pipeline_scheduler.enabled:
+            _loop = asyncio.get_running_loop()
+            # Boot re-arm: advance past-due schedules without running (ADR-042 D5).
+            await _loop.run_in_executor(ctx.writer_executor, lambda: _rearm_schedules_on_boot(ctx))
+            _schedule_sweeper_task = asyncio.create_task(
+                _schedule_sweeper(ctx, ctx.pipeline_scheduler, _loop),
+                name="schedule-sweeper",
+            )
+
         yield
 
-        # Tear down sweeper before ctx.shutdown() (cancel cleanly, no pending-task warning).
+        # Tear down sweepers before ctx.shutdown() (cancel cleanly, no pending-task warning).
         if _sweeper_task is not None:
             _sweeper_task.cancel()
             with suppress(asyncio.CancelledError):
                 await _sweeper_task
+        if _schedule_sweeper_task is not None:
+            _schedule_sweeper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _schedule_sweeper_task
         ctx.shutdown()
 
     app = FastAPI(
