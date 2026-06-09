@@ -1,8 +1,8 @@
 task_id: P5.1a
-state: awaiting_architect_decision
-cycle: 1
-last_transition_at: '2026-06-09T14:24:10.797309Z'
-cycle_started_at: '2026-06-09T05:51:11.721903Z'
+state: awaiting_junior_impl
+cycle: 2
+last_transition_at: '2026-06-09T17:34:18.070257Z'
+cycle_started_at: '2026-06-09T17:34:18.070257Z'
 override_history:
 - timestamp: '2026-06-09T05:51:35.953117Z'
   actor: architect
@@ -14,4 +14,24 @@ override_history:
     = deterministic pipeline primitive + multi-source read + dynamic per-branch prompts
     + REVERSIBLE room/GUI summary output ONLY (NO scheduler[P5.1b], NO email[P5.1c]).
     New ADR-041 (pipeline primitive). Advancing to senior plan.
+- timestamp: '2026-06-09T17:34:16.057935Z'
+  actor: architect
+  from_state: awaiting_senior_revision
+  to_state: awaiting_architect_decision
+  reason: 'Impl-stage routing (all-α) is a code rework, not a plan-stage senior_revision:
+    the post-commit hook auto-advanced architect_decision→senior_revision on the routing
+    artifact, but F-deadloop=α keeps ADR-041 D2 + the senior plan unchanged, so there
+    is nothing for senior to absorb. Restoring to architect_decision to take the documented
+    impl-rework override path (architect_decision→junior_impl, cycle++), per P3.4
+    precedent.'
+- timestamp: '2026-06-09T17:34:18.070257Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 all-α impl rework (ADR-008 Decision 11): junior fixes B1🔴 (defusedxml
+    forbid_dtd + padded-prolog test + correct sources-vs-connectors doc), F-runid
+    (single caller-supplied run_id), F-deadloop (one-line prev_pass_cursor=prev_cursor
+    restoring ADR-041 D2 multi-pass + multi-pass test), F-succeeded (reflect real
+    success/failure), F-ownerparam (use owner_user_id in run_pipeline). Spine stays
+    byte-frozen; no ADR amendment. See architect-routing-on-impl.md.'
 requires_cross_family_review: true
