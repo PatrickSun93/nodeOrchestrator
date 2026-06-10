@@ -229,6 +229,20 @@ def test_list_schedules_non_owner_403(
 
 
 # ---------------------------------------------------------------------------
+# GET /pipelines/{id}/schedules — missing pipeline → 404 (A5/PVI-4)
+# ---------------------------------------------------------------------------
+
+
+def test_list_schedules_missing_pipeline_404(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """GET /pipelines/{id}/schedules on missing pipeline returns 404 (verb consistency)."""
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        resp = c.get("/pipelines/nonexistent_pipe/schedules")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # DELETE /pipelines/{id}/schedules/{sid}
 # ---------------------------------------------------------------------------
 
@@ -253,6 +267,21 @@ def test_delete_schedule_non_owner_403(
     with _client(sched_app, sched_ctx, _USER_B) as c:
         resp = c.delete(f"/pipelines/{pipe_id}/schedules/{sid}")
     assert resp.status_code == 403
+
+
+def test_delete_schedule_cross_pipeline_idor_404(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """A1/PVI-1: DELETE with S_other's id under P_self's URL must return 404 (IDOR guard)."""
+    pipe_self = _make_pipeline(sched_ctx, owner=_USER_A)
+    pipe_other = _make_pipeline(sched_ctx, owner=_USER_A)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        sid_other = c.post(f"/pipelines/{pipe_other}/schedules", json=_VALID_BODY).json()[
+            "schedule_id"
+        ]
+        # schedule belongs to pipe_other but URL says pipe_self → 404
+        resp = c.delete(f"/pipelines/{pipe_self}/schedules/{sid_other}")
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +313,21 @@ def test_patch_schedule_non_owner_403(
     with _client(sched_app, sched_ctx, _USER_B) as c:
         resp = c.patch(f"/pipelines/{pipe_id}/schedules/{sid}", json={"enabled": False})
     assert resp.status_code == 403
+
+
+def test_patch_schedule_cross_pipeline_idor_404(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """A1/PVI-1: PATCH with S_other's id under P_self's URL must return 404 (IDOR guard)."""
+    pipe_self = _make_pipeline(sched_ctx, owner=_USER_A)
+    pipe_other = _make_pipeline(sched_ctx, owner=_USER_A)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        sid_other = c.post(f"/pipelines/{pipe_other}/schedules", json=_VALID_BODY).json()[
+            "schedule_id"
+        ]
+        # schedule belongs to pipe_other but URL says pipe_self → 404
+        resp = c.patch(f"/pipelines/{pipe_self}/schedules/{sid_other}", json={"enabled": False})
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

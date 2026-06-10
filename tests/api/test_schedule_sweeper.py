@@ -279,6 +279,34 @@ def test_act_disabled_pipeline_advances_next_fire_no_run(ctx: AppContext) -> Non
 
 
 # ---------------------------------------------------------------------------
+# Lens A: (d2) missing pipeline → next_fire advances, no run (A3/Y2/PVI-3)
+# ---------------------------------------------------------------------------
+
+
+def test_act_missing_pipeline_advances_next_fire_no_run(ctx: AppContext) -> None:
+    """Orphan schedule (deleted pipeline) must advance next_fire so it's not re-due every tick."""
+    router = _mock_router()
+    ctx.llm_router = cast(LLMRouterProtocol, router)
+
+    pipe_id = _make_pipeline(ctx)
+    old_next_fire = _NOW - 1
+    sid = _make_schedule(ctx, pipe_id, next_fire=old_next_fire)
+
+    # Delete the pipeline to create an orphan schedule.
+    ctx.writer_store.conn.execute(
+        "DELETE FROM pipelines WHERE pipeline_id=?", (pipe_id,)
+    )
+    ctx.writer_store.conn.commit()
+
+    _schedule_act_on_writer(ctx, sid, _NOW)
+
+    sched = get_schedule(ctx.writer_store.conn, sid)
+    assert sched is not None
+    assert sched.next_fire > old_next_fire, "orphan schedule next_fire must be advanced"
+    assert router.call.call_count == 0, "LLM must not be called for orphan schedule"
+
+
+# ---------------------------------------------------------------------------
 # Lens A: (e) claim-before-run double-fire guard
 # ---------------------------------------------------------------------------
 
@@ -365,6 +393,35 @@ def test_act_run_attributed_to_schedule_owner(ctx: AppContext) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Lens A: (g2) create_pipeline_run failure after successful run (Y3)
+# ---------------------------------------------------------------------------
+
+
+def test_act_create_run_fails_after_successful_run_does_not_raise(ctx: AppContext) -> None:
+    """Y3: create_pipeline_run failure after successful run_pipeline must log, not re-raise."""
+    from unittest.mock import patch
+
+    router = _mock_router()
+    router.call.side_effect = [_llm_response(), _llm_response()]
+    ctx.llm_router = cast(LLMRouterProtocol, router)
+
+    pipe_id = _make_pipeline(ctx)
+    sid = _make_schedule(ctx, pipe_id, next_fire=_NOW - 1)
+
+    with patch(
+        "orchestrator.pipeline.store.create_pipeline_run",
+        side_effect=Exception("simulated db failure"),
+    ):
+        # Must not propagate the exception.
+        _schedule_act_on_writer(ctx, sid, _NOW)
+
+    # next_fire should still be advanced (claim step succeeded before run).
+    sched = get_schedule(ctx.writer_store.conn, sid)
+    assert sched is not None
+    assert sched.next_fire > _NOW - 1, "next_fire must be advanced even when create_pipeline_run fails"  # noqa: E501
+
+
+# ---------------------------------------------------------------------------
 # Lens B: (h) scheduler OFF → no impact on countdown sweeper
 # ---------------------------------------------------------------------------
 
@@ -407,6 +464,33 @@ def test_schedule_sweeper_does_not_call_countdown_spine() -> None:
     for sym in forbidden_calls:
         assert sym not in called_names, (
             f"_schedule_sweeper must not call {sym!r} (ADR-042 D1)"
+        )
+
+
+def test_schedule_act_on_writer_does_not_call_countdown_spine() -> None:
+    """A4: _schedule_act_on_writer must import/call none of the countdown-actuation spine.
+
+    Checks AST call sites so docstring mentions do not trigger false positives.
+    """
+    import ast
+
+    source = inspect.getsource(_schedule_act_on_writer)
+    tree = ast.parse(source)
+
+    called_names = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+    forbidden_calls = {
+        "_countdown_sweeper",
+        "_discover_expired_pendings",
+        "_writer_approve_helper",
+    }
+    for sym in forbidden_calls:
+        assert sym not in called_names, (
+            f"_schedule_act_on_writer must not call {sym!r} (ADR-042 D1)"
         )
 
 

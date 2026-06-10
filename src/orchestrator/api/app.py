@@ -606,10 +606,14 @@ def _schedule_act_on_writer(
 
     Order (D4):
       1. Re-read schedule on writer conn; skip if not still due+enabled.
-      2. Re-check parent pipeline; skip run if pipeline missing or disabled
-         (still advance next_fire so re-enable resumes cleanly).
+      2. Fetch parent pipeline (state check deferred until after claim).
       3. Claim: advance next_fire BEFORE run (skip-to-next; crash-safe).
-      4. Run: run_pipeline → create_pipeline_run.
+         Always claim regardless of pipeline state — orphan/disabled schedules
+         are re-due only after the next interval, not every tick.
+      4. Skip run if pipeline missing (orphan) or disabled; next_fire already
+         advanced in step 3 so a restored/re-enabled pipeline resumes cleanly.
+      5. Run: run_pipeline (one try) → create_pipeline_run (nested try/except
+         so a log-index failure does not discard the successful run result).
 
     Never calls _countdown_sweeper, _discover_expired_pendings,
     or _writer_approve_helper (D1 — sibling shares zero spine-critical code).
@@ -640,17 +644,12 @@ def _schedule_act_on_writer(
         )
         return
 
-    # Step 2: re-check parent pipeline.
+    # Step 2: fetch parent pipeline (result used after claim in step 3).
     pipeline = get_pipeline(writer_conn, schedule.pipeline_id)
-    if pipeline is None:
-        _log.warning(
-            "schedule-sweeper: pipeline %s for schedule %s missing, skip",
-            schedule.pipeline_id,
-            schedule_id,
-        )
-        return
 
     # Step 3: claim — advance next_fire BEFORE run (ADR-042 D4/D5 crash-safe).
+    # Advance regardless of pipeline state so orphan/disabled schedules do not
+    # re-appear as due on every subsequent tick.
     new_next_fire = compute_next_fire(schedule.kind, schedule.expr, now_ms_val)
     update_schedule_next_fire(writer_conn, schedule_id, new_next_fire)
     _log.info(
@@ -659,8 +658,16 @@ def _schedule_act_on_writer(
         new_next_fire,
     )
 
+    # Step 4: pipeline-state gate (next_fire already advanced).
+    if pipeline is None:
+        _log.warning(
+            "schedule-sweeper: pipeline %s for schedule %s missing, skip",
+            schedule.pipeline_id,
+            schedule_id,
+        )
+        return
+
     if not pipeline.enabled:
-        # Pipeline disabled → advance next_fire (done above) but skip the run.
         _log.info(
             "schedule-sweeper: pipeline %s disabled, skipping run for schedule %s",
             schedule.pipeline_id,
@@ -668,7 +675,7 @@ def _schedule_act_on_writer(
         )
         return
 
-    # Step 4: run.
+    # Step 5: run.
     deps = PipelineDeps(
         writer_store=ctx.writer_store,
         llm_router=ctx.llm_router,
@@ -685,6 +692,16 @@ def _schedule_act_on_writer(
             deps=deps,
             owner_user_id=schedule.owner_user_id,
         )
+    except Exception as exc:
+        _log.error(
+            "schedule-sweeper: run_pipeline failed for schedule %s: %s",
+            schedule_id,
+            exc,
+            exc_info=True,
+        )
+        return
+
+    try:
         create_pipeline_run(
             writer_conn,
             pipeline_id=schedule.pipeline_id,
@@ -693,20 +710,21 @@ def _schedule_act_on_writer(
             run_id=result.run_id,
             status="completed" if result.succeeded else "failed",
         )
-        _log.info(
-            "schedule-sweeper: run %s for schedule %s pipeline %s %s",
-            result.run_id,
-            schedule_id,
-            schedule.pipeline_id,
-            "ok" if result.succeeded else "failed",
-        )
     except Exception as exc:
-        _log.error(
-            "schedule-sweeper: run_pipeline failed for schedule %s: %s",
+        _log.warning(
+            "schedule-sweeper: create_pipeline_run failed for schedule %s (run %s succeeded): %s",
             schedule_id,
+            result.run_id,
             exc,
             exc_info=True,
         )
+    _log.info(
+        "schedule-sweeper: run %s for schedule %s pipeline %s %s",
+        result.run_id,
+        schedule_id,
+        schedule.pipeline_id,
+        "ok" if result.succeeded else "failed",
+    )
 
 
 
@@ -2038,7 +2056,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         def _read() -> list[_ScheduleResponse]:
             pipeline = get_pipeline(ctx.get_reader_conn(), pipeline_id)
             if pipeline is None:
-                return []
+                raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
             if pipeline.owner_user_id != _principal.user_id:
                 raise HTTPException(status_code=403, detail="access denied: not the owner")
             records = list_schedules_for_pipeline(ctx.get_reader_conn(), pipeline_id)
@@ -2086,6 +2104,10 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 raise HTTPException(
                     status_code=404, detail=f"schedule {schedule_id!r} not found"
                 )
+            if sched.pipeline_id != pipeline_id:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
             delete_schedule(ctx.writer_store.conn, schedule_id)
 
         await loop.run_in_executor(ctx.writer_executor, _write)
@@ -2128,6 +2150,10 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 raise HTTPException(status_code=403, detail="access denied: not the owner")
             sched = get_schedule(ctx.writer_store.conn, schedule_id)
             if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if sched.pipeline_id != pipeline_id:
                 raise HTTPException(
                     status_code=404, detail=f"schedule {schedule_id!r} not found"
                 )
