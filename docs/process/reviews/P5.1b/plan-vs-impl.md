@@ -3,181 +3,165 @@ task_id: P5.1b
 stage: senior-plan-vs-impl
 actor: senior
 date: "2026-06-10"
-cycle: 2
+cycle: 3
 verdict: clean
 reviewed_branch: origin/claude/P5.1b-impl
-reviewed_at: cf8680a
+reviewed_at: 30a7d05
 plan: docs/process/senior-plans/P5.1b.md
 adr: ADR-042
 routing_absorbed:
-  - docs/process/reviews/P5.1b/architect-routing-on-plan.md   # Y1 interval-only / Y2 keep / N3 GC
-  - docs/process/reviews/P5.1b/architect-routing-on-impl.md   # all-α, cycle-2 rework
-supersedes: "cycle-1 plan-vs-impl (a7e485c, needs_architect: PVI-1 🟡 + PVI-2/3/4 🟢)"
-findings: []   # all cycle-1 findings (PVI-1..4) resolved by the cycle-2 α rework
+  - docs/process/reviews/P5.1b/architect-routing-on-plan.md          # Y1 interval-only / Y2 keep / N3 GC
+  - docs/process/reviews/P5.1b/architect-routing-on-impl.md          # cycle-1 → cycle-2 all-α
+  - docs/process/reviews/P5.1b/architect-routing-on-impl-cycle2.md   # cycle-2 → cycle-3 all-α (B1 + B2)
+supersedes: "cycle-2 plan-vs-impl (cf8680a, clean) — content preserved in git history"
+findings: []   # B1 + B2 routed α close-out implemented faithfully; nothing new
 ---
 
-# P5.1b — senior plan-vs-impl (cycle 2, covers cycle 1)
+# P5.1b — senior plan-vs-impl (cycle 3, covers cycle 2)
 
-Re-reviewed the cycle-2 α rework `cf8680a` (single commit on top of cycle-1 `a7e485c`)
+Re-reviewed the cycle-3 α close-out `30a7d05` (single commit on top of cycle-2 `cf8680a`)
 against `docs/process/senior-plans/P5.1b.md`, ADR-042 (Accepted), and the architect's
-impl-stage routing (`architect-routing-on-impl.md`: **all-α, one rework cycle**). Read on
-`main` via `git show cf8680a` / `git diff` (no checkout — shared worktree). The cycle-2
-diff is exactly `app.py` (3 hunks) + `tests/api/test_schedule_endpoints.py` (3 tests) +
-`tests/api/test_schedule_sweeper.py` (3 tests) — 177 ins / 23 del, nothing else.
+cycle-2 impl-stage routing (`architect-routing-on-impl-cycle2.md`: **all-α, B1 + B2,
+test + ADR-text only**). Read on `main` via `git diff cf8680a..origin/claude/P5.1b-impl`
+(no checkout — shared worktree). The cycle-3 diff is **exactly** two files:
 
-**Bottom line:** all **7 routed α fixes** (A1/PVI-1 must-fix + A2/A3/Y3/A4/A5/A6) are
-**implemented faithfully and exhaustively**, each with a **non-vacuous test**, with **no
-plan-external expansion** and the **spine still byte-frozen**. The four cycle-1 findings
-(PVI-1 🟡, PVI-2/3/4 🟢) are **all closed**. **Verdict → `clean`.**
+```
+docs/decisions/ADR-042-recurring-pipeline-scheduler.md |  3 +-   (1 line of D4 text)
+tests/api/test_schedule_sweeper.py                     | 32 ++++  (Y3 test rewrite)
+```
 
-This file **supersedes the cycle-1 review** (`needs_architect`); the cycle-1 content
-remains in git history at `a7e485c` for the audit trail.
+29 ins / 6 del, **nothing else — zero product code, no `src/` hunk at all.**
+
+**Bottom line:** both routed α items land faithfully — **B1** rewrites the vacuous Y3 test
+into a genuine **fail-on-revert** guard, **B2** syncs the one line of ADR-042 D4 text to the
+ratified advance-on-missing code (A3). No plan-external content, spine still byte-frozen by
+construction (no source touched). **Verdict → `clean`.**
+
+This file **supersedes the cycle-2 review** (also `clean`); cycle-2 content remains in git
+history at `cf8680a` for the audit trail.
 
 ---
 
-## Cycle-1 findings — resolution ledger
+## Cycle-2 findings — resolution ledger
 
-| Cycle-1 finding | Routed | Cycle-2 fix | Status |
+| Cycle-2 finding | Routed | Cycle-3 fix | Status |
 |---|---|---|---|
-| **PVI-1 / A1** 🟡 must-fix — DELETE/PATCH bind owner-check to URL pipeline, not the schedule's parent (cross-pipeline IDOR) | α | IDOR guard added to **both** verbs + 2 cross-pipeline 404 tests | ✅ **closed** |
-| **PVI-3 / A3** 🟢 — missing-parent act does not advance `next_fire` (log churn every tick) | α | claim restructured **before** the pipeline-state gate → orphan advances + test | ✅ **closed** |
-| **PVI-4 / A5** 🟢 — GET on missing pipeline returns `[]` (verb inconsistency) | α | GET now raises 404 + test | ✅ **closed** |
-| **PVI-2 / A6** 🟢 — partial index beyond "DDL exactly D2 columns" | α (ratify-as-correct) | confirmed in-spirit (realizes D2 "indexable"); no behavioural change | ✅ **closed** |
+| **B1** 🟡 — `test_act_create_run_fails_after_successful_run_does_not_raise` does **not** fail-on-revert (the reverted single-try still passes it) | α | test rewritten to assert the split-try's success-acknowledging WARNING; fails on the revert | ✅ **closed** |
+| **B2** 🟢→α — ADR-042 D4 step-2 literal text ("missing → log + skip", no advance) contradicts the ratified advance-on-missing code (A3) | α | one-line D4 text synced to "missing → log + **advance `next_fire`** + skip" | ✅ **closed** |
 
-Plus the routing's two r0b/R0-A-originated items not in my cycle-1 file:
-
-| Finding | Routed | Cycle-2 fix | Status |
-|---|---|---|---|
-| **A2 / Y1** 🟡 — `_schedule_act_on_writer` docstring drifts from code | α | docstring rewritten to the new always-claim-then-gate order | ✅ |
-| **Y3** 🟡 — single `try` could discard a successful run if `create_pipeline_run` throws | α | **split try** (run in one, create in a nested try/except that warns, never re-raises) + mock test | ✅ |
-| **A4** 🟢→α — spine-isolation AST test only covered `_schedule_sweeper` | α | added the mirror AST test for `_schedule_act_on_writer` (the higher-risk act fn) | ✅ |
+All seven cycle-1 α items (A1/A2/A3/Y3/A4/A5/A6) remain closed from cycle 2 — untouched and
+unaffected by this test/doc-only delta.
 
 ---
 
-## Per-fix faithfulness (cycle-2 diff)
+## Per-fix faithfulness (cycle-3 diff)
 
-### A1 / PVI-1 — cross-pipeline IDOR guard (must-fix) — ✅ faithful, non-vacuous
+### B1 — Y3 test made fail-on-revert — ✅ faithful, **non-vacuous (verified)**
 
-- **DELETE** (`app.py:2104-2107`) and **PATCH** (`app.py:2153-2156`) both gain, immediately
-  after the `get_schedule` fetch and the not-None 404, the guard
-  `if sched.pipeline_id != pipeline_id: raise HTTPException(404, …)` — exactly the routed
-  α-fix and the natural disposition I surfaced in cycle-1. The mutation is now bound to the
-  schedule's **actual parent**, not the URL pipeline.
-- GET was already safe (it scopes via `list_schedules_for_pipeline(pipeline_id)` and never
-  fetches by global `schedule_id`); POST creates under the URL pipeline — both inherently
-  consistent. No guard needed there, and none was (wrongly) added. Correct scoping of the fix.
-- **Tests non-vacuous** (`test_delete_schedule_cross_pipeline_idor_404`,
-  `test_patch_schedule_cross_pipeline_idor_404`): both create `pipe_self` + `pipe_other`
-  (same owner — isolates the *new* parent-binding guard from the pre-existing 403 owner
-  path), create the schedule under `pipe_other`, then hit `…/{pipe_self}/schedules/{sid_other}`
-  and assert **404**. With the guard removed, `get_schedule` returns the row and the verb
-  proceeds (200/204) → the assertion fails. **Fail-on-revert holds.** Testing with a single
-  owner is the *cleaner* isolation of the binding bug (it does not lean on the ownership
-  difference), so the choice is correct, not a weakening.
+The rewrite adds a `caplog` capture and a new assertion on top of the pre-existing
+`next_fire`-advanced assertion:
 
-### A2 / Y1 — docstring truth — ✅ faithful
+```python
+with (
+    caplog.at_level(logging.WARNING, logger="orchestrator.api.app"),
+    patch("orchestrator.pipeline.store.create_pipeline_run",
+          side_effect=Exception("simulated db failure")),
+):
+    _schedule_act_on_writer(ctx, sid, _NOW)
+...
+warning_msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+assert any("succeeded" in m for m in warning_msgs), (...)
+```
 
-- The `_schedule_act_on_writer` docstring is rewritten so steps 2–5 describe the **new**
-  control flow: step 2 fetches the pipeline (state check deferred), step 3 **always** claims
-  (`next_fire` advance) regardless of pipeline state, step 4 is the missing/disabled gate
-  (next_fire already advanced), step 5 is the split run/create. This now matches the code
-  produced by A3 — the docstring and the body agree. (The routing's literal phrasing
-  predated A3; the junior correctly reconciled both into the post-A3 truth rather than
-  documenting a state the code no longer has.)
+**Fail-on-revert proof (the load-bearing check for this cycle).** I traced both code shapes
+against the production body (`app.py:688-726`, byte-frozen this cycle):
 
-### A3 / Y2 / PVI-3 — orphan advances `next_fire` — ✅ faithful, non-vacuous
+- **Split-try (production, A-side):** `create_pipeline_run` sits in its own try; the except
+  emits `_log.warning("schedule-sweeper: create_pipeline_run failed for schedule %s (run %s
+  succeeded): %s", …)` (`app.py:714-720`) — a WARNING whose message contains **"succeeded"**.
+  The new assertion **passes**. ✅
+- **Reverted single combined try (cycle-1 B-side):** `run_pipeline` + `create_pipeline_run`
+  share one try; a `create_pipeline_run` failure is caught by the *single* except, which logs
+  an **ERROR** (`"…run_pipeline failed…"`) and `return`s early. **No WARNING containing
+  "succeeded" is ever emitted** → the new assertion **fails**. ✅
 
-- The claim (`update_schedule_next_fire(…, compute_next_fire(...))`) is moved **above** the
-  pipeline-state gate; the `pipeline is None` branch now `return`s **after** the advance, as
-  does the `not pipeline.enabled` branch. An orphaned (deleted-pipeline) schedule is therefore
-  re-discovered only after the next interval, not every tick — the log-churn PVI-3 flagged is
-  gone, and the behaviour is now consistent with the disabled path.
-- Crash-safety preserved: claim still happens **before** any run, so the double-fire guard is
-  unaffected (the existing `test_act_double_fire_guard` is untouched).
-- **Test non-vacuous** (`test_act_missing_pipeline_advances_next_fire_no_run`): deletes the
-  pipeline row, runs the act, asserts `next_fire` advanced **and** `router.call.call_count == 0`.
-  Revert the claim-before-gate reordering → `next_fire` would not advance → assertion fails.
+So the test now distinguishes the two shapes — exactly the B1 routing intent ("a guard that
+passes on both fixed and reverted code does not guard"). The pre-existing `next_fire`
+assertion is *kept* (it is correct, just insufficient on its own — the claim advances before
+the try block, so it survives the revert; that was precisely B1's vacuity).
 
-### Y3 — split try, never discard a successful run — ✅ faithful, non-vacuous
+**Mock-fires + logger-name verification (non-vacuity guards both checked):**
 
-- `run_pipeline` now sits in its **own** try (on failure: `_log.error` + `return`; `next_fire`
-  already advanced so the failed run is not retried until next interval).
-  `create_pipeline_run` sits in a **separate nested** try/except that logs a **warning**
-  ("run %s succeeded") and does **not** re-raise — the successful run is never lost to a
-  bookkeeping-row write error. Exactly the routed split.
-- **Vacuous-test trap checked and cleared:** the test patches
-  `orchestrator.pipeline.store.create_pipeline_run`, while `app.py` imports that symbol via a
-  **function-local** `from orchestrator.pipeline.store import (create_pipeline_run, …)`
-  (`app.py:623-624`) executed on every call. Because the local import re-resolves the module
-  attribute at call time, the patch (active around the `_schedule_act_on_writer` call) **does**
-  bind the mocked object — the simulated DB failure genuinely fires. The test then asserts the
-  call does not raise and `next_fire` is still advanced. **Non-vacuous** (this is the P5.1a-cyc2
-  vacuous-mock class; it does not recur here).
-- Minor honesty note (🟢, not a finding): after a caught `create_pipeline_run` failure, control
-  falls through to the unconditional terminal `_log.info("… run … ok")`. The "ok" refers to
-  `run_pipeline` success, which is **truthful** (the run did succeed; only the side-table row
-  failed, separately warned). Both facts are logged — acceptable, no drift.
+- **Patch target binds.** The test patches `orchestrator.pipeline.store.create_pipeline_run`;
+  `app.py:623-624` does a **function-local** `from orchestrator.pipeline.store import
+  (create_pipeline_run, …)` re-resolved on every call, so the patch's `side_effect` genuinely
+  fires (same mechanism that made the cycle-2 `next_fire` assertion meaningful). Not the
+  P5.1a-cyc2 vacuous-mock class.
+- **Logger name matches.** `caplog.at_level(logging.WARNING, logger="orchestrator.api.app")`
+  targets the exact logger the production code uses — `_log = logging.getLogger(
+  "orchestrator.api.app")` (`app.py:228`). The WARNING at `app.py:714` goes through `_log`, so
+  caplog captures it. (If the name were wrong, caplog would capture nothing and the assertion
+  would fail closed — i.e. it cannot pass vacuously.)
 
-### A4 — spine-isolation AST test for the act fn — ✅ faithful
+Same test-honesty close-out as P5.1a cyc3; the discipline is correctly applied here.
 
-- `test_schedule_act_on_writer_does_not_call_countdown_spine` mirrors the existing sweeper
-  test: `ast.parse(inspect.getsource(_schedule_act_on_writer))`, collect `ast.Call` nodes whose
-  `func` is an `ast.Name`, assert none of `_countdown_sweeper` / `_discover_expired_pendings` /
-  `_writer_approve_helper` appear. The forbidden symbols are module-level functions invoked as
-  bare names, so the `ast.Name`-only scope is **correct** (no `ast.Attribute` false-negative
-  gap for these), and the AST approach (vs substring) avoids docstring-mention false positives.
+### B2 — ADR-042 D4 text synced to A3 code — ✅ faithful
 
-### A5 / PVI-4 — GET verb consistency — ✅ faithful, non-vacuous
+The single changed D4 line now reads:
 
-- The GET `_read()` helper now `raise HTTPException(404, …)` on a missing pipeline instead of
-  `return []`, matching POST/DELETE/PATCH. `test_list_schedules_missing_pipeline_404` asserts
-  404 on `nonexistent_pipe` — fails if the `return []` is restored.
+> the pipeline is **missing** (deleted) → log + **advance `next_fire`** + skip the run
+> (breaks the orphan re-discovery loop; A3 routing).
 
-### A6 / PVI-2 — partial index ratified — ✅ no change, correct
-
-- No diff (correctly): the routing dispositioned A6 as "ratified as correct — additive,
-  in-spirit, no behavioural change." `idx_pipeline_schedules_due` realizes the explicit
-  ADR-042 D2 "indexable `WHERE enabled=1 AND next_fire <= ?`" intent. Confirmed kept; nothing
-  to rewrite.
+This is a verbatim match to the routing instruction, and an accurate description of the
+ratified code: `_schedule_act_on_writer` advances `next_fire` **unconditionally in the claim
+step** (`app.py:651-657`, "Advance regardless of pipeline state so orphan/disabled schedules
+do not re-appear as due on every subsequent tick"), *then* the `pipeline is None` gate logs a
+warning and returns (`app.py:662-668`) — net behaviour: **log + advance + skip**, exactly the
+new text. This is a code-vs-inscribed-text consistency repair, **not a decision change**: D4's
+neighbouring disabled-pipeline clause already said "skip … but still advance `next_fire`", so
+the missing-pipeline clause is now consistent with both the code *and* the sibling clause.
+No other ADR line changed; the decision content of D4 is otherwise intact.
 
 ---
 
-## Constitutional carry-forward (Lens B) — still all clear in cycle 2
+## Constitutional carry-forward (Lens B) — vacuously clear in cycle 3
 
-The cycle-2 diff touches **only** `_schedule_act_on_writer` and the two endpoint handlers in
-`app.py`, plus the two test files. None of the spine symbols appear in the diff:
+The cycle-3 diff contains **no `src/` hunk whatsoever** — only a test file and one ADR line.
+Every spine invariant therefore holds by construction:
 
 | Invariant | Result |
 |---|---|
-| `run_pipeline` byte-identical | ✅ `runner.py` absent from the cycle-2 diffstat |
-| `_countdown_sweeper` / `_discover_expired_pendings` / `_writer_approve_helper` byte-untouched | ✅ no hunk touches them; the new act fn calls **none** of them (now AST-asserted, A4) |
+| `run_pipeline` / `_schedule_act_on_writer` / `_schedule_sweeper` byte-identical | ✅ no source file in the diffstat |
+| `_countdown_sweeper` / `_discover_expired_pendings` / `_writer_approve_helper` byte-untouched | ✅ unchanged |
 | `countdown_auto_fire=None` reversible-only preserved | ✅ unchanged |
-| gate (`score`/`decide_tier`/`emit_gate_decision`) + `_execute_local_call` untouched | ✅ absent from the diff |
-| No new routing `LLMPurpose` | ✅ the diff adds no `LLMPurpose`; the only LLM in a scheduled run is the unchanged `run_pipeline` content-gen |
-| scheduler-OFF ⇒ byte-identical to P5.1a | ✅ all new work still gated behind `pipeline_scheduler.enabled`; default OFF unchanged |
+| gate (`score`/`decide_tier`/`emit_gate_decision`) + `_execute_local_call` untouched | ✅ unchanged |
+| No new routing `LLMPurpose` | ✅ no source change; the only LLM in a scheduled run is the unchanged `run_pipeline` content-gen |
+| scheduler-OFF ⇒ byte-identical to P5.1a | ✅ unchanged (no runtime delta) |
 
-`RB-PIPELINE-SCHED` remains inscribed honestly; cron stays fully deferred (no stub path
-leaked in the rework).
+`RB-PIPELINE-SCHED` remains inscribed honestly; cron stays fully deferred — no stub leaked.
 
 ---
 
-## Plan-external expansion / omission scan (cycle 2)
+## Plan-external expansion / omission scan (cycle 3)
 
-- **Omissions:** none — every one of the 7 routed α items is present (A6 correctly as a
-  no-op confirmation).
-- **Expansions:** none — the diff is confined to the three files the routing implies, and
-  every hunk maps 1:1 to a routed finding. No opportunistic bundling, no defensive hardening
-  under deferral language, no cron stub.
+- **Omissions:** none — both routed α items (B1 test rewrite, B2 D4 text) are present.
+- **Expansions:** none — the diff is confined to the two files the routing implies. The test
+  change is additive (one fixture param + one `with`-clause + one assertion + a docstring
+  note); no other test was altered, no product code touched, no opportunistic hardening, no
+  defensive bundling under deferral language.
 
 ---
 
 ## Verdict
 
-**`clean`.** The cycle-2 α rework faithfully and completely resolves the must-fix IDOR
-(A1/PVI-1) and the full robustness/honesty cluster (A2/A3/Y3/A4/A5/A6), each with a
-non-vacuous, fail-on-revert test; the spine is byte-frozen; no plan-external expansion. All
-cycle-1 findings are closed and nothing new surfaced.
+**`clean`.** The cycle-3 close-out faithfully resolves both routed α items: B1 turns the Y3
+guard into a genuine fail-on-revert test (proven against both the split-try and the reverted
+single-try shapes; mock fires + logger name verified, so it cannot pass vacuously), and B2
+syncs the one line of ADR-042 D4 text to the ratified advance-on-missing code without changing
+any decision. The diff is test + ADR-text only — zero product code, spine byte-frozen by
+construction — and introduces nothing outside the routing. All cycle-2 findings are closed and
+nothing new surfaced.
 
 Per ADR-008 Amendment 1 (Route B, W-005), state advances to `awaiting_R0_A` regardless of
 verdict; this `clean` frontmatter signals no senior-side plan-vs-impl drift remains for the
-cycle-2 external review round.
+cycle-3 external review round.
