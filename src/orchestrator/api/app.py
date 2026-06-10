@@ -79,6 +79,8 @@ from orchestrator.tools.executor import LocalToolRegistry, execute_pending_tool_
 from orchestrator.tools.local import build_local_tool_registry
 
 if TYPE_CHECKING:
+    from orchestrator.core.event import ToolCallPendingMeta
+    from orchestrator.pipeline.schema import PipelineScheduleRecord
     from orchestrator.plugins.provenance import PluginRegistry, _RegistryRefuseAll
     from orchestrator.sandbox.posture import PostureResolver
 
@@ -391,7 +393,7 @@ def _writer_approve_helper(
     ctx: AppContext,
     rid: RoomId,
     pending_event_id: str,
-    approval_source: Literal["human", "auto_timer"],
+    approval_source: Literal["human", "auto_timer", "auto_pipeline"],
     approver_user_id: str | None,
     loop: asyncio.AbstractEventLoop,
 ) -> _ApproveOk | _ApproveSkipped | _ApproveFailed:
@@ -608,14 +610,177 @@ def _discover_due_schedules(
     return [r.schedule_id for r in records]
 
 
+# The one tool the pipeline-email actuator is allowed to headlessly actuate (ADR-043 D4).
+_PIPELINE_EMAIL_TOOL = "send_email"
+
+
+def _actuate_pipeline_emails(
+    ctx: AppContext,
+    schedule: PipelineScheduleRecord,
+    run_room_id: RoomId,
+    *,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Discover and actuate send_email pendings in a scheduled run's room (ADR-043 D2/D3/D4).
+
+    Runs on the writer executor after run_pipeline + create_pipeline_run succeed.
+    Returns immediately if email_enabled=False (OFF never touches pendings).
+
+    Discovery is a dedicated scan — does NOT reuse _discover_expired_pendings
+    (byte-frozen, keys on expires_at); this scan keys on tool_name == _PIPELINE_EMAIL_TOOL
+    and never reads/writes expires_at.
+
+    Eligibility gate (all must hold to actuate):
+      - tool_name == _PIPELINE_EMAIL_TOOL
+      - schedule.email_mode == 'live'
+      - pending to matches pinned recipient, case-insensitively (both sides lowercased)
+
+    In dry-run mode: records a typed PipelineEmailDryRunMeta OBSERVATION; does NOT actuate.
+    Ineligible pendings (mismatch, not-live) are left waiting — no mutation.
+    """
+    if not schedule.email_enabled:
+        return
+
+    from orchestrator.core.event import EventType, ToolCallPendingMeta
+
+    all_events = ctx.writer_store.get_room_events(run_room_id)
+    sorted_events = sorted(all_events, key=lambda e: (e.timestamp, e.id))
+
+    # Build set of resolved call_ids (already have a TOOL_CALL/TOOL_RESULT/TOOL_CALL_CANCELLED).
+    resolved_call_ids: set[str] = set()
+    for evt in sorted_events:
+        if evt.type in PENDING_RESOLUTION_TYPES:
+            cid = str(evt.metadata.get("call_id", ""))
+            if cid:
+                resolved_call_ids.add(cid)
+
+    for evt in sorted_events:
+        if evt.type != EventType.TOOL_CALL_PENDING:
+            continue
+        try:
+            meta = ToolCallPendingMeta.model_validate(evt.metadata)
+        except Exception:
+            continue
+        if meta.tool_name != _PIPELINE_EMAIL_TOOL:
+            continue
+        if meta.call_id in resolved_call_ids:
+            continue
+
+        # Found an unresolved send_email pending.
+        if schedule.email_mode == "dry_run":
+            # Dry-run: record what would be sent without actuating.
+            _record_email_dry_run(
+                ctx,
+                run_room_id,
+                meta,
+                schedule=schedule,
+            )
+            continue
+
+        # Live mode: eligibility gate — recipient case-insensitive match.
+        pending_to = str(meta.params.get("to", ""))
+        pinned = schedule.email_recipient or ""
+        if pending_to.lower() != pinned.lower():
+            _log.debug(
+                "pipeline-email: recipient mismatch for pending %s in room %s "
+                "(pending_to=%r, pinned=%r) — leaving pending",
+                evt.id,
+                run_room_id,
+                pending_to,
+                pinned,
+            )
+            continue
+
+        # Actuate via _writer_approve_helper (reconstruct-from-record, idempotent).
+        result = _writer_approve_helper(
+            ctx,
+            run_room_id,
+            evt.id,
+            "auto_pipeline",
+            schedule.owner_user_id,
+            loop,
+        )
+        if isinstance(result, _ApproveOk):
+            _log.info(
+                "pipeline-email: actuated send_email pending=%s in room=%s "
+                "owner=%s → tool_call=%s",
+                evt.id,
+                run_room_id,
+                schedule.owner_user_id,
+                result.appended_event.id,
+            )
+        elif isinstance(result, _ApproveSkipped):
+            _log.debug(
+                "pipeline-email: skip pending=%s room=%s reason=%s",
+                evt.id,
+                run_room_id,
+                result.reason,
+            )
+        elif isinstance(result, _ApproveFailed):
+            _log.error(
+                "pipeline-email: execute failed pending=%s room=%s reason=%s",
+                evt.id,
+                run_room_id,
+                result.reason,
+            )
+
+
+def _record_email_dry_run(
+    ctx: AppContext,
+    room_id: RoomId,
+    pending_meta: ToolCallPendingMeta,
+    *,
+    schedule: PipelineScheduleRecord,
+) -> None:
+    """Append a PipelineEmailDryRunMeta OBSERVATION for a dry-run pass (ADR-043 D6)."""
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        PipelineEmailDryRunMeta,
+        generate_event_id,
+        now_ms,
+    )
+
+    pinned = schedule.email_recipient or ""
+    pending_to = str(pending_meta.params.get("to", ""))
+    would_actuate = bool(pending_to and pinned and pending_to.lower() == pinned.lower())
+
+    dry_run_meta = PipelineEmailDryRunMeta(
+        recipient=pending_to,
+        subject=str(pending_meta.params.get("subject", "")),
+        would_actuate=would_actuate,
+        owner_user_id=schedule.owner_user_id,
+        approval_source="auto_pipeline",
+    )
+    obs_event = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.OBSERVATION,
+        author=build_author("pipeline_email_actuator"),
+        timestamp=now_ms(),
+        content=(
+            "[dry-run] pipeline email would be sent"
+            if would_actuate
+            else "[dry-run] pipeline email would not be sent (recipient mismatch)"
+        ),
+        metadata=dry_run_meta.model_dump(),
+    )
+    try:
+        ctx.writer_store.append(obs_event)
+    except Exception as exc:
+        _log.warning("pipeline-email dry-run: failed to record observation: %s", exc)
+
+
 def _schedule_act_on_writer(
     ctx: AppContext,
     schedule_id: str,
     now_ms_val: int,
+    *,
+    loop: asyncio.AbstractEventLoop | None = None,
 ) -> None:
-    """Authoritative act for one due schedule on the writer executor (ADR-042 D4).
+    """Authoritative act for one due schedule on the writer executor (ADR-042 D4 / ADR-043 D2).
 
-    Order (D4):
+    Order:
       1. Re-read schedule on writer conn; skip if not still due+enabled.
       2. Fetch parent pipeline (state check deferred until after claim).
       3. Claim: advance next_fire BEFORE run (skip-to-next; crash-safe).
@@ -625,9 +790,10 @@ def _schedule_act_on_writer(
          advanced in step 3 so a restored/re-enabled pipeline resumes cleanly.
       5. Run: run_pipeline (one try) → create_pipeline_run (nested try/except
          so a log-index failure does not discard the successful run result).
-
-    Never calls _countdown_sweeper, _discover_expired_pendings,
-    or _writer_approve_helper (D1 — sibling shares zero spine-critical code).
+      6. Email actuation (ADR-043): if schedule.email_enabled, call
+         _actuate_pipeline_emails which reaches _writer_approve_helper only
+         via the narrow send_email path. The COUNTDOWN spine
+         (_countdown_sweeper/_discover_expired_pendings) stays uncalled.
     """
     from orchestrator.pipeline.runner import PipelineDeps, run_pipeline
     from orchestrator.pipeline.schedule import compute_next_fire
@@ -737,6 +903,19 @@ def _schedule_act_on_writer(
         "ok" if result.succeeded else "failed",
     )
 
+    # Step 6: email actuation (ADR-043 D2) — only when email_enabled.
+    # Reaches _writer_approve_helper only via the narrow _actuate_pipeline_emails path.
+    if schedule.email_enabled and loop is not None:
+        try:
+            _actuate_pipeline_emails(ctx, schedule, RoomId(result.room_id), loop=loop)
+        except Exception as exc:
+            _log.error(
+                "pipeline-email: actuation failed for schedule %s run %s: %s",
+                schedule_id,
+                result.run_id,
+                exc,
+                exc_info=True,
+            )
 
 
 async def _schedule_sweeper(
@@ -766,7 +945,9 @@ async def _schedule_sweeper(
             for schedule_id in due_ids:
                 await loop.run_in_executor(
                     ctx.writer_executor,
-                    _functools.partial(_schedule_act_on_writer, ctx, schedule_id, current_ms),
+                    _functools.partial(
+                        _schedule_act_on_writer, ctx, schedule_id, current_ms, loop=loop
+                    ),
                 )
         except asyncio.CancelledError:
             raise
