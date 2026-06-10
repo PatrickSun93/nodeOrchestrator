@@ -1,0 +1,117 @@
+# ADR-043 — Headless pipeline email: the one authorized irreversible-actuation crossing
+
+**Status:** Proposed (senior-drafted for P5.1c, the third and final slice of the P5.1 analysis-pipeline wave and the honesty crux of P5). `requires_cross_family_review: true` (set in `.workflow/P5.1c.yaml`) — **isolated dual-lens** (Lens A = crossing / over-actuation + irreversible-send safety; Lens B = spine + reversible-envelope no-regression). Architect ratified the decision surface (C0–C8) on 2026-06-10 along the arch-partner leans **with one strengthening: dry-run is the mandatory first state** (`docs/process/architect-briefs/P5.1c.md` §"Architect ratification"). The amendments to ADR-041 / ADR-042 / ADR-040 / ADR-036 (+ a note on ADR-005/013/027) are inscribed at impl (plan task P5.1c-6), matching the eventual Accepted status (the ADR-040 / ADR-042 precedent). **RC-3: the architect Accepts — the senior does not self-accept.**
+
+**Scope:** The **first headless *irreversible actuation* in the product.** P5.1a (ADR-041) shipped the safe primitive (reversible output only); P5.1b (ADR-042) made it unattended on a timer but **strictly reversible** — a scheduled run could read/analyze/post a room summary headless, but any irreversible op it proposed (`send_email`) just **waited**. P5.1c lets an **opted-in, promoted-to-live scheduled** pipeline **send an irreversible external email with no human in the loop at any point**. This ADR adds, *only* for `send_email` *only* on the *scheduled* path: a **narrow post-run actuation-authorization layer** (the pipeline-email actuator) that discovers the `send_email` `TOOL_CALL_PENDING` a run left waiting and actuates it via the existing `_writer_approve_helper` seam (D2), bounded by an **owner-config-pinned recipient** (D3), a **`send_email`-only literal allowlist** (D4), a **3-state opt-in** (OFF → dry-run → live, default OFF fail-closed; D5), **owner-attributed send audit + dry-run mandatory first state** (D6), and the honest **`RB-PIPELINE-EMAIL`** residual (D7). It does **NOT** govern, and leaves **byte-frozen**: the autonomy gate's decision logic (`score` / `decide_tier` / `emit_gate_decision` — the crossing is an actuation-authorization layer *after* the gate, never a re-tier or floor change); the executor (`_execute_local_call` — unchanged, tier-agnostic); the COUNTDOWN spine (`_countdown_sweeper` / `_discover_expired_pendings` / the two `RB-AUTOFIRE` stamp guards — untouched; this is **not** a second COUNTDOWN consumer, it never touches `expires_at`/the sweeper); `run_pipeline`'s **reversible-output envelope** (`countdown_auto_fire=None` preserved — a scheduled run still stamps no `expires_at`; the actuator is layered *after* the run); the interactive `/confirm` path; the manual `POST /pipelines/{id}/run` path (keeps the P5.1a/b posture — the `send_email` pending waits for an interactive `/confirm`); `send_email`'s HARD tier, recipient allowlist (ADR-036), and unsandboxed transparency-warning (ADR-037 R9) — all intact.
+
+---
+
+## Context
+
+The crossing, structurally (verified `origin/main` @ `dd5ced5`). A pipeline analyze-branch that proposes `send_email` today produces a HARD `TOOL_CALL_PENDING` that **waits forever**, by **three independent locks**:
+
+1. **`countdown_auto_fire=None` in the runner** (`pipeline/runner.py:153,223`) → the pending is never stamped `expires_at` → the COUNTDOWN sweeper's discovery (`expires_at is not None`) cannot find it (ADR-041 Decision 5).
+2. **Gate guard #1 — tier** (`agents/tool_dispatch.py:137-138`): `expires_at` is stamped iff `tier == COUNTDOWN_CONFIRM`. In the pipeline threshold config (`_PIPELINE_THRESHOLDS = ThresholdConfig(8, 5, 0)`, `runner.py:67`) `send_email` (reversibility=3 `< threshold_confirm=5`) tiers **HARD_CONFIRM**, structurally excluded.
+3. **Gate guard #2 — reversibility floor** (`tool_dispatch.py:143-144`): stamp iff `reversibility ≥ reversibility_floor`. `send_email` reversibility = 3 (`config/tools.yaml:48`) `<` floor 5 (`config/autonomy.yaml:14`) — excluded again, independently.
+
+`RB-AUTOFIRE` (ADR-040) installed guards #2/#3 and *refused* irreversibility via the floor; ADR-041 Decision 5 added #1; `RB-PIPELINE-SCHED` (ADR-042) stayed inside the reversible envelope. P5.1c steps past **both** guards — and must do so **without touching either on the interactive path, and without editing the byte-frozen gate.**
+
+The actuation seam already exists and is **not** byte-frozen. `_writer_approve_helper` (`api/app.py:379-471`) actuates a gated `TOOL_CALL_PENDING` on the writer: room-state gate → position-anchored still-pending check (`:422-429`) → **reconstruct the `TOOL_CALL` from the persisted record** (`tool_name`/`params`/`author` from `ToolCallPendingMeta`, **never from the caller**, `:434-449`) → `execute_pending_tool_calls` → bus-publish. It returns a discriminated outcome (`_ApproveOk`/`_ApproveSkipped`/`_ApproveFailed`). **Two callers today:** the HTTP `/confirm` handler (`:1453`, `approval_source="human"`) and the countdown sweeper (`:549`, `"auto_timer"`). ADR-040 Decision 3/4 built it to be called by multiple actuators and anticipated additive `approval_source` markers — a third `"auto_pipeline"` caller is the D10-anticipated extension.
+
+The honest open question this ADR resolves (ADR-041 D10 left it open). D10 steered "recipient-allowlisted," which the existing `allowed_domains` allowlist (ADR-036) satisfies literally — but a domain allowlist (`yourdomain.com`) can be **broad**, and within it the LLM still chooses the exact `to:` and the full body (`network_tools.py:458-460`, `params`-sourced). Headless, that is an LLM judgment about *who* receives an irreversible external message with no human backstop. This ADR moves the **who** to owner config-time (D3); the LLM composes only the **what** (the analysis body).
+
+---
+
+## Decisions
+
+### D1. Scope = scheduled-run-only (C0 = a)
+
+The opt-in attaches to a **schedule** (the headless initiator), not the pipeline definition. A manual `POST /pipelines/{id}/run` keeps the P5.1a/b posture: a `send_email` pending it produces still waits for an interactive `/confirm`. The crossing exists **only where the human is genuinely absent** (the scheduled fire). A manual run has the owner right there — no headless authorization is needed, and authorizing it would widen the irreversible surface to a case that does not need it. This determines that the opt-in lives on `pipeline_schedules` (D5) and that `/run` is outside the crossing's blast radius.
+
+### D2. Mechanism = reuse `_writer_approve_helper` as a third caller (C1 = a)
+
+A new **pipeline-email actuator** runs **after** a scheduled `run_pipeline` returns, on the same writer executor. It discovers the `send_email` `TOOL_CALL_PENDING`s the run left waiting in the run room and, for eligible ones (D3/D4), calls `_writer_approve_helper(…, approval_source="auto_pipeline", approver_user_id=schedule.owner_user_id, loop=…)` — exactly as a human `/confirm` actuates a HARD pending, but headless. New code = the eligibility gate + a **dedicated discovery scan** + widening the `Literal` to `["human", "auto_timer", "auto_pipeline"]` in two places. This **reuses the proven reconstruct + still-pending + executor-idempotency + bus-publish machinery verbatim** — no second actuation path, no re-derived idempotency (mirrors ADR-040 Decision 3's "no second actuation path" discipline). Honest framing: *the owner's config-time standing authorization actuates the pending, in place of a live human click.*
+
+The widening is **additive**: the existing `"human"`/`"auto_timer"` callers are behavior-identical; reconstruct-from-record is unchanged (`params` come from the persisted `ToolCallPendingMeta`, **never from the caller** — the actuator validates `to` *before* calling the helper but never mutates the record). The discovery scan is **new and separate** — it does **not** reuse `_discover_expired_pendings` (byte-frozen, keys on `expires_at`); it keys on `tool_name == "send_email"` + not-yet-resolved, and never touches `expires_at` or the sweeper. **`run_pipeline`'s `countdown_auto_fire=None` is preserved** — the actuator is strictly downstream of the run; the run's reversible envelope is unchanged.
+
+The two `Literal` widenings: `_writer_approve_helper`'s `approval_source` parameter (`api/app.py:383`) and **`ToolCallMeta.approval_source`** (`core/event.py:224`) — the latter's field set is pinned by `tests/core/test_constitution.py`, which is updated additively to admit `"auto_pipeline"`.
+
+### D3. Recipient authorship = owner-config-pinned recipient + LLM content (C2 = b) — the honesty crux
+
+The schedule opt-in carries an explicit **`email_recipient`** set by the owner at opt-in time. The eligibility gate actuates the pending **iff its `to` matches the pinned recipient** (exact match, both non-empty); otherwise the pending **keeps waiting** (fail-closed). The LLM composes only the **body** (the analysis summary); it **cannot redirect the headless email even within the domain allowlist**. The `send_email` recipient allowlist (ADR-036, `network_tools.py:478-495`) is **still enforced** downstream inside the tool impl — the pin is an *additional* narrowing layered in the actuator, not a replacement. This is the honest reading of "the authorizing decision is the operator's, at config-time" (ADR-040 D4/D8): config pins *who*, not merely *which domain*.
+
+### D4. Boundary guard = `send_email`-only literal-constant allowlist (C3 = a)
+
+The eligibility gate actuates a pending **iff all hold**: `tool_name == _PIPELINE_EMAIL_TOOL` (a module-level **literal constant** `"send_email"` — not a config list, not a reversibility band, not a per-tool flag); the schedule opted in and is promoted to **live** (D5); the schedule **owner** stands behind it (`owner_user_id`); the pending's `to` matches the config-pinned recipient (D3). **Any other HARD pending** (`git_push`, `apply_edit`, …) stays waiting **forever**, exactly as today. The boundary is **one named tool**, not a class. **Constitutional-test-pinned** (mirror ADR-040 Decision 2's `HARD-never` test): a test asserts no non-`send_email` HARD pending is ever auto-actuated by the pipeline-email path, even with email enabled + live. A reversibility-band gate (sweeps in every rev≥N tool) and a per-tool `auto_pipeline_eligible` flag (invites "just flip it on for tool X") are **rejected** — for the first irreversible crossing, an explicit single-tool literal allowlist is tighter and more auditable.
+
+### D5. Opt-in home + 3-state shape — schedule-level columns, default OFF fail-closed (C4 = a + C5 state)
+
+Three columns are added to `pipeline_schedules` via a **guarded `ALTER TABLE ADD COLUMN DEFAULT`** (`PRAGMA table_info` precedent, `memory/store.py:114-118`), so pre-existing schedule rows migrate cleanly:
+
+- `email_enabled INTEGER NOT NULL DEFAULT 0` — the on/off switch.
+- `email_mode TEXT NOT NULL DEFAULT 'dry_run'` — discriminates dry-run vs live when enabled (values `'dry_run'` | `'live'`).
+- `email_recipient TEXT` — the config-pinned recipient (nullable; required to enable).
+
+The opt-in is modeled as a **3-state machine**: **OFF** (`email_enabled = 0`, regardless of mode) → **DRY-RUN** (`email_enabled = 1`, `email_mode = 'dry_run'`) → **LIVE** (`email_enabled = 1`, `email_mode = 'live'`). Enabling lands in **dry-run** (mode defaults to the safe value); promotion to live requires an **explicit second owner action** (D6). **Fail-closed in both dimensions:** absent columns ⇒ `enabled = 0` ⇒ OFF; `email_mode` defaults to `'dry_run'` even if `email_enabled` is set, so the dangerous state (live) requires *both* flags explicitly set. Enabling requires a non-empty `email_recipient`.
+
+### D6. Audit + compensability — front-loaded guards, owner-attributed audit, dry-run mandatory first state (C5)
+
+Email is fire-and-forget: once sent, **no recall**. `RB-AUTOFIRE` had a runtime cancel window (the COUNTDOWN timer) as compensation; this crossing has **no runtime window** — a runtime cancel window is **rejected** (it would require routing email through the COUNTDOWN sweeper — impossible without relaxing the byte-frozen gate, since `send_email` is HARD + below floor — or a new pipeline-email delay-timer surface). The compensation is **front-loaded**:
+
+- **Owner-attributed send audit.** Every headless send appends the ordinary `TOOL_CALL` / `TOOL_RESULT` carrying `approval_source = "auto_pipeline"` + `approver_user_id = owner_user_id` — the event trail **is** the audit ("sent BY PIPELINE, no human approver, owner=X, recipient=Y").
+- **Dry-run is the MANDATORY FIRST STATE.** A newly-opted-in schedule starts in dry-run. In dry-run the actuator **records what it *would* send** (recipient + subject) as an audit `OBSERVATION` in the run room and **does not call the helper or the transport** — the pending stays waiting. The owner must explicitly **promote to live** after validating. This gives a first irreversible crossing a no-cost preview on a real schedule before any send leaves the system.
+
+### D7. `RB-PIPELINE-EMAIL` — the honest residual (C6); the heaviest in the chain
+
+The residual lineage:
+
+> `RB-FS`/`RB-NET` (sandboxed I/O) → `RB-ADMIT` (plugin admission) → `RB-AUTHZ` (any *authenticated* account is a full actuator, ADR-039) → `RB-AUTOFIRE` (no account actuates a *gated, COUNTDOWN-tier, **reversible-floored*** pending, ADR-040) → `RB-PIPELINE-SCHED` (no account *initiates* a **reversible** run, ADR-042) → **`RB-PIPELINE-EMAIL`** (no account *actuates* an **irreversible** external send, P5.1c).
+
+> **`RB-PIPELINE-EMAIL`** — When a pipeline schedule opts in **and is promoted to live**, the pipeline **sends an irreversible external email with no human in the loop at any point**. The human-in-the-loop moment is **entirely at config-time**: enable the feature, opt the schedule in, pin the recipient, and explicitly promote dry-run → live. This is **qualitatively heavier than `RB-AUTOFIRE` and `RB-PIPELINE-SCHED`**: `RB-AUTOFIRE` *refused* irreversibility (its reversibility floor); `RB-PIPELINE-SCHED` *stayed* reversible (`countdown_auto_fire=None`). `RB-PIPELINE-EMAIL` is the **one place in the product allowed to cross the reversible boundary** — and only because it is bounded by: **scheduled-run-only** (D1); **`send_email`-only**, a literal constant (D4); **opt-in, default OFF, fail-closed** (D5); **dry-run mandatory first state** (D6); **owner-config-pinned recipient** — the LLM cannot choose or redirect the recipient even within the domain allowlist (D3); the **`send_email` domain/recipient allowlist** (ADR-036, intact); and **owner-attributed audit** (D6). **Once sent, there is no recall.** This is named, bounded, and **never softened**. There is no honest alternative to naming it; under-naming or over-claiming here is the single most likely way this slice fails its honesty bar.
+
+### D8. New ADR-043 + the amendment set (C7 = a)
+
+P5.1c is a new contract surface (the headless-email authorization, the eligibility gate, the 3-state opt-in, `RB-PIPELINE-EMAIL`) — it gets its own ADR and its own isolated dual-lens; ADR-041/042 stay clean primitive/scheduler records. Amendments carried (inscribed at impl, plan task P5.1c-6):
+
+- **ADR-041 Decision 5** (reversible-only output) — gains its **one** narrowly-authorized irreversible exception: `send_email`, scheduled-only, opt-in, owner-pinned, dry-run-first, via the post-run actuator. The interactive/manual posture is unchanged.
+- **ADR-041 Decision 10** (P5.1b/c deferral) — **P5.1c realized; the P5.1 wave closes.**
+- **ADR-042** — the schedule gains the email opt-in surface (`email_enabled`/`email_mode`/`email_recipient`) + the dry-run state; the sweeper's `_schedule_act_on_writer` gains a post-run actuation step (the run itself is byte-unchanged).
+- **ADR-040 Decision 4** — `_writer_approve_helper` gains a **third caller** + the **`auto_pipeline`** marker (additive, as D4 anticipated); `RB-PIPELINE-EMAIL` is noted as the **heavier neighbor** that crosses the reversibility line `RB-AUTOFIRE` held.
+- **ADR-036** — `send_email`'s HARD tier is **unchanged**; it becomes headless-actuatable **only** via the pipeline-email path; the recipient allowlist + unsandboxed transparency-warning are intact.
+- **ADR-005 / ADR-013 / ADR-027** — a **note**, not a logic change: the gate still tiers `send_email` HARD; the crossing is an **actuation-authorization layer *after* the gate**, never a re-tier or floor change.
+
+### Constitutional invariants P5.1c holds (the Lens contract — C8)
+
+Two orthogonal failure-family lenses (isolated dual-lens, `dual-lens-r0b.md`):
+
+**Lens A — the crossing done wrong / over-actuation + irreversible-send safety.** The actuator fires **only** `send_email` (never another HARD tool — the D4 constitutional test); **only** opted-in, **promoted-to-live** schedules (default OFF + dry-run-first honored; absent config ⇒ no send); **only** to the **config-pinned recipient** (the LLM cannot redirect even within the domain allowlist); the `send_email` allowlist is still enforced; it is **idempotent** (no double-send across sweep ticks or restart — the still-pending check inherited from `_writer_approve_helper`; a crash between run and actuation under-sends, never double-sends); **owner-attributed** (`approval_source="auto_pipeline"` + `owner_user_id`); **fail-closed** unconfigured; **dry-run actually does not send** (records recipient+subject only, no transport, pending stays waiting).
+
+**Lens B — spine + reversible-envelope no-regression.** The gate (`score` / `decide_tier` / `emit_gate_decision`) + `_execute_local_call` **byte-frozen**; the interactive `/confirm` path + COUNTDOWN sweeper + the two `RB-AUTOFIRE` stamp guards (`tool_dispatch.py:137-145`) **byte-untouched**; `run_pipeline`'s `countdown_auto_fire=None` **preserved** (the actuator is layered *after* the run, not a relaxation of the run's reversible envelope); **no new routing `LLMPurpose`** (the only LLM stays analyze/reduce content-gen; the recipient is **config**, not an LLM judgment); `_writer_approve_helper`'s existing two callers (`human`/`auto_timer`) **behavior-identical** after the `Literal` widening; the `ToolCallMeta` constitutional test updated **additively**; `send_email`'s allowlist + unsandboxed transparency-warning intact.
+
+---
+
+## Considered alternatives
+
+- **C0 (b) any opted-in run (manual + scheduled)** — rejected (D1): a manual run has a human at trigger time; auto-actuating its email skips a confirm the owner could trivially give, widening the irreversible surface to a case that does not need it, and conflating "what the pipeline is" with "is headless email authorized."
+- **C1 (b) a separate independent pipeline-email channel** — rejected (D2): duplicates the reconstruct + still-pending + idempotency + bus-publish reasoning that ADR-040 Decision 3 explicitly rejected.
+- **C1/C2 (c) deterministic config-delivery (email as a pipeline output, not an actuated tool-call)** — rejected (D2/D3): most constitutional on the "orchestration = code" axis, but reshapes email from an actuated gated tool-call into a pipeline output, discards the gate's record of "an agent proposed this HARD op," and is over-tight when the value is emailing the *analysis the agents wrote*.
+- **C2 (a) LLM-composed, allowlist-bounded only** — rejected (D3): leaves the within-`allowed_domains` exfil residual (ADR-036 D3-ii) with **no human backstop** — the LLM picks the recipient (within domain) and the content, sent unreviewed.
+- **C3 (b) reversibility-band gate / (c) per-tool `auto_pipeline_eligible` flag** — rejected (D4): both re-introduce a class-level / "flip it on" generalization the first crossing must resist.
+- **C5 (c) a runtime cancel window** — rejected (D6): requires routing email through the frozen COUNTDOWN gate or a new delay-timer surface; heavy for an infrequent scheduled send. Front-loaded opt-in + dry-run is simpler and the honest human moment is at config-time.
+- **C7 (b) amend ADR-041/042 in place** — rejected (D8): bundling the irreversible crossing dilutes both records and the focused dual-lens.
+
+## Consequences
+
+- **Reversibility of *this decision*:** Medium. The opt-in is default-OFF and the columns are additive; disabling all schedules' `email_enabled` returns the product to the P5.1b posture with no schema rollback. But the **runtime act it authorizes is irreversible** — `RB-PIPELINE-EMAIL` (D7): once a live send fires, there is no recall. That asymmetry is the point of the slice and the reason for the dry-run-first gate.
+- **Surface added:** one post-run actuator + its discovery scan + eligibility gate (in `api/app.py`), three additive schedule columns + store accessors, a 3-state opt-in endpoint surface (owner-private), two additive `Literal` widenings, the cross-cutting constitutional/no-regression test suite. The gate, executor, COUNTDOWN spine, runner reversible envelope, and interactive/manual paths are untouched.
+- **The one authorized crossing.** P5.1c is the **only** place allowed to actuate an irreversible op headless. It must never read as "pipelines can now actuate HARD tools" — the D4 single-tool constant + its constitutional test are the structural guarantee.
+
+## References
+
+- **The three locks (Context, D1):** `pipeline/runner.py:153,223` (`countdown_auto_fire=None`) + `agents/tool_dispatch.py:137-145` (the two `RB-AUTOFIRE` stamps) + `config/tools.yaml:48` (`send_email` rev=3) + `config/autonomy.yaml:14` (floor=5) + `pipeline/runner.py:67` (`_PIPELINE_THRESHOLDS`).
+- **The actuation seam (D2):** `api/app.py:379-471` (`_writer_approve_helper` — reconstruct-from-record `:434-449`, still-pending `:422-429`, discriminated outcome; **not** byte-frozen) + `:1453` (HTTP confirm caller, `"human"`) + `:549` (countdown sweeper caller, `"auto_timer"`) + `:383` (the param `Literal`) + `core/event.py:224` (`ToolCallMeta.approval_source` `Literal`, constitutional-test-pinned) + `tests/core/test_constitution.py`.
+- **The hook point (D2):** `api/app.py:600-727` (`_schedule_act_on_writer` step 5) + `:731-765` (`_schedule_sweeper`, holds `loop`).
+- **`send_email` (D3/D4):** `tools/network_tools.py:409-532` (`_make_send_email`: `to`/`subject`/`body` from params `:458-460`, mandatory allowlist + fail-closed `:466-495`, unsandboxed warning `:450-456`) + `tools/executor.py` (`_execute_local_call` — byte-frozen).
+- **Opt-in home (D5):** `pipeline/store.py:44-58` (`pipeline_schedules` DDL) + `pipeline/schema.py:101-113` (`PipelineScheduleRecord`) + `memory/store.py:107-118` (guarded `ALTER TABLE ADD COLUMN` precedent) + `api/app.py:2116-2175` (`_patch_schedule` owner-private endpoint to mirror).
+- **Contracts amended (D8):** ADR-041 (Decisions 5, 10) + ADR-042 + ADR-040 (Decisions 3, 4, 8) + ADR-036 + ADR-037 (R9) + ADR-039 (D6 provenance) + a note on ADR-005/013/027.
+- **Process:** `docs/process/architect-briefs/P5.1c.md` (the decision surface + ratification) + `docs/process/dual-lens-r0b.md`.
