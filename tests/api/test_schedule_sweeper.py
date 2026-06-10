@@ -709,7 +709,7 @@ def test_lens_b_countdown_auto_fire_none_preserved() -> None:
 
 def test_lens_b_no_new_llm_purpose() -> None:
     """Lens B: no new LLMPurpose added by P5.1c (recipient is config, not LLM judgment)."""
-    from orchestrator.llm.types import LLMPurpose
+    from orchestrator.llm.purposes import LLMPurpose
 
     actual = {p.value for p in LLMPurpose}
     # Only assert that the pipeline-related ones haven't grown
