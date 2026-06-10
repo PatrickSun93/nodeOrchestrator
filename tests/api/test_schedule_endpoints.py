@@ -358,3 +358,187 @@ def test_created_interval_schedule_appears_in_due_after_time(
     future_ms = now_ms() + 2_000
     due_future = list_due_schedules(sched_ctx.writer_store.conn, future_ms)
     assert any(r.schedule_id == sid for r in due_future)
+
+
+# ---------------------------------------------------------------------------
+# P5.1c-2: email opt-in endpoints (owner-private, 3-state, ADR-043 D5/D6)
+# ---------------------------------------------------------------------------
+
+
+def test_email_optin_endpoint_happy_path(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """POST email-optin: owner can opt in (→ dry-run) and response includes email fields."""
+    pipe_id = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        r = c.post(
+            f"/pipelines/{pipe_id}/schedules",
+            json={"kind": "interval", "expr": "60"},
+        )
+        assert r.status_code == 201
+        sid = r.json()["schedule_id"]
+
+        r2 = c.post(
+            f"/pipelines/{pipe_id}/schedules/{sid}/email-optin",
+            json={"email_recipient": "alice@example.com"},
+        )
+    assert r2.status_code == 200
+    data = r2.json()
+    assert data["email_enabled"] is True
+    assert data["email_mode"] == "dry_run"
+    assert data["email_recipient"] == "alice@example.com"
+
+
+def test_email_optin_endpoint_non_owner_403(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """POST email-optin: non-owner → 403."""
+    pipe_id = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        r = c.post(
+            f"/pipelines/{pipe_id}/schedules",
+            json={"kind": "interval", "expr": "60"},
+        )
+        sid = r.json()["schedule_id"]
+
+    with _client(sched_app, sched_ctx, _USER_B) as c:
+        r2 = c.post(
+            f"/pipelines/{pipe_id}/schedules/{sid}/email-optin",
+            json={"email_recipient": "bob@example.com"},
+        )
+    assert r2.status_code == 403
+
+
+def test_email_optin_endpoint_missing_recipient_422(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """POST email-optin: empty recipient → 422."""
+    pipe_id = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        r = c.post(
+            f"/pipelines/{pipe_id}/schedules",
+            json={"kind": "interval", "expr": "60"},
+        )
+        sid = r.json()["schedule_id"]
+
+        r2 = c.post(
+            f"/pipelines/{pipe_id}/schedules/{sid}/email-optin",
+            json={"email_recipient": ""},
+        )
+    assert r2.status_code == 422
+
+
+def test_email_promote_endpoint_happy_path(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """POST email-promote: dry-run → live after opt-in."""
+    pipe_id = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        r = c.post(
+            f"/pipelines/{pipe_id}/schedules",
+            json={"kind": "interval", "expr": "60"},
+        )
+        sid = r.json()["schedule_id"]
+        c.post(
+            f"/pipelines/{pipe_id}/schedules/{sid}/email-optin",
+            json={"email_recipient": "alice@example.com"},
+        )
+        r2 = c.post(f"/pipelines/{pipe_id}/schedules/{sid}/email-promote")
+    assert r2.status_code == 200
+    data = r2.json()
+    assert data["email_enabled"] is True
+    assert data["email_mode"] == "live"
+    assert data["email_recipient"] == "alice@example.com"
+
+
+def test_email_promote_endpoint_not_enabled_409(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """POST email-promote: schedule not opted-in → 409."""
+    pipe_id = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        r = c.post(
+            f"/pipelines/{pipe_id}/schedules",
+            json={"kind": "interval", "expr": "60"},
+        )
+        sid = r.json()["schedule_id"]
+        r2 = c.post(f"/pipelines/{pipe_id}/schedules/{sid}/email-promote")
+    assert r2.status_code == 409
+
+
+def test_email_promote_endpoint_non_owner_403(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """POST email-promote: non-owner → 403."""
+    pipe_id = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        r = c.post(
+            f"/pipelines/{pipe_id}/schedules",
+            json={"kind": "interval", "expr": "60"},
+        )
+        sid = r.json()["schedule_id"]
+
+    with _client(sched_app, sched_ctx, _USER_B) as c:
+        r2 = c.post(f"/pipelines/{pipe_id}/schedules/{sid}/email-promote")
+    assert r2.status_code == 403
+
+
+def test_email_disable_endpoint_happy_path(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """POST email-disable: owner can disable → OFF state."""
+    pipe_id = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        r = c.post(
+            f"/pipelines/{pipe_id}/schedules",
+            json={"kind": "interval", "expr": "60"},
+        )
+        sid = r.json()["schedule_id"]
+        c.post(
+            f"/pipelines/{pipe_id}/schedules/{sid}/email-optin",
+            json={"email_recipient": "alice@example.com"},
+        )
+        c.post(f"/pipelines/{pipe_id}/schedules/{sid}/email-promote")
+        r2 = c.post(f"/pipelines/{pipe_id}/schedules/{sid}/email-disable")
+    assert r2.status_code == 200
+    assert r2.json()["email_enabled"] is False
+
+
+def test_email_disable_endpoint_non_owner_403(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """POST email-disable: non-owner → 403."""
+    pipe_id = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        r = c.post(
+            f"/pipelines/{pipe_id}/schedules",
+            json={"kind": "interval", "expr": "60"},
+        )
+        sid = r.json()["schedule_id"]
+
+    with _client(sched_app, sched_ctx, _USER_B) as c:
+        r2 = c.post(f"/pipelines/{pipe_id}/schedules/{sid}/email-disable")
+    assert r2.status_code == 403
+
+
+def test_schedule_response_includes_email_fields(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """GET /schedules list and POST /schedules both surface email fields."""
+    pipe_id = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        r = c.post(
+            f"/pipelines/{pipe_id}/schedules",
+            json={"kind": "interval", "expr": "60"},
+        )
+        assert r.status_code == 201
+        data = r.json()
+        assert data["email_enabled"] is False
+        assert data["email_mode"] == "dry_run"
+        assert data["email_recipient"] is None
+
+        r2 = c.get(f"/pipelines/{pipe_id}/schedules")
+        assert r2.status_code == 200
+        items = r2.json()
+        assert len(items) == 1
+        assert items[0]["email_enabled"] is False

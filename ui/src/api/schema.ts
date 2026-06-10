@@ -274,6 +274,186 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pipelines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pipelines
+         * @description List pipelines owned by the current principal (owner-private).
+         */
+        get: operations["_list_pipelines_pipelines_get"];
+        put?: never;
+        /**
+         * Create Pipeline
+         * @description Create a new pipeline definition. owner_user_id captured from principal.
+         */
+        post: operations["_create_pipeline_pipelines_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pipelines/{pipeline_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pipeline
+         * @description Get a single pipeline definition (owner-private — 403 for non-owner).
+         */
+        get: operations["_get_pipeline_pipelines__pipeline_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pipelines/{pipeline_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Pipeline
+         * @description Trigger a manual pipeline run (owner-private — 403 for non-owner).
+         *
+         *     Runs synchronously on writer_executor (mirrors _write_and_turn).
+         *     A pipeline_runs index row is written (T2).
+         */
+        post: operations["_run_pipeline_pipelines__pipeline_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pipelines/{pipeline_id}/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Schedules
+         * @description List schedules for a pipeline (owner-private).
+         */
+        get: operations["_list_schedules_pipelines__pipeline_id__schedules_get"];
+        put?: never;
+        /**
+         * Create Schedule
+         * @description Create a schedule for a pipeline (owner-private; 403 for non-owner).
+         *
+         *     ``kind=cron`` is rejected with 422 (deferred — ADR-042 D3 Y1 routing).
+         */
+        post: operations["_create_schedule_pipelines__pipeline_id__schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pipelines/{pipeline_id}/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Schedule
+         * @description Delete a schedule (owner-private).
+         */
+        delete: operations["_delete_schedule_pipelines__pipeline_id__schedules__schedule_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Patch Schedule
+         * @description Enable or disable a schedule (owner-private).
+         *
+         *     On re-enable, recomputes next_fire from now so a long-disabled schedule
+         *     does not fire immediately.
+         */
+        patch: operations["_patch_schedule_pipelines__pipeline_id__schedules__schedule_id__patch"];
+        trace?: never;
+    };
+    "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-optin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Schedule Email Optin
+         * @description Opt a schedule into headless email (→ dry-run state, owner-private, ADR-043 D5/D6).
+         */
+        post: operations["_schedule_email_optin_pipelines__pipeline_id__schedules__schedule_id__email_optin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Schedule Email Promote
+         * @description Promote email opt-in dry-run → live (explicit second action, ADR-043 D6).
+         */
+        post: operations["_schedule_email_promote_pipelines__pipeline_id__schedules__schedule_id__email_promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Schedule Email Disable
+         * @description Disable email opt-in for a schedule (→ OFF state, owner-private, ADR-043 D5).
+         */
+        post: operations["_schedule_email_disable_pipelines__pipeline_id__schedules__schedule_id__email_disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -585,6 +765,77 @@ export interface components {
             status: string;
         };
         /**
+         * _PipelineCreateRequest
+         * @description Request body for POST /pipelines.
+         *
+         *     extra=forbid: forge guard (mirrors _LoginRequest).
+         *     owner_user_id is NOT accepted from the body — it is derived server-side
+         *     from request.state.principal (ADR-039 D1).
+         */
+        _PipelineCreateRequest: {
+            /** Sources */
+            sources: {
+                [key: string]: unknown;
+            }[];
+            /** Analysis Prompts */
+            analysis_prompts: string[];
+            /**
+             * Output Config
+             * @default {}
+             */
+            output_config: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * _PipelineResponse
+         * @description Response for a single pipeline definition.
+         */
+        _PipelineResponse: {
+            /** Pipeline Id */
+            pipeline_id: string;
+            /** Owner User Id */
+            owner_user_id: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Created At */
+            created_at: number;
+            /** Sources */
+            sources: {
+                [key: string]: unknown;
+            }[];
+            /** Analysis Prompts */
+            analysis_prompts: string[];
+            /** Output Config */
+            output_config: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * _PipelineRunResponse
+         * @description Response for POST /pipelines/{id}/run.
+         */
+        _PipelineRunResponse: {
+            /** Run Id */
+            run_id: string;
+            /** Room Id */
+            room_id: string;
+            /** Pipeline Id */
+            pipeline_id: string;
+            /** Succeeded */
+            succeeded: boolean;
+            /** Sources Read */
+            sources_read: number;
+            /** Branches Succeeded */
+            branches_succeeded: number;
+            /** Branches Failed */
+            branches_failed: number;
+            /** Summary */
+            summary: string;
+            /** Error */
+            error: string | null;
+        };
+        /**
          * _PluginInfo
          * @description Single entry in GET /plugins response (ADR-038 D5).
          */
@@ -612,6 +863,69 @@ export interface components {
              * @default next_restart
              */
             effect: string;
+        };
+        /**
+         * _ScheduleCreateRequest
+         * @description Request body for POST /pipelines/{id}/schedules.
+         *
+         *     extra=forbid: forge guard.  owner_user_id is NOT accepted from the body —
+         *     it is derived server-side from request.state.principal (ADR-039 D1).
+         */
+        _ScheduleCreateRequest: {
+            /** Kind */
+            kind: string;
+            /** Expr */
+            expr: string;
+        };
+        /**
+         * _ScheduleEmailOptinRequest
+         * @description Request body for POST /pipelines/{id}/schedules/{sid}/email-optin (ADR-043 D5).
+         */
+        _ScheduleEmailOptinRequest: {
+            /** Email Recipient */
+            email_recipient: string;
+        };
+        /**
+         * _ScheduleEnableRequest
+         * @description Request body for PATCH /pipelines/{id}/schedules/{sid}.
+         */
+        _ScheduleEnableRequest: {
+            /** Enabled */
+            enabled: boolean;
+        };
+        /**
+         * _ScheduleResponse
+         * @description Response for a single schedule record (ADR-042 D9 / ADR-043 D5).
+         */
+        _ScheduleResponse: {
+            /** Schedule Id */
+            schedule_id: string;
+            /** Pipeline Id */
+            pipeline_id: string;
+            /** Owner User Id */
+            owner_user_id: string;
+            /** Kind */
+            kind: string;
+            /** Expr */
+            expr: string;
+            /** Next Fire */
+            next_fire: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Created At */
+            created_at: number;
+            /**
+             * Email Enabled
+             * @default false
+             */
+            email_enabled: boolean;
+            /**
+             * Email Mode
+             * @default dry_run
+             */
+            email_mode: string;
+            /** Email Recipient */
+            email_recipient?: string | null;
         };
     };
     responses: never;
@@ -1055,6 +1369,353 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["_PluginWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _list_pipelines_pipelines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_PipelineResponse"][];
+                };
+            };
+        };
+    };
+    _create_pipeline_pipelines_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_PipelineCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_PipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _get_pipeline_pipelines__pipeline_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_PipelineResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _run_pipeline_pipelines__pipeline_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_PipelineRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _list_schedules_pipelines__pipeline_id__schedules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_ScheduleResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _create_schedule_pipelines__pipeline_id__schedules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_ScheduleCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_ScheduleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _delete_schedule_pipelines__pipeline_id__schedules__schedule_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _patch_schedule_pipelines__pipeline_id__schedules__schedule_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_ScheduleEnableRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_ScheduleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _schedule_email_optin_pipelines__pipeline_id__schedules__schedule_id__email_optin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["_ScheduleEmailOptinRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_ScheduleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _schedule_email_promote_pipelines__pipeline_id__schedules__schedule_id__email_promote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_ScheduleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _schedule_email_disable_pipelines__pipeline_id__schedules__schedule_id__email_disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["_ScheduleResponse"];
                 };
             };
             /** @description Validation Error */

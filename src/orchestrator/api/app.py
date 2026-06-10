@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.agents.dispatch import LLMRouterProtocol
 from orchestrator.agents.loader import load_agents
@@ -354,7 +354,7 @@ class _ScheduleCreateRequest(BaseModel):
 
 
 class _ScheduleResponse(BaseModel):
-    """Response for a single schedule record."""
+    """Response for a single schedule record (ADR-042 D9 / ADR-043 D5)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -366,6 +366,9 @@ class _ScheduleResponse(BaseModel):
     next_fire: int
     enabled: bool
     created_at: int
+    email_enabled: bool = False
+    email_mode: str = "dry_run"
+    email_recipient: str | None = None
 
 
 class _ScheduleEnableRequest(BaseModel):
@@ -374,6 +377,14 @@ class _ScheduleEnableRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool
+
+
+class _ScheduleEmailOptinRequest(BaseModel):
+    """Request body for POST /pipelines/{id}/schedules/{sid}/email-optin (ADR-043 D5)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    email_recipient: str = Field(min_length=1)
 
 
 def _writer_approve_helper(
@@ -2034,6 +2045,9 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 next_fire=record.next_fire,
                 enabled=record.enabled,
                 created_at=record.created_at,
+                email_enabled=record.email_enabled,
+                email_mode=record.email_mode,
+                email_recipient=record.email_recipient,
             )
 
         return await loop.run_in_executor(ctx.writer_executor, _write)
@@ -2070,6 +2084,9 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     next_fire=r.next_fire,
                     enabled=r.enabled,
                     created_at=r.created_at,
+                    email_enabled=r.email_enabled,
+                    email_mode=r.email_mode,
+                    email_recipient=r.email_recipient,
                 )
                 for r in records
             ]
@@ -2173,6 +2190,192 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 next_fire=updated.next_fire,
                 enabled=updated.enabled,
                 created_at=updated.created_at,
+                email_enabled=updated.email_enabled,
+                email_mode=updated.email_mode,
+                email_recipient=updated.email_recipient,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    # -----------------------------------------------------------------------
+    # P5.1c-2: email opt-in endpoints (owner-private, 3-state, ADR-043 D5/D6)
+    # -----------------------------------------------------------------------
+
+    @app.post(
+        "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-optin",
+        response_model=_ScheduleResponse,
+    )
+    async def _schedule_email_optin(
+        pipeline_id: str,
+        schedule_id: str,
+        body: _ScheduleEmailOptinRequest,
+        request: Request,
+    ) -> _ScheduleResponse:
+        """Opt a schedule into headless email (→ dry-run state, owner-private, ADR-043 D5/D6)."""
+        from orchestrator.pipeline.store import (
+            get_pipeline,
+            get_schedule,
+            set_schedule_email_optin,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _ScheduleResponse:
+            pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
+            if pipeline is None:
+                raise HTTPException(
+                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
+                )
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            sched = get_schedule(ctx.writer_store.conn, schedule_id)
+            if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if sched.pipeline_id != pipeline_id:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            set_schedule_email_optin(
+                ctx.writer_store.conn, schedule_id, recipient=body.email_recipient
+            )
+            updated = get_schedule(ctx.writer_store.conn, schedule_id)
+            assert updated is not None
+            return _ScheduleResponse(
+                schedule_id=updated.schedule_id,
+                pipeline_id=updated.pipeline_id,
+                owner_user_id=updated.owner_user_id,
+                kind=updated.kind,
+                expr=updated.expr,
+                next_fire=updated.next_fire,
+                enabled=updated.enabled,
+                created_at=updated.created_at,
+                email_enabled=updated.email_enabled,
+                email_mode=updated.email_mode,
+                email_recipient=updated.email_recipient,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.post(
+        "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-promote",
+        response_model=_ScheduleResponse,
+    )
+    async def _schedule_email_promote(
+        pipeline_id: str,
+        schedule_id: str,
+        request: Request,
+    ) -> _ScheduleResponse:
+        """Promote email opt-in dry-run → live (explicit second action, ADR-043 D6)."""
+        from orchestrator.pipeline.store import (
+            get_pipeline,
+            get_schedule,
+            promote_schedule_email_live,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _ScheduleResponse:
+            pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
+            if pipeline is None:
+                raise HTTPException(
+                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
+                )
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            sched = get_schedule(ctx.writer_store.conn, schedule_id)
+            if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if sched.pipeline_id != pipeline_id:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if not sched.email_enabled:
+                raise HTTPException(
+                    status_code=409,
+                    detail="cannot promote: email opt-in is OFF (call email-optin first)",
+                )
+            promote_schedule_email_live(ctx.writer_store.conn, schedule_id)
+            updated = get_schedule(ctx.writer_store.conn, schedule_id)
+            assert updated is not None
+            return _ScheduleResponse(
+                schedule_id=updated.schedule_id,
+                pipeline_id=updated.pipeline_id,
+                owner_user_id=updated.owner_user_id,
+                kind=updated.kind,
+                expr=updated.expr,
+                next_fire=updated.next_fire,
+                enabled=updated.enabled,
+                created_at=updated.created_at,
+                email_enabled=updated.email_enabled,
+                email_mode=updated.email_mode,
+                email_recipient=updated.email_recipient,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.post(
+        "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-disable",
+        response_model=_ScheduleResponse,
+    )
+    async def _schedule_email_disable(
+        pipeline_id: str,
+        schedule_id: str,
+        request: Request,
+    ) -> _ScheduleResponse:
+        """Disable email opt-in for a schedule (→ OFF state, owner-private, ADR-043 D5)."""
+        from orchestrator.pipeline.store import (
+            disable_schedule_email,
+            get_pipeline,
+            get_schedule,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _ScheduleResponse:
+            pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
+            if pipeline is None:
+                raise HTTPException(
+                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
+                )
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            sched = get_schedule(ctx.writer_store.conn, schedule_id)
+            if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if sched.pipeline_id != pipeline_id:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            disable_schedule_email(ctx.writer_store.conn, schedule_id)
+            updated = get_schedule(ctx.writer_store.conn, schedule_id)
+            assert updated is not None
+            return _ScheduleResponse(
+                schedule_id=updated.schedule_id,
+                pipeline_id=updated.pipeline_id,
+                owner_user_id=updated.owner_user_id,
+                kind=updated.kind,
+                expr=updated.expr,
+                next_fire=updated.next_fire,
+                enabled=updated.enabled,
+                created_at=updated.created_at,
+                email_enabled=updated.email_enabled,
+                email_mode=updated.email_mode,
+                email_recipient=updated.email_recipient,
             )
 
         return await loop.run_in_executor(ctx.writer_executor, _write)
