@@ -1,254 +1,309 @@
 ---
 task_id: P5.1b
 stage: impl
-review: R0-B (cross-family, impl-stage)
+review: R0-B (cross-family, impl-stage, cycle-2 re-review)
 lens: runtime-integration + failure-mode (dual-lens-r0b.md §contrarian)
 reviewer: cross-family (DeepSeek)
-verdict: needs_architect
+verdict: clean
 verdict_history:
-  - needs_architect   # 3 🟡 surfaced; no 🔴
-date: "2026-06-09"
-commit_reviewed: a7e485c (origin/claude/P5.1b-impl, 6 atomics)
+  - needs_architect   # cycle-1: 3 🟡 (Y1 docstring, Y2 orphan-logloop, Y3 audit-gap); missed A1 IDOR
+  - clean             # cycle-2: all 6 α items resolved; 0 🔴, 0 🟡
+date: "2026-06-10"
+commit_reviewed: cf8680a (origin/claude/P5.1b-impl, cycle-2 α rework)
+previous_commit: a7e485c (cycle-1, my prior review)
 gates:
-  ruff: pass
-  mypy: pass (4 new untyped-decorator, same pre-existing class; no novel errors)
-  pytest: 2418 passed, 0 failures (full suite)
+  ruff: pass (All checks passed!)
+  mypy: pass (Success: no issues found in 180 source files)
+  pytest: pass (full suite, exit 0; 1 pre-existing starlette + 1 pre-existing hung-DNS thread warning)
 artifacts_reviewed:
-  - docs/process/senior-plans/P5.1b.md
-  - docs/decisions/ADR-042-recurring-pipeline-scheduler.md (Accepted)
-  - docs/process/reviews/P5.1b/architect-routing-on-plan.md (Y1/Y2/N3 routed)
-  - docs/process/reviews/P5.1b/R0-A-on-plan.md
-  - docs/process/reviews/P5.1b/plan-vs-impl.md
-  - src/orchestrator/pipeline/schedule.py (new)
-  - src/orchestrator/pipeline/config.py (new)
-  - src/orchestrator/pipeline/schema.py (modified)
-  - src/orchestrator/pipeline/store.py (modified)
-  - src/orchestrator/api/app.py (modified, +462)
-  - config/pipeline.yaml (new)
-  - docs/decisions/ADR-041/040/025 (amended, P5.1b-6)
-  - tests/pipeline/test_schedule.py (new, 15 tests)
-  - tests/pipeline/test_schedule_store.py (new, 15 tests)
-  - tests/pipeline/test_scheduler_config.py (new, 9 tests)
-  - tests/api/test_schedule_sweeper.py (new, 13 tests)
-  - tests/api/test_schedule_endpoints.py (new, 12 tests)
+  - docs/process/reviews/P5.1b/architect-routing-on-impl.md (α disposition, cycle-1→2)
+  - docs/process/reviews/P5.1b/R0-A.md (cycle-1, A1..A6)
+  - docs/process/reviews/P5.1b/plan-vs-impl.md (cycle-1, PVI-1..4)
+  - docs/process/reviews/P5.1b/R0-B.md (cycle-1, my own Y1/Y2/Y3)
+  - git diff a7e485c..origin/claude/P5.1b-impl (cycle-2 rework, 3 files, +177/-23)
+  - git diff origin/main...origin/claude/P5.1b-impl (full branch, 15 files, +2150/-16)
+  - src/orchestrator/api/app.py (_schedule_act_on_writer, _delete_schedule, _patch_schedule, _list_schedules)
+  - tests/api/test_schedule_endpoints.py (new tests)
+  - tests/api/test_schedule_sweeper.py (new tests)
 ---
 
-# R0-B impl-stage — P5.1b (recurring pipeline scheduler)
+# R0-B impl-stage — P5.1b cycle-2 re-review
 
-Cross-family impl-stage review of `origin/claude/P5.1b-impl` @ `a7e485c` (6 atomics,
-+1996/−16 over 15 files). Lens: **runtime-integration + failure-mode** per
-`dual-lens-r0b.md` §contrarian — the cross-family structural advantage is tracing
-"what happens when this call fails at 3am?" across module boundaries.
+Cross-family re-review of `origin/claude/P5.1b-impl` @ `cf8680a` (cycle-2 α rework on
+PR #68). In cycle-1 (@ `a7e485c`), I returned `needs_architect` with 3 🟡 (Y1 docstring,
+Y2 orphan-logloop, Y3 audit-gap) but **missed A1** (cross-pipeline IDOR on DELETE/PATCH),
+which was caught independently by senior (PVI-1) and R0-A (A1). The architect routed
+**all-α** across 6 items (including all 3 of my Y* + A4/A5/A6 from R0-A). This cycle-2
+review verifies the rework against that routing, with the **hard-won lesson from cycle-1**:
+authorization surface requires tracing the data-flow, not just the gate — `sched.pipeline_id`
+≠ URL `pipeline_id` when they differ, and both the code and the tests must probe that case.
 
-**All 10 user-specified invariants verified.** Details in §Verified below.
-
----
-
-## Verdict: `needs_architect`
-
-0 🔴 blocking, 3 🟡 for architect routing. The impl is faithful to the plan, ADR-042,
-and the architect-routed Y1/Y2/N3. The load-bearing safety invariants (claim-before-run
-double-fire guard, boot re-arm skip-to-next, countdown_auto_fire=None preservation,
-spine byte-frozen, discover-on-reader/act-on-writer, clean teardown) are all correctly
-implemented and tested with fail-on-revert discipline. The 3 🟡 are genuine
-runtime-behavior edge cases worth the architect's attention, none safety-critical.
+**Bottom line: all 6 α items are correctly resolved. 0 🔴, 0 🟡. Verdict: `clean`.**
 
 ---
 
 ## Lens preamble
 
-This is a true cross-family R0-B. The plan-stage R0-B-on-plan was already clean (zero
-findings against plan + ADR-042). The impl-stage cross-family value is tracing the
-**actual code paths** for failure modes the in-family reviewers may under-weight:
-restart timing, stale-reader TOCTOU, writer-executor serialization, orphan-data loops,
-and error-path audit gaps. The plan-stage dual-lens already caught the spec-level
-concerns (Y1 cron deferred, Y2 endpoints kept, N3 acknowledged). My job is: does the
-**running code** hold the invariants the plan inscribed?
+This is a true cross-family R0-B (DeepSeek). The cross-family structural advantage is
+tracing runtime-integration failure modes: "what happens when this call fails at 3am?"
+across module boundaries. For this cycle-2 re-review, my lens is specifically:
 
-**Short answer: yes.** The load-bearing crux — claim-before-run, boot skip-to-next,
-spine byte-frozen, `countdown_auto_fire=None` inheritance — is correct and tested.
-Three 🟡 surface edge cases the architect should route; none are 🔴.
-
----
-
-## 🔴 Blocking — none
-
-No safety or correctness blocking issues found.
+1. **Authorization correctness** — the A1 IDOR was a data-flow error (gate binds to URL
+   pipeline, mutation targets a globally-resolved schedule); I apply the same data-flow trace
+   to verify the fix is complete (both verbs, both the guard and the tests).
+2. **My own cycle-1 blind spots** — Y1 (docstring), Y2 (orphan loop), Y3 (audit gap) — are
+   they genuinely fixed, or did the rework introduce new failure modes?
+3. **Cross-family invariants from my cycle-1 verified table** — does the rework preserve
+   claim-before-run, boot skip-to-next, spine byte-frozen, clean teardown,
+   `countdown_auto_fire=None`, and scheduled-run owner attribution?
 
 ---
 
-## 🟡 Needs architect routing
+## Per-α verification
 
-### Y1 — `_schedule_act_on_writer` docstring/code mismatch on missing-pipeline path
+### A1 / PVI-1 (🟡→✅) — Cross-pipeline IDOR on DELETE/PATCH
 
-- **File/line:** `src/orchestrator/api/app.py`, `_schedule_act_on_writer` docstring
-  (step 2) vs body (pipeline-missing check)
-- **Claim:** The docstring says step 2 handles "pipeline missing or disabled (still
-  advance next_fire so re-enable resumes cleanly)". The code does NOT advance
-  `next_fire` when the pipeline is missing — it returns immediately (line ~"pipeline
-  … missing, skip" + `return`). The code behavior is the **more defensible one**
-  (advancing for a non-existent pipeline is pointless), but the docstring claims
-  otherwise.
-- **Severity:** 🟡 — documentation-only (the code is correct); could mislead a future
-  maintainer into thinking advance-on-missing is implemented.
-- **Suggested investigation:** Fix the docstring to read: "skip if pipeline missing (no
-  advance); skip run if pipeline disabled (advance next_fire so re-enable resumes
-  cleanly)."
+**Cycle-1 finding:** `_delete_schedule` and `_patch_schedule` evaluated the owner gate
+against the URL `pipeline_id`, then fetched + mutated the schedule by its global
+`schedule_id` with no check that `sched.pipeline_id == pipeline_id`.
 
-### Y2 — Orphan schedules (pipeline deleted, schedule survives) cause perpetual warning-log loop
+**Cycle-2 fix (verified):**
 
-- **File/line:** `src/orchestrator/api/app.py`, `_schedule_act_on_writer` ~pipeline-missing
-  branch
-- **Claim:** When a pipeline is deleted but its schedule persists, the sweeper enters
-  a perpetual loop:
-  1. Reader discovers the schedule (stale `next_fire` in the past)
-  2. Act re-reads on writer → pipeline missing → `_log.warning` → **returns without
-     advancing `next_fire`**
-  3. `next_fire` stays in the past → re-discovered on the next sweep tick
-  4. Repeats every `sweep_interval_s` (default 60s), logging a warning each time,
-     forever, until the schedule is manually deleted
-  Boot re-arm briefly advances the schedule past current time, but once it becomes due
-  again, the loop restarts. There is no self-healing path — the schedule must be
-  manually deleted by the operator, but the operator may not be watching warning logs.
-- **Severity:** 🟡 — resource/noise, not safety (no runs fire, no data corruption).
-  Log-spam at ~1 warning/minute per orphan schedule; CPU cost negligible (a SELECT +
-  return). The operational concern is that a genuine warning (e.g., a different
-  schedule hitting an error) is drowned in "pipeline … missing, skip" noise.
-- **Suggested investigation:** Two options, architect's call:
-  (a) Advance `next_fire` even for missing-pipeline schedules (consistent with the
-      disabled-pipeline path) — breaks the loop; schedule is re-discovered only after
-      the next interval elapses, giving the operator time to notice and clean up
-  (b) Auto-delete orphan schedules (check at create/delete time is simpler:
-      `ON DELETE CASCADE`-style cleanup when a pipeline is deleted — out of P5.1b
-      scope since pipeline-delete is not in the endpoint surface)
-  (a) is the minimal fix, consistent with the disabled-pipeline behavior.
+- `_delete_schedule` (`app.py:2103-2105`): after `get_schedule(writer_conn, schedule_id)`
+  and the `sched is None → 404` guard, added:
+  ```python
+  if sched.pipeline_id != pipeline_id:
+      raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
+  ```
+  The 404 detail mirrors the "not found" message — no cross-pipeline information leak.
 
-### Y3 — `create_pipeline_run` failure after successful `run_pipeline` leaves audit gap
+- `_patch_schedule` (`app.py:2149-2151`): identical guard, same placement.
 
-- **File/line:** `src/orchestrator/api/app.py`, `_schedule_act_on_writer` try/except
-  block (step 4)
-- **Claim:** `run_pipeline` and `create_pipeline_run` share a single `try/except`.
-  If `run_pipeline` succeeds (room created, events appended) but `create_pipeline_run`
-  fails (e.g., transient DB I/O error), `next_fire` has already been advanced (step 3)
-  and the `except` logs the error — but no `pipeline_runs` index row exists for a run
-  that actually happened. The run's events are in the room (reversible output), so this
-  is **data-completeness, not safety**.
-- **Severity:** 🟡 — audit-trail gap, not safety. The `pipeline_runs` table is an
-  index, not a source of truth (the room events are the truth). Consistent with the
-  countdown sweeper's error-handling pattern (same single-try-block shape in
-  `_countdown_sweeper`). Worth surfacing because the headless context means no human
-  is watching for "run not recorded" — a manual `/run` user would notice the missing
-  response; a scheduled run's audit gap is silent.
-- **Suggested investigation:** Split the try block: `run_pipeline` in one try,
-  `create_pipeline_run` in a nested try/except that logs but does not lose the
-  successful run result. Or note in ADR-042 consequences that this is a known
-  accepted gap (consistent with ADR-040's sweeper pattern).
+- **Test `test_delete_schedule_cross_pipeline_idor_404`** (`test_schedule_endpoints.py:272-285`):
+  creates two pipelines (both owned by _USER_A), creates schedule under `pipe_other`,
+  calls `DELETE /pipelines/{pipe_self}/schedules/{sid_other}` → asserts 404. Correct:
+  same-owner cross-pipeline is the minimal case (no 403/404 ambiguity).
+
+- **Test `test_patch_schedule_cross_pipeline_idor_404`** (`test_schedule_endpoints.py:318-331`):
+  identical pattern for PATCH with `{"enabled": False}` → asserts 404.
+
+**Cross-family assessment:** The guard is correctly placed *after* `get_pipeline` owner
+check + `get_schedule` existence check. Both tests probe the cross-pipeline case with the
+same owner (isolation from the 403 path). The 404 is the correct verb — the schedule does
+not belong to this pipeline, so "not found" in this pipeline's namespace. **Fixed.**
+
+> **Lesson applied.** Cycle-1 tests reused `pipe_id` for both the URL and the schedule
+> parent, so the surface passed. The cycle-2 tests create two distinct pipelines and
+> cross them. The data-flow trace (`sched.pipeline_id` ≠ URL `pipeline_id`) is now
+> covered by both code and test. I missed this in cycle-1; the fix is complete.
+
+### A2 / Y1 (🟡→✅) — Docstring/code mismatch on missing-pipeline path
+
+**Cycle-1 finding:** The docstring claimed step 2 "still advance next_fire" for
+missing-pipeline, but the code returned without advancing.
+
+**Cycle-2 fix (verified):** The `_schedule_act_on_writer` docstring now reads:
+
+```
+Order (D4):
+  1. Re-read schedule on writer conn; skip if not still due+enabled.
+  2. Fetch parent pipeline (state check deferred until after claim).
+  3. Claim: advance next_fire BEFORE run (skip-to-next; crash-safe).
+     Always claim regardless of pipeline state — orphan/disabled schedules
+     are re-due only after the next interval, not every tick.
+  4. Skip run if pipeline missing (orphan) or disabled; next_fire already
+     advanced in step 3 so a restored/re-enabled pipeline resumes cleanly.
+  5. Run: run_pipeline (one try) → create_pipeline_run (nested try/except
+     so a log-index failure does not discard the successful run result).
+```
+
+The docstring now accurately reflects the code: step 2 only *fetches* (defers the check),
+step 3 claims unconditionally, step 4 gates on pipeline state after claim. **Fixed.**
+
+### A3 / Y2 / PVI-3 (🟡→✅) — Orphan schedule perpetual re-discovery
+
+**Cycle-1 finding:** When the parent pipeline was deleted, `next_fire` was not advanced,
+so the orphan schedule was re-discovered + warn-logged every sweep tick forever.
+
+**Cycle-2 fix (verified):**
+
+- The `pipeline = get_pipeline(writer_conn, schedule.pipeline_id)` call moved **before**
+  the claim (step 2), but the `if pipeline is None` check moved **after** the claim
+  (step 4). Result: `next_fire` is always advanced (step 3), then the orphan check
+  returns without running.
+
+- **Test `test_act_missing_pipeline_advances_next_fire_no_run`**
+  (`test_schedule_sweeper.py:281-299`): creates pipeline + schedule, DELETEs the pipeline
+  row, calls `_schedule_act_on_writer`, asserts `next_fire > old_next_fire` AND
+  `router.call.call_count == 0`. The delete-before-act order correctly models "pipeline
+  deleted between discovery and act" (the worst-case TOCTOU window).
+
+**Cross-family assessment:** The advance-on-missing behavior is now symmetric with the
+disabled-pipeline path — both advance `next_fire` before skipping the run. An orphaned
+schedule is re-discovered only after the next interval, breaking the perpetual log loop.
+The test correctly models the race window. **Fixed.**
+
+### Y3 (🟡→✅) — Split-try: `create_pipeline_run` failure after successful `run_pipeline`
+
+**Cycle-1 finding:** `run_pipeline` and `create_pipeline_run` shared a single `try/except`,
+so a `create_pipeline_run` failure after a successful `run_pipeline` discarded the
+successful run result and left no audit trail.
+
+**Cycle-2 fix (verified):**
+
+- Outer `try`: wraps only `run_pipeline(...)`. On exception → `_log.error(...,
+  exc_info=True)` + `return` (no `create_pipeline_run` called — correct: if the run
+  itself failed, there is no `result` to index).
+
+- Nested `try`: wraps only `create_pipeline_run(...)`. On exception → `_log.warning(...)`
+  (not error — the run succeeded, only the index write failed). The warning message
+  includes `result.run_id` so the orphaned run can be correlated.
+
+- The `_log.info("run %s ... ok/failed")` line runs *after* both try blocks — it always
+  fires when `run_pipeline` succeeds, regardless of `create_pipeline_run` outcome.
+
+- **Test `test_act_create_run_fails_after_successful_run_does_not_raise`**
+  (`test_schedule_sweeper.py:395-417`): mocks `create_pipeline_run` to raise, calls act,
+  asserts no exception propagates AND `next_fire` was advanced. Correct.
+
+**Cross-family assessment:** The split-try is correctly structured. The `_log.warning`
+(rather than `_log.error`) on `create_pipeline_run` failure is the right severity —
+the run's events are in the room (reversible output, the source of truth); the
+`pipeline_runs` table is an index, not the truth. The run result is never lost.
+**Fixed.**
+
+> **Residual note (not a finding):** If `create_pipeline_run` fails, the operator has
+> no `pipeline_runs` row to discover the run via the GET index — but the room events
+> exist and are reachable via the room history. This is a known accepted gap (same
+> shape as `_countdown_sweeper`'s error path) and was N3-acknowledged in ADR-042
+> Consequences. The split-try makes the gap explicit and non-destructive; no further
+> action needed.
+
+### A4 (🟢→✅) — Spine-isolation AST test extended to `_schedule_act_on_writer`
+
+**Cycle-1 finding:** The AST test only covered `_schedule_sweeper`, not the
+higher-risk `_schedule_act_on_writer` function that does the actual DB + run work.
+
+**Cycle-2 fix (verified):** New test `test_schedule_act_on_writer_does_not_call_countdown_spine`
+(`test_schedule_sweeper.py:470-499`):
+- Uses `inspect.getsource(_schedule_act_on_writer)` + `ast.parse`
+- Walks all `ast.Call` nodes and collects `func.id` names
+- Asserts none of `{_countdown_sweeper, _discover_expired_pendings, _writer_approve_helper}`
+  appear in the call sites
+- Uses `ast.Name` check (not substring) so docstring mentions don't trigger false positives
+
+**Cross-family assessment:** The test is well-constructed — AST-level verification is
+stronger than grep (no false positives from comments/docstrings) and makes the
+spine-isolation invariant fail-on-revert. The existing `_schedule_sweeper` test +
+this new `_schedule_act_on_writer` test together cover the full call chain.
+**Fixed.**
+
+### A5 / PVI-4 (🟢→✅) — GET on missing pipeline returns 404
+
+**Cycle-1 finding:** `_list_schedules` returned `[]` (200) for a missing pipeline,
+while POST/DELETE/PATCH returned 404.
+
+**Cycle-2 fix (verified):** `_list_schedules` (`app.py:2059`): missing pipeline now
+raises `HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")`.
+Test `test_list_schedules_missing_pipeline_404` asserts 404. Verb-consistent with
+the rest of the endpoint surface. **Fixed.**
+
+### A6 / PVI-2 (🟢→✅) — Partial index confirmed
+
+**Architect routing:** "additive, in-spirit; confirm/keep, no behavioural change."
+No code change needed or made. The partial index `idx_pipeline_schedules_due` remains
+as-is. **Confirmed.**
 
 ---
 
-## 🟢 Observations (non-findings)
+## Cross-family invariant re-verification
 
-- **N1 — Interval drift from claim-time `now_ms_val` is correct and documented.**
-  `compute_next_fire` uses the sweep tick's `now_ms_val`, not the actual
-  writer-processing time. The drift (up to `sweep_interval_s` + writer queueing per
-  fire) is the architect-ratified price of skip-to-next (ADR-042 D3/D4, plan N2).
-  The `schedule.py` module docstring explicitly documents this.
+All invariants from my cycle-1 verified table (§Verified invariants) re-checked
+against the cycle-2 diff — the rework touches only `_schedule_act_on_writer` (internal
+reordering + split-try), the endpoint guards, and tests. No invariant is weakened:
 
-- **N2 — All schedule acts in one sweep tick share the same `now_ms_val`.**
-  Captured once at loop start, reused for all due schedules in that tick. Consistent
-  with the documented drift posture; each schedule's `next_fire` is computed relative
-  to the same epoch.
-
-- **N3 — Sweeper serializes acts one-at-a-time via `await` in the for-loop.**
-  `for schedule_id in due_ids: await loop.run_in_executor(writer_executor, …)` —
-  each act completes before the next starts. Combined with `writer_executor(max_workers=1)`,
-  this correctly serializes schedule acts against each other and against countdown
-  sweeper acts + manual `/run`. The writer-side authoritative re-read (step 1) is the
-  TOCTOU guard — the second act in a stale-reader double-discovery always sees the
-  first act's advanced `next_fire`.
-
-- **N4 — `_rearm_schedules_on_boot` correctly uses the writer connection.**
-  Runs on `writer_executor` via `ctx.writer_store.conn`. The `list_due_schedules`
-  call uses the writer connection (not the reader), which is correct for an
-  authoritative boot-time mutation.
+| Invariant | Cycle-2 status | Check |
+|---|---|---|
+| Claim-before-run double-fire guard | ✅ preserved | Step 3 (claim) still before step 5 (run); `test_act_double_fire_guard` passes |
+| Boot re-arm advances past-due without running | ✅ preserved | `_rearm_schedules_on_boot` untouched by cycle-2 diff |
+| Skip-to-next: missed fires dropped | ✅ preserved | `compute_next_fire(..., now_ms_val)` at claim; boot re-arm uses `now_ms()` |
+| 3am restart: no burst, no double-fire | ✅ preserved | Boot re-arm before sweeper task created; claim-before-run unchanged |
+| `countdown_auto_fire=None` preserved | ✅ preserved | `runner.py` still absent from diffstat; scheduler does not pass the kwarg |
+| Scheduled run attributed to config-time owner | ✅ preserved | `owner_user_id=schedule.owner_user_id` passed to both `run_pipeline` and `create_pipeline_run` |
+| `pipelines.enabled=0` → advance `next_fire`, skip run | ✅ preserved | Claim (step 3) before disabled check (step 4) |
+| `schedule.enabled=0` → not discovered | ✅ preserved | `list_due_schedules` WHERE clause unchanged |
+| discover-on-reader / act-on-writer | ✅ preserved | Reader/executor assignments unchanged |
+| Second background task clean teardown | ✅ preserved | Lifespan teardown unchanged: `cancel()` + `suppress(CancelledError)` + `await` before `ctx.shutdown()` |
+| Spine byte-frozen | ✅ preserved | `_countdown_sweeper` / `_discover_expired_pendings` / `_writer_approve_helper` untouched; gate zero-diff |
+| No new `LLMPurpose` | ✅ preserved | Diff grep clean |
+| Scheduler OFF → byte-identical to P5.1a | ✅ preserved | `config/pipeline.yaml` default `enabled: false` unchanged |
 
 ---
 
-## Verified invariants (all confirmed)
+## New-issue sweep (cross-family lens on the rework)
 
-### Runtime safety (Lens A)
+I traced the reworked `_schedule_act_on_writer` for new failure modes:
 
-| Invariant | How verified | Status |
-|---|---|---|
-| Claim-before-run double-fire guard | `_schedule_act_on_writer` step 3 advances `next_fire` before step 4's `run_pipeline`; `test_act_double_fire_guard` asserts second act with same `now_ms` sees advanced `next_fire` and skips | ✅ |
-| Boot re-arm advances past-due without running | `_rearm_schedules_on_boot` iterates past-due schedules, calls `compute_next_fire` + `update_schedule_next_fire` only; `test_rearm_advances_past_due_without_running` asserts `router.call.call_count == 0` | ✅ |
-| Skip-to-next: missed fires dropped, never backfilled | Boot re-arm uses `compute_next_fire(kind, expr, now)` (current time), not the old `next_fire`; act does the same at claim time. Both compute from `now`, not from `old_next_fire` | ✅ |
-| 3am restart: no burst, no double-fire | Boot re-arm runs before sweeper task created → all past-due schedules advanced to future → first sweeper tick sees zero due schedules. Crash mid-run: `next_fire` already advanced → on reboot, schedule is in the future → untouched by re-arm | ✅ |
-| `countdown_auto_fire=None` preserved for scheduled runs | `runner.py` byte-unchanged (zero diff); `countdown_auto_fire=None` at both `process_tool_calls` call sites (`runner.py:153,223`); the scheduler is a caller, does not edit the runner | ✅ |
-| Scheduled run attributed to config-time schedule owner | `_schedule_act_on_writer` passes `owner_user_id=schedule.owner_user_id` to both `run_pipeline` and `create_pipeline_run`; `test_act_run_attributed_to_schedule_owner` asserts `pipeline_runs.owner_user_id == _USER` | ✅ |
-| `pipelines.enabled=0` → advance `next_fire`, skip run | `_schedule_act_on_writer` step 2/3: advances next_fire, then checks `pipeline.enabled` and returns without running; `test_act_disabled_pipeline_advances_next_fire_no_run` asserts `next_fire` advanced and `router.call.call_count == 0` | ✅ |
-| `schedule.enabled=0` → not discovered, not fired | `list_due_schedules` WHERE clause `enabled = 1`; `test_discover_due_excludes_disabled` asserts sid not in due | ✅ |
+1. **`get_pipeline` raising mid-act (DB error).** The `get_pipeline(writer_conn,
+   schedule.pipeline_id)` call in step 2 occurs *before* the claim (step 3). If it
+   raises (DB I/O error), `next_fire` is NOT advanced, the exception propagates to
+   `_schedule_sweeper`'s `except Exception: log + continue`, and the schedule stays
+   due for the next tick. **Correct posture** — don't advance the timer if we can't
+   even check pipeline state.
 
-### Spine no-regression (Lens B)
+2. **`compute_next_fire` raising on a corrupt schedule.** If a schedule's `kind` is
+   somehow invalid (should be impossible — cron/unknown rejected at create time with
+   422), the `ValueError`/`NotImplementedError` propagates before `next_fire` is
+   advanced. The sweeper logs + continues; the corrupt schedule is re-discovered next
+   tick. This is an acceptable fail-safe — a corrupt schedule should not be silently
+   advanced past.
 
-| Invariant | How verified | Status |
-|---|---|---|
-| `run_pipeline` byte-unchanged | `git diff origin/main...origin/claude/P5.1b-impl -- src/orchestrator/pipeline/runner.py` → empty | ✅ |
-| No new routing `LLMPurpose` | Grep: zero `LLMPurpose` in any new/modified code; `pipeline/` uses only `LLMPurpose.AGENT_RESPONSE` (content-gen, pre-existing in runner.py) | ✅ |
-| Gate/spine byte-frozen | `git diff` for `autonomy/`, `core/`, `tools/`, `agents/` → all empty | ✅ |
-| `_countdown_sweeper` / `_discover_expired_pendings` / `_writer_approve_helper` untouched | Grep: only in pre-existing code locations (diff context) + docstring mentions (zero actual calls). AST test `test_schedule_sweeper_does_not_call_countdown_spine` parses `_schedule_sweeper` source and asserts zero `ast.Call` name references to the three forbidden symbols | ✅ |
-| Scheduler OFF → byte-identical to P5.1a | `config/pipeline.yaml` default `enabled: false`; when disabled, lifespan creates zero sweeper tasks, runs zero boot re-arm. `test_scheduler_off_no_effect_on_countdown` asserts default state | ✅ |
-| `countdown_auto_fire=None` preserved in runner source | `test_run_pipeline_not_modified_by_scheduler` asserts the sentinel string appears in `runner.py` module source | ✅ |
+3. **`run_pipeline` raises → `next_fire` already advanced.** This is the intentional
+   skip-to-next posture (ADR-042 D4/D5): claim before run so a crash or exception
+   mid-run doesn't double-fire on restart. The schedule skips this tick and fires on
+   the next interval. Consistent with the countdown sweeper's error-continue pattern.
 
-### Persistence + API (ADR-042 D2/D9)
+4. **`create_pipeline_run` raises → info log still fires.** The `_log.info("run %s
+   ... ok/failed")` line runs after the nested try/except, so every successful
+   `run_pipeline` is logged regardless of index-write outcome. Correct.
 
-| Invariant | How verified | Status |
-|---|---|---|
-| `pipeline_schedules` 1:N schema | `CREATE TABLE IF NOT EXISTS pipeline_schedules` with ADR-042 D2 columns + `idx_pipeline_schedules_due` partial index; `test_schema_has_pipeline_schedules_table` | ✅ |
-| Due-query indexable | `CREATE INDEX IF NOT EXISTS idx_pipeline_schedules_due ON pipeline_schedules (enabled, next_fire) WHERE enabled = 1` — covers the sweeper's exact discovery query | ✅ |
-| Owner-private endpoints fail-closed | All 4 endpoints check `pipeline.owner_user_id != _principal.user_id` → 403; principal from `request.state.principal` (server-derived, never body); `_ScheduleCreateRequest` has `extra="forbid"` and no `owner_user_id` field | ✅ |
-| `kind=cron` → 422 | `validate_schedule_expr("cron", …)` raises `ValueError` → endpoint returns 422; `test_create_schedule_cron_422_deferred` asserts 422 + "deferred" in detail | ✅ |
-| Default OFF fail-closed | `config/pipeline.yaml` ships `enabled: false`; absent file/section → `PipelineSchedulerConfig()` (default); malformed → `ValueError` at startup | ✅ |
+No new 🔴 or 🟡 found.
 
-### Lifespan + teardown
+---
 
-| Invariant | How verified | Status |
-|---|---|---|
-| Second background task clean teardown | Lifespan `yield` → `_schedule_sweeper_task.cancel()` + `await` with `suppress(CancelledError)` before `ctx.shutdown()`; `test_schedule_sweeper_cancels_cleanly` asserts `task.done()` | ✅ |
-| Sweeper task not created when disabled | `if ctx.pipeline_scheduler.enabled:` guards both boot re-arm and `asyncio.create_task` | ✅ |
-| Teardown ordering: sweepers before shutdown | Countdown sweeper cancelled first, then schedule sweeper, then `ctx.shutdown()` — both cancelled+awaited before executor shutdown | ✅ |
-| Writer not blocked | Discovery runs on `reader_executor` via `ctx.get_reader_conn()` (per-thread reader pool); only the act touches `writer_executor`. Act serialization is correct (one writer, serialized) | ✅ |
+## Gate run (independent, isolated worktree)
 
-### Test discipline
+Performed in a detached worktree @ `cf8680a` with `uv sync --all-extras`:
 
-| Check | Result |
+| Gate | Result |
 |---|---|
-| fail-on-revert for double-fire guard | `test_act_double_fire_guard`: second act with same `now_ms` → `router.call.call_count == 0`. Would fail if claim-before-run ordering were reversed | ✅ |
-| fail-on-revert for boot re-arm without run | `test_rearm_advances_past_due_without_running`: asserts `router.call.call_count == 0`. Would fail if re-arm called `run_pipeline` | ✅ |
-| All 64 new tests pass | ✅ |
-| Full suite 2418 pass | ✅ |
+| `ruff check src/ tests/` | All checks passed! |
+| `mypy` (files=src,tests) | Success: no issues found in 180 source files |
+| `pytest` (full suite) | Exit 0; 1 pre-existing starlette deprecation + 1 pre-existing hung-DNS thread warning (both unrelated) |
+
+No new gate regressions. The cycle-1 env-artifact (`untyped-decorator` without `--all-extras`)
+does not reproduce — with FastAPI installed via `--all-extras`, mypy is clean.
 
 ---
 
 ## Synthesis
 
-The impl is **high-quality** — correct where it matters, tested where it counts. The
-three 🟡 share a common thread: **the missing-pipeline edge case**. The code correctly
-handles the disabled-pipeline case (advance `next_fire`, skip run) but the
-missing-pipeline case is half-handled: the docstring claims advance, the code doesn't,
-and the consequence is a perpetual log loop. The fix is narrow (advance on missing too)
-and architecturally neutral (ADR-042 D4 step 2 already says "log + skip" for missing;
-adding "advance next_fire" is within the decision surface). The architect may prefer to
-keep the current behavior as an intentional "orphan schedules are operator error" signal,
-but the docstring should match either way.
+The cycle-2 rework is **surgically precise**: 6 α items resolved across 3 files, +177/-23
+lines, zero unintended changes. The A1 IDOR fix (the material finding, missed by me in
+cycle-1) is correctly implemented with data-flow guards on both DELETE and PATCH, backed
+by cross-pipeline tests that probe the exact case the cycle-1 tests missed. My three Y*
+items are all genuinely fixed: the docstring matches the code, the orphan loop is broken
+by advancing `next_fire` on the missing-pipeline path, and the split-try preserves the
+run result when `create_pipeline_run` fails. The A4/A5/A6 🟢 items are correctly addressed.
 
-The audit gap (Y3) is a known pattern — the countdown sweeper has the same shape — and
-is unlikely to fire in practice (SQLite on localhost doesn't have transient I/O errors).
-Surfacing for completeness; the architect may route N3-style (acknowledge known gap in
-ADR-042 consequences).
+The constitutional crux — claim-before-run, boot skip-to-next, spine byte-frozen,
+`countdown_auto_fire=None` preservation, clean teardown — holds unchanged across the
+rework. The scheduler remains a correct second caller of the byte-unchanged `run_pipeline`.
 
-**No 🔴. The constitutional crux holds:** `_schedule_sweeper` is a genuinely independent
-sibling that shares zero spine-critical code with `_countdown_sweeper`, and
-`countdown_auto_fire=None` is preserved by construction (the runner is untouched, the
-scheduler is merely its second caller). The product is safe to merge after architect
-routing of the 3 🟡.
+**Cycle-1 lesson applied.** The A1 miss was a failure to trace the data flow across the
+owner gate: the gate bound to the URL pipeline, the mutation targeted a globally-resolved
+schedule, and no test crossed them. The cycle-2 fix + tests close this gap. The cross-family
+lens adds value here not by finding new bugs but by verifying that the prior miss is
+completely closed — tracing `sched.pipeline_id` through both verbs and both test cases.
+
+**0 🔴, 0 🟡. Verdict: `clean`.**
