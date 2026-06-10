@@ -2,7 +2,10 @@
 task_id: P5.1c
 stage: plan (R0-A-on-plan; plan + ADR-043 Proposed, no impl yet)
 reviewer: architect-partner (R0-A)
-verdict: needs_architect
+verdict: clean
+verdict_history:
+  - "2026-06-10: R0-A-on-plan → needs_architect (0🔴; Y1 headline d1-test-vacuous + Y2/Y3 minor)"
+  - "2026-06-10: architect routed all-α (architect-routing-on-plan.md); senior absorbed Y1/Y2/Y3 into plan + ADR-043 (RC-10) → clean"
 scope: faithfulness to ratified C0–C8 + atomic decomposition + ADR-043 completeness/implementability + structural boundary-guard tightening
 verified_against: origin/main @ dd5ced5 (HEAD 7779622); plan 60e973a; brief dd5ced5
 lenses_pre-checked: A (crossing/over-actuation + irreversible-send safety) · B (spine + reversible-envelope no-regression)

@@ -1,13 +1,14 @@
 ---
 task_id: P5.1c
 round: R0-B-on-plan
-verdict: needs_architect
+verdict: clean
 findings_count:
   red: 0
   yellow: 2
   green: 2
 verdict_history:
   - "2026-06-10: R0-B-on-plan cross-family review → needs_architect (0🔴 2🟡 2🟢)"
+  - "2026-06-10: architect routed Y1=case-insensitive, Y2=typed-meta (architect-routing-on-plan.md); senior absorbed both into ADR-043 D3/D6 + plan P5.1c-3/-4 (RC-10) → clean"
 reviewed_artifacts:
   - "docs/process/architect-briefs/P5.1c.md (architect ratification C0–C8)"
   - "docs/process/senior-plans/P5.1c.md (6 atomics)"
