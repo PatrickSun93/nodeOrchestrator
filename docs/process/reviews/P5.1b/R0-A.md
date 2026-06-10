@@ -1,162 +1,136 @@
 ---
 task_id: P5.1b
 stage: impl
-review: R0-A (architect-partner, impl-stage) — cycle-2 re-review
+review: R0-A (architect-partner, impl-stage) — cycle-3 α close-out re-review
 actor: architect-partner
-cycle: 2
-lens: "Lens A = scheduler safety + headless-initiation correctness; Lens B = spine + auto-fire no-regression; cycle-2 = all-α rework resolution + empirical fail-on-revert"
-verdict: needs_architect
-date: "2026-06-09"
+cycle: 3
+lens: "Lens A = scheduler safety + headless-initiation correctness; Lens B = spine + auto-fire no-regression; cycle-3 = α close-out only (B1 fail-on-revert + B2 ADR-text sync), test + doc, zero product code"
+verdict: clean
+date: "2026-06-10"
 reviewed_branch: origin/claude/P5.1b-impl
-reviewed_at: cf8680a
-supersedes: "cycle-1 R0-A @ a7e485c (same path): A1 must-fix + A2/A3 🟡 + A4/A5/A6 🟢, needs_architect"
+reviewed_at: 30a7d05
+supersedes: "cycle-2 R0-A @ cf8680a (same path): all 7 cycle-1 findings resolved + A1 IDOR fail-on-revert confirmed; raised B1 (vacuous Y3 test) + B2 (ADR-042 D4 text), needs_architect"
 plan: docs/process/senior-plans/P5.1b.md
 adr: ADR-042
-routing_absorbed: docs/process/reviews/P5.1b/architect-routing-on-impl.md   # all-α, cycle-2
+routing_absorbed: docs/process/reviews/P5.1b/architect-routing-on-impl-cycle2.md   # all-α, B1 + B2, cycle-3
 peer_reviews:
-  - docs/process/reviews/P5.1b/plan-vs-impl.md   # senior cycle-2, verdict CLEAN @ cf8680a
-read_method: "git diff a7e485c..cf8680a (cycle-2 delta) + origin/main...cf8680a (full); no checkout — shared worktree, stayed on main; gates + empirical fail-on-revert in isolated detached worktree @ cf8680a (uv sync --all-extras)"
+  - docs/process/reviews/P5.1b/plan-vs-impl.md   # senior cycle-3, verdict CLEAN @ 30a7d05 (findings: [])
+  - docs/process/reviews/P5.1b/R0-B.md           # r0b cross-family, CLEAN @ cf8680a; no cycle-3 re-run (test/doc-only delta, no product surface — per routing)
+read_method: "git diff cf8680a..30a7d05 (cycle-3 delta = ADR-042 D4 step-2 sentence + test_schedule_sweeper.py caplog strengthen; +29/-6, zero product code) on main; no checkout — shared worktree; gates + B1 empirical fail-on-revert in isolated detached worktree @ 30a7d05 (uv sync --all-extras)"
+commit_subject_note: "30a7d05 subject reads '→ awaiting_junior_impl cycle 3' (a mislabeled state string); its actual diff is the B1 + B2 close-out — confirmed by name-only (only ADR-042 + the one test file)."
 gates:
   ruff: pass (All checks passed!)
   mypy: pass (Success: no issues found in 304 source files — files=src,tests)
-  pytest: pass (2424 passed, exit 0; +6 vs cycle-1 2418; 2 pre-existing unrelated warnings — starlette/httpx deprecation + tests/tools/test_net_trust.py DNS-timeout thread warning)
-cycle1_resolution:
-  A1-IDOR: RESOLVED — guard in both verbs; fail-on-revert EMPIRICALLY CONFIRMED (neutralized guard → DELETE 204 / PATCH 200 land on the cross-pipeline schedule)
-  A2-docstring: RESOLVED — docstring rewritten to match the reordered code
-  A3-orphan-loop: RESOLVED — claim moved before the state-gate; fail-on-revert EMPIRICALLY CONFIRMED (early-return → next_fire stays == old)
-  A4-ast-coverage: RESOLVED — new test_schedule_act_on_writer_does_not_call_countdown_spine
-  A5-get-404: RESOLVED — GET on missing pipeline now 404 + test
-  A6-index: RETAINED — store.py:55 partial index untouched in cycle-2
-  Y3-split-try: PRODUCTION RESOLVED; TEST does not fail-on-revert (see B1)
-findings:
-  - id: B1
-    severity: yellow
-    atomic: P5.1b cycle-2 (Y3 test)
-    title: "Y3 split-try is correct in production, but test_act_create_run_fails_after_successful_run_does_not_raise does NOT fail-on-revert — the cycle-1 single-try still passes it (empirically confirmed). Test-only, production-correct, low-stakes (the delta is logging fidelity)."
-  - id: B2
-    severity: green
-    atomic: ADR-042 D4 (doc text)
-    title: "ADR-042 D4 step-2 literal text still reads 'missing (deleted) → log + skip' (no advance), now trailing the ratified advance-on-missing code. Architect already ruled no-amendment at routing — flagging the code-vs-inscribed-text gap for an optional one-line D4 sync."
+  pytest: pass (2424 passed, exit 0; junit-xml authoritative — tests=2424 / failures=0 / errors=0 / skipped=0; 1 pre-existing starlette/httpx-deprecation warning observed, the intermittent DNS-timeout thread warning did not surface this run)
+cycle2_closeout:
+  B1-vacuous-Y3-test: RESOLVED — caplog assertion added; fail-on-revert EMPIRICALLY CONFIRMED (revert to cycle-1 single-try → AssertionError @ test_schedule_sweeper.py:440 "split-try must emit a WARNING…"; restore → pass)
+  B2-adr042-d4-text: RESOLVED — D4 step-2 missing-branch synced to "log + advance next_fire + skip the run (A3 routing)", now parallel to the disabled branch and matching the advance-on-missing code
+findings: []
 ---
 
-# R0-A impl-stage — P5.1b cycle-2 re-review (recurring pipeline scheduler)
+# R0-A impl-stage — P5.1b cycle-3 α close-out re-review (recurring pipeline scheduler)
 
-Independent architect-partner **re-review** of the all-α cycle-2 rework on
-`origin/claude/P5.1b-impl` @ `cf8680a` (cycle-2 delta = `app.py` + 2 test files, +177/−23),
-against the cycle-1 findings (`R0-A.md` @ `a7e485c`, this path), the absorbed routing
-(`architect-routing-on-impl.md`: **all-α, one rework cycle**), the plan, and **ADR-042 (Accepted)**.
-Read on `main` via `git diff` (no checkout — shared worktree); canonical gates **and** targeted
-**empirical fail-on-revert** run in an isolated detached worktree @ `cf8680a` (`uv sync --all-extras`).
+Independent architect-partner **re-review** of the cycle-3 α close-out on
+`origin/claude/P5.1b-impl` @ `30a7d05`, against the cycle-2 R0-A (`R0-A.md` @ `cf8680a`,
+this path — now superseded), the absorbed routing
+(`architect-routing-on-impl-cycle2.md`: **all-α, B1 + B2, test + ADR-text only, one cycle**),
+the plan, and **ADR-042 (Accepted)**. Read on `main` via `git diff cf8680a..30a7d05`
+(no checkout — shared worktree); canonical gates **and** the targeted **B1 empirical
+fail-on-revert** run in an isolated detached worktree @ `30a7d05` (`uv sync --all-extras`).
 
-> State note: the dispatch named `awaiting_senior_plan_vs_impl`; during this review the senior's
-> **cycle-2 plan-vs-impl landed `clean` @ cf8680a** and the state advanced to **`awaiting_R0_A`** — so
-> this R0-A is in-order, not out-of-band.
+> Subject note: `30a7d05`'s commit subject is the mislabeled state string
+> *"→ awaiting_junior_impl cycle 3"*; its actual content is the B1 + B2 close-out. The
+> cycle-3 diff touches **exactly two files** — `ADR-042` (one D4 step-2 sentence) and
+> `tests/api/test_schedule_sweeper.py` (the Y3 test) — confirmed by `--name-only`. **Zero
+> product code.**
 
-**Bottom line.** The cycle-2 rework **resolves all seven cycle-1 findings**, and the must-fix
-authorization gap (**A1 cross-pipeline IDOR**) is closed with a guard whose test I **empirically
-confirmed fail-on-revert** (neutralize the guard → the cross-pipeline DELETE returns 204 and PATCH
-returns 200, i.e. the mutation lands on the other owner's schedule). The constitution still holds —
-countdown spine **byte-identical** to `origin/main` (AST-verified), `run_pipeline` byte-unchanged,
-`countdown_auto_fire=None` preserved, **no new `LLMPurpose`**, **no ADR amendment in the diff**, all
-three gates green (2424 passed). Two **non-blocking** items route the verdict to `needs_architect`:
-**B1** — the Y3 split-try test does not fail-on-revert (the production fix is correct; only its test
-is weak); **B2** — a 🟢 code-vs-ADR-text gap the architect already pre-ruled. Neither is a correctness
-or safety regression.
+**Bottom line.** Both cycle-2 close-out items are **resolved**, with **no new findings**:
+**B1** — the Y3 split-try test now **fails-on-revert** (I confirmed it empirically: reverting
+the production split-try back to the cycle-1 single `try/except` turns the test red, restoring
+it green); **B2** — the ADR-042 D4 step-2 sentence now matches the ratified advance-on-missing
+code. The constitution is untouched by construction (cycle-3 changes **no** product code):
+countdown spine **byte-identical** to `origin/main` (re-verified independently), `run_pipeline`
+unchanged, `countdown_auto_fire=None` preserved, **no new `LLMPurpose`**. All three gates green.
+**Verdict `clean`** — the slice is ready to merge (PR #68); the merge itself is the architect's.
 
 ---
 
-## Cycle-1 findings — resolution (all seven)
+## B1 — 🟡→α RESOLVED: Y3 split-try test now fails-on-revert (empirically confirmed)
 
-| # | cycle-1 (sev) | cycle-2 fix | Verified |
+The cycle-2 finding was that `test_act_create_run_fails_after_successful_run_does_not_raise`
+**passed on both** the fixed split-try and the reverted cycle-1 single-try — a guard that does
+not guard. The cycle-3 rewrite adds a `caplog`-scoped assertion that, after a
+`create_pipeline_run` failure following a **successful** `run_pipeline`, a **WARNING** containing
+`"succeeded"` is emitted — the truthful "run … succeeded, but the index write failed" log that
+**only** the split-try path can produce. (Logger asserted: `orchestrator.api.app`, matching
+`_log` in `app.py:228`.)
+
+I verified the production code is byte-unchanged from cycle-2 (`_schedule_act_on_writer`,
+`app.py:600`) — the run is wrapped in one `try` (fail → `error` + `return`), the index write in a
+**separate** `try` (fail → `warning "(run %s succeeded)"`), then a fall-through `info`. The
+cycle-1 single-`try` collapses all three under one `except` that logs *"run_pipeline failed"* and
+returns early — so no `"succeeded"` WARNING is ever emitted.
+
+### Empirical fail-on-revert (isolated worktree @ 30a7d05)
+
+| Step | Action | Result | Reading |
 |---|---|---|---|
-| **A1 / PVI-1** | 🟡 **must-fix** IDOR | `if sched.pipeline_id != pipeline_id: raise HTTPException(404)` in **both** `_delete_schedule` (app.py:2107) and `_patch_schedule` (app.py:2156), after the `get_schedule` fetch; 404 reuses the "schedule not found" detail (no existence oracle) | ✅ **empirical fail-on-revert** (below) |
-| **A2 / Y1** | 🟡 docstring | `_schedule_act_on_writer` docstring (steps 2–5) rewritten: "fetch pipeline → **always claim** → skip run if missing/disabled (next_fire already advanced)" — now matches the reordered body | ✅ read |
-| **A3 / Y2 / PVI-3** | 🟡 orphan loop | claim (`update_schedule_next_fire`) moved **before** the missing/disabled gate, so **missing also advances next_fire** → orphan re-discovered once per interval, not every tick | ✅ **empirical fail-on-revert** (below) + `test_act_missing_pipeline_advances_next_fire_no_run` |
-| **A4** | 🟢→α AST coverage | new `test_schedule_act_on_writer_does_not_call_countdown_spine` — AST-walks the **act** fn, asserts zero calls to the 3 spine symbols (fails-on-introduce) | ✅ read |
-| **A5 / PVI-4** | 🟢→α GET 404 | `_list_schedules` raises 404 on missing pipeline (was `[]`) + `test_list_schedules_missing_pipeline_404` | ✅ read (fail-on-revert by construction: `[]`→200≠404) |
-| **A6 / PVI-2** | 🟢→α index | partial index `idx_pipeline_schedules_due` untouched in cycle-2 (store.py:55) — confirmed retained | ✅ grep |
-| **Y3** | 🟡 audit gap | try split: `run_pipeline` (fail → log + `return`) then `create_pipeline_run` in a **separate** try (fail → warning, does **not** discard the run; the success info-log still fires) | ⚠️ **production correct**, but the **test is not fail-on-revert** → **B1** |
+| **A (as-is)** | run the Y3 test at `30a7d05` | **PASS** (exit 0) | split-try emits the `"succeeded"` WARNING |
+| **B (revert)** | merge the split-try back into the cycle-1 single `try/except` (run + create + info under one `try`, one `except` → `error`+`return`); `py_compile` clean | — | faithful cycle-1 form |
+| **C (reverted)** | re-run the Y3 test | **FAIL** (exit 1) — `AssertionError` at `test_schedule_sweeper.py:440`: *"split-try must emit a WARNING acknowledging the successful run…"* | the new assertion is the **sole** failure; the *does-not-raise* and *next_fire-advanced* assertions still hold under the revert, so the test now isolates **precisely** the logging-honesty delta |
+| **D (restore)** | `git checkout -- app.py` | worktree `porcelain` **empty** | clean restore |
+| **E (re-as-is)** | re-run the Y3 test | **PASS** (exit 0) | green again post-restore |
 
-### Empirical fail-on-revert (isolated worktree @ cf8680a)
-
-I reverted each must-rework fix in turn and re-ran its test:
-
-| Fix reverted | How | Test result | Reading |
-|---|---|---|---|
-| **A1** guard → `if False` | both verbs neutralized | `test_delete…idor_404` → **assert 204 == 404 FAIL**; `test_patch…idor_404` → **assert 200 == 404 FAIL** | guard genuinely closes the IDOR; the cross-pipeline DELETE/PATCH **succeeds** without it (the run lands on `S_other`) |
-| **A3** missing early-return before claim (cycle-1 behavior) | re-inserted `if pipeline is None: return` pre-claim | `test_act_missing…advances` → **assert next_fire > old FAIL** (`1699999999999 > 1699999999999`) | advance-on-missing genuinely breaks the every-tick loop |
-| **Y3** merged back to cycle-1 single-try | one `try` over run+create+info, one `except` | `test_act_create_run_fails…` → **STILL PASSES (exit 0)** | the test does **not** distinguish the fix from the bug → **B1** |
-
-A1 and A3 are airtight: their tests fail without the fix. The worktree was restored to `cf8680a`
-(clean) after each revert.
+This is the same test-honesty close-out applied at P5.1a cyc3: the guard now genuinely
+distinguishes the fix from the bug. **B1 resolved.**
 
 ---
 
-## New findings
+## B2 — 🟢→α RESOLVED: ADR-042 D4 step-2 text synced to advance-on-missing
 
-### B1 — 🟡 Y3 split-try test does not fail-on-revert (production-correct, test-only)
+D4 step-2 previously granted the `next_fire` advance only to the **disabled** branch
+(*"missing (deleted) → log + skip"*), trailing the A3 code that advances on **missing** too.
+Cycle-3 changes the one sentence to:
 
-The Y3 production fix is **correct** — `run_pipeline` and `create_pipeline_run` are now in separate
-`try`s, so a `create_pipeline_run` failure after a successful run logs a truthful warning
-("run %s succeeded") and the success info-log still fires, instead of the cycle-1 single-`try` that
-mislabeled it "run_pipeline failed". I verified the structure by reading app.py:688–727.
+> *"If the pipeline is **missing** (deleted) → log + **advance `next_fire`** + skip the run
+> (breaks the orphan re-discovery loop; A3 routing)."*
 
-But `test_act_create_run_fails_after_successful_run_does_not_raise` only asserts (a) the call does not
-propagate and (b) `next_fire` is advanced — **both of which already held under the cycle-1 single-try**
-(the shared `except` also swallowed the exception, and the claim already ran before the run in both).
-I confirmed this empirically: **reverting to the single-try still passes the test.** So a future
-re-merge of the two `try`s would silently regress the logging honesty without turning the suite red —
-a test that *looks* like it guards the split but doesn't (false fail-on-revert confidence).
-
-**Stakes are low** — the behavioral delta between cycle-1 and cycle-2 here is purely **logging
-fidelity** (in both, the run's room events persist and the `pipeline_runs` index row is absent because
-`create_pipeline_run` failed). The routing framed this test as "if cheaply mockable" (best-effort).
-**Surfaced, not self-routed:** the natural α is a one-line strengthen (assert via `caplog` that the
-"run … succeeded" / "create_pipeline_run failed" message fires and the misleading "run_pipeline
-failed" does **not**); the architect may equally accept-as-noted given the production fix is correct
-and the stakes are logging-only.
-
-### B2 — 🟢 ADR-042 D4 step-2 text now trails the ratified code (architect already pre-ruled)
-
-ADR-042 D4 step-2 (line 199) still reads: *"If the pipeline is **missing** (deleted) → log + skip. If
-`pipelines.enabled=0` → skip the run **but still advance next_fire**"* — i.e. the inscribed text grants
-the advance only to the **disabled** case. The A3 fix now advances on **missing** too. The architect's
-cycle-2 routing **already ruled "no ADR-042 amendment … A3's advance-on-missing matches D4's re-arm
-intent"**, so the behavior is ratified; I am only flagging that the **literal** D4 step-2 sentence is
-now the one spot where the inscribed contract trails the shipped code (the same doc-vs-code shape as
-the A2 in-code docstring that *was* synced this cycle, one level up at the ADR). **No behavioral
-implication; your call** whether a one-line D4 text-sync is worth it or the routing's intent-match
-stands. Not blocking.
+The missing branch is now **parallel** to the already-present disabled branch (*"skip the run
+but still advance `next_fire`"*), and both match the code's unconditional claim-then-gate
+(`app.py:600` step 3 advances `next_fire` before the step-4 missing/disabled gate). I scanned the
+rest of ADR-042 (`grep missing|orphan|next_fire`) — no second stale spot; the inscribed contract
+and the shipped code now agree. This is the scoped one-line sync the architect routed — **not** a
+decision change (the advance-on-missing behavior was ratified at cycle-2 routing). **B2 resolved.**
 
 ---
 
 ## Constitutional / Lens-B re-confirmation (independent)
 
+Cycle-3 changes **no** product code, so the constitution holds by construction; I re-verified
+the spine independently rather than inheriting the cycle-2 result:
+
 | Invariant | Verification (my run) | Status |
 |---|---|---|
-| countdown spine byte-frozen | AST-extracted `_countdown_sweeper` / `_writer_approve_helper` / `_discover_expired_pendings` from `origin/main` vs `cf8680a` → **byte-identical** (2378b / 3540b / 1883b) | ✅ |
-| gate + `_execute_local_call` + `run_pipeline` zero diff | `autonomy/`, `tools/executor.py`, `pipeline/runner.py` absent from the full diffstat; cycle-2 delta touches only `app.py` + 2 tests | ✅ |
-| `countdown_auto_fire=None` preserved | runner untouched; scheduler is a second caller, passes no kwarg | ✅ |
-| no new routing `LLMPurpose` | grep clean on the cycle-2 diff (`^\+.*LLMPurpose` → none) | ✅ |
-| no ADR amendment in the diff | cycle-2 touches **zero** `docs/` files (name-only confirms `app.py` + 2 tests) | ✅ |
-| A1 fix faithful to ADR-042 D9 | guard binds the mutation to `sched.pipeline_id` ("owner of the **parent** pipeline only", D9) — the fix *realizes* the inscribed intent | ✅ |
-| gates | ruff *All checks passed!* · mypy *304 files, no issues* · pytest **2424 passed** (exit 0) | ✅ |
+| countdown spine byte-frozen | AST-extracted `_countdown_sweeper` / `_writer_approve_helper` / `_discover_expired_pendings` from `origin/main` vs `30a7d05` → **byte-identical** (2378b / 3540b / 1883b) | ✅ |
+| product code zero-diff | `git diff --name-only cf8680a..30a7d05` → only `ADR-042` + `test_schedule_sweeper.py`; no `src/` file | ✅ |
+| `run_pipeline` / `_execute_local_call` / gate unchanged | absent from the cycle-3 diffstat | ✅ |
+| `countdown_auto_fire=None` preserved | runner untouched; scheduler remains a second caller passing no kwarg | ✅ |
+| no new routing `LLMPurpose` | cycle-3 diff is test + doc; grep clean | ✅ |
+| gates | ruff *All checks passed!* · mypy *304 files, no issues* · pytest **2424 passed** / 0 failures / 0 errors / 0 skipped (junit-xml, exit 0) | ✅ |
 
-Senior cycle-2 plan-vs-impl independently returned **`clean`**; my lens adds the empirical
-fail-on-revert pass (which surfaced B1, outside the plan/ADR-faithfulness lens).
+Senior cycle-3 plan-vs-impl independently returned **`clean`** (findings `[]`, @ `30a7d05`);
+R0-B's cycle-2 **`clean`** stands (no cycle-3 re-run — the test/doc-only delta has no product
+surface for the cross-family runtime/failure-mode lens, per the routing). My lens adds the
+empirical fail-on-revert pass that closes B1.
 
 ---
 
-## Verdict: `needs_architect`
+## Verdict: `clean`
 
-All seven cycle-1 findings are **resolved**; the must-fix **A1 IDOR is closed and fail-on-revert
-confirmed empirically**; the constitution holds (spine byte-frozen, `run_pipeline` unchanged,
-`countdown_auto_fire=None`, no new `LLMPurpose`, no ADR amendment) and all three gates are green
-(2424 passed). The slice is **safe to merge on correctness/safety grounds.**
-
-Two non-blocking items are the architect's to route: **B1** (🟡 — the Y3 test does not fail-on-revert;
-production-correct, low-stakes logging-fidelity; α one-line `caplog` strengthen vs accept-as-noted) and
-**B2** (🟢 — optional one-line ADR-042 D4 text-sync; you already pre-ruled no-amendment). I do **not**
-self-route either. Per ADR-008 Amendment 1, R0-A is mandatory regardless of the plan-vs-impl verdict;
-with senior plan-vs-impl `clean` and this R0-A flagging two non-blocking items, the joint verdict is
-the architect's synthesis call.
+Both α close-out items are **resolved** — **B1** fail-on-revert **empirically confirmed**, **B2**
+ADR-042 D4 text synced and internally consistent — with **no new findings**. Cycle-3 touches no
+product code, so the constitution is intact (spine byte-frozen, `run_pipeline` unchanged,
+`countdown_auto_fire=None`, no new `LLMPurpose`) and all three gates are green. With senior
+plan-vs-impl `clean` and R0-B `clean` (cycle-2, test/doc-only delta this cycle), the cycle-3
+close-out is complete. **PR #68 is ready to merge** → P5.1b closed. I do **not** merge (architect's
+call per role boundary).
