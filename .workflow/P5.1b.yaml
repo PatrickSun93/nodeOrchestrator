@@ -1,7 +1,7 @@
 task_id: P5.1b
-state: awaiting_R0_A
+state: closed
 cycle: 3
-last_transition_at: '2026-06-10T20:42:13.527332Z'
+last_transition_at: '2026-06-10T21:03:47.467990Z'
 cycle_started_at: '2026-06-10T19:56:35.625232Z'
 override_history:
 - timestamp: '2026-06-10T05:44:12.650036Z'
@@ -35,4 +35,17 @@ override_history:
     test to fail-on-revert; B2 one-line ADR-042 D4 text sync to match advance-on-missing.
     Test + ADR-text only, no product code change, spine byte-frozen. See architect-routing-on-impl-cycle2.md;
     rework on PR #68.'
+- timestamp: '2026-06-10T21:03:47.467990Z'
+  actor: architect
+  from_state: awaiting_R0_A
+  to_state: closed
+  reason: 'P5.1b merged (PR #68, merge de6b0ba). Recurring pipeline scheduler + pipeline_schedules
+    persistence + boot re-arm (ADR-042 Accepted). 3 impl cycles all-clean close: cyc1
+    all-α (A1 cross-pipeline IDOR must-fix + 5🟡/🟢) → cyc2 fixes (A1 fail-on-revert
+    confirmed; r0b re-reviewed authz it missed) → cyc3 close-out (B1 vacuous-test
+    fail-on-revert + B2 ADR-042 D4 text sync). plan-vs-impl + R0-A + R0-B (cross-family)
+    all clean. Spine + run_pipeline byte-frozen throughout, no new LLMPurpose, interval-only
+    (cron deferred), RB-PIPELINE-SCHED inscribed, opt-in default-OFF. Gates green
+    (ruff/mypy304/pytest2424). The awaiting_R0_A→PR_merge joint-verdict auto-advance
+    did not fire (same as cyc2); merged on clean reviews + closing by override.'
 requires_cross_family_review: true
