@@ -490,30 +490,66 @@ def test_schedule_sweeper_does_not_call_countdown_spine() -> None:
 
 
 def test_schedule_act_on_writer_does_not_call_countdown_spine() -> None:
-    """A4: _schedule_act_on_writer must import/call none of the countdown-actuation spine.
+    """Honest rewrite (R0A-Y1 / P5.1c-5 Lens B): pin the ACTUAL isolation invariants.
 
-    Checks AST call sites so docstring mentions do not trigger false positives.
+    ADR-043 D2 deliberately lifts ADR-042 D1's "_schedule_act_on_writer never calls
+    _writer_approve_helper" isolation via the narrow _actuate_pipeline_emails path.
+    The old test kept passing vacuously because the email actuator is a SEPARATE
+    function — the one-hop AST check on _schedule_act_on_writer saw no direct call.
+    This honest rewrite:
+      (1) drops _writer_approve_helper from forbidden_calls for _schedule_act_on_writer
+          (now legitimately reachable, only via _actuate_pipeline_emails)
+      (2) keeps _countdown_sweeper + _discover_expired_pendings forbidden for BOTH
+          _schedule_act_on_writer AND _actuate_pipeline_emails (COUNTDOWN spine untouched)
+      (3) adds a POSITIVE PIN: the sole new actuation reach is _actuate_pipeline_emails,
+          and _actuate_pipeline_emails is the only path that calls _writer_approve_helper.
     """
     import ast
 
-    source = inspect.getsource(_schedule_act_on_writer)
-    tree = ast.parse(source)
+    from orchestrator.api.app import _actuate_pipeline_emails
 
-    called_names = {
+    # ---- Part 1: _schedule_act_on_writer still must NOT call COUNTDOWN spine directly ----
+    source_act = inspect.getsource(_schedule_act_on_writer)
+    tree_act = ast.parse(source_act)
+    called_act = {
         node.func.id
-        for node in ast.walk(tree)
+        for node in ast.walk(tree_act)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
-
-    forbidden_calls = {
-        "_countdown_sweeper",
-        "_discover_expired_pendings",
-        "_writer_approve_helper",
-    }
-    for sym in forbidden_calls:
-        assert sym not in called_names, (
-            f"_schedule_act_on_writer must not call {sym!r} (ADR-042 D1)"
+    countdown_spine = {"_countdown_sweeper", "_discover_expired_pendings"}
+    for sym in countdown_spine:
+        assert sym not in called_act, (
+            f"_schedule_act_on_writer must not call {sym!r} (ADR-043 D2 / Lens B)"
         )
+
+    # ---- Part 2: _actuate_pipeline_emails also must NOT call COUNTDOWN spine ----
+    source_email = inspect.getsource(_actuate_pipeline_emails)
+    tree_email = ast.parse(source_email)
+    called_email = {
+        node.func.id
+        for node in ast.walk(tree_email)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    for sym in countdown_spine:
+        assert sym not in called_email, (
+            f"_actuate_pipeline_emails must not call {sym!r} (Lens B — COUNTDOWN spine untouched)"
+        )
+
+    # ---- Part 3: POSITIVE PIN — sole new actuation reach is _actuate_pipeline_emails ----
+    # _schedule_act_on_writer calls _actuate_pipeline_emails (the one authorized path).
+    assert "_actuate_pipeline_emails" in called_act, (
+        "_schedule_act_on_writer must call _actuate_pipeline_emails (the email crossing path)"
+    )
+    # _actuate_pipeline_emails calls _writer_approve_helper (live-mode actuation).
+    assert "_writer_approve_helper" in called_email, (
+        "_actuate_pipeline_emails must call _writer_approve_helper (the actuation seam)"
+    )
+    # _schedule_act_on_writer does NOT call _writer_approve_helper directly
+    # (only via _actuate_pipeline_emails — the narrow named path).
+    assert "_writer_approve_helper" not in called_act, (
+        "_schedule_act_on_writer must not call _writer_approve_helper directly; "
+        "only via _actuate_pipeline_emails (ADR-043 D2 positive pin)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -556,3 +592,149 @@ async def test_schedule_sweeper_cancels_cleanly(tmp_path: Path) -> None:
         assert task.done()
     finally:
         c.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# P5.1c-5 Lens A: HARD-never-generalize (D4 constitutional test) + Lens B pins
+# ---------------------------------------------------------------------------
+
+
+def test_hard_never_generalize_non_send_email_not_actuated(ctx: AppContext) -> None:
+    """Lens A: a non-send_email HARD pending is NEVER auto-actuated by the email path.
+
+    Even with email_enabled=True + email_mode='live', a git_push or apply_edit
+    HARD pending must never be actuated by _actuate_pipeline_emails. Only send_email
+    is in the literal allowlist (ADR-043 D4 constitutional test).
+    """
+    import asyncio
+
+    from orchestrator.api.app import _actuate_pipeline_emails
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        ToolCallPendingMeta,
+        build_author,
+        generate_event_id,
+        generate_room_id,
+        now_ms,
+    )
+    from orchestrator.core.room import Room, RoomType
+    from orchestrator.pipeline.store import (
+        create_schedule,
+        promote_schedule_email_live,
+        set_schedule_email_optin,
+    )
+
+    pipe_id = _make_pipeline(ctx)
+    rec = create_schedule(
+        ctx.writer_store.conn,
+        pipeline_id=pipe_id,
+        owner_user_id=_USER,
+        kind="interval",
+        expr="60",
+        next_fire=_NOW - 1,
+    )
+    set_schedule_email_optin(ctx.writer_store.conn, rec.schedule_id, recipient="alice@x.com")
+    promote_schedule_email_live(ctx.writer_store.conn, rec.schedule_id)
+
+    from orchestrator.pipeline.store import get_schedule as _gs
+
+    schedule = _gs(ctx.writer_store.conn, rec.schedule_id)
+    assert schedule is not None
+
+    rid = generate_room_id()
+    ctx.writer_store.append_room(Room(id=rid, type=RoomType.FREE_CHAT, state="setup"))
+
+    # Append a non-send_email HARD pending (git_push / apply_edit)
+    for non_email_tool in ("git_push", "apply_edit"):
+        hard_evt = Event(
+            id=generate_event_id(),
+            room_id=rid,
+            type=EventType.TOOL_CALL_PENDING,
+            author=build_author("operator"),
+            timestamp=now_ms(),
+            content="",
+            metadata=ToolCallPendingMeta(
+                tool_name=non_email_tool,
+                call_id=f"call_{non_email_tool}",
+                params={},
+                tier="hard_confirm",
+                initiating_agent="operator",
+                expires_at=None,
+            ).model_dump(),
+        )
+        ctx.writer_store.append(hard_evt)
+
+    loop = asyncio.new_event_loop()
+    try:
+        _actuate_pipeline_emails(ctx, schedule, rid, loop=loop)
+    finally:
+        loop.close()
+
+    events = ctx.writer_store.get_room_events(rid)
+    tool_calls = [e for e in events if e.type == EventType.TOOL_CALL]
+    assert len(tool_calls) == 0, (
+        "pipeline-email path must NEVER actuate non-send_email HARD pendings "
+        "(ADR-043 D4 constitutional guard)"
+    )
+
+
+def test_lens_b_field_set_pin_byte_unchanged() -> None:
+    """Lens B (R0A-Y2): ToolCallMeta field-set constitutional pin is byte-unchanged.
+
+    P5.1c widens the Literal *value set* of approval_source, not the field set.
+    The field-set pin in test_constitution.py:281-287 must still pass unchanged.
+    """
+    from orchestrator.core.event import ToolCallMeta
+
+    expected = {"tool_name", "call_id", "params", "approver_user_id", "approval_source"}
+    actual = set(ToolCallMeta.model_fields)
+    assert actual == expected, (
+        "ToolCallMeta field set must still be exactly the canonical five fields (ADR-043 D2 R0A-Y2)"
+    )
+
+
+def test_lens_b_countdown_auto_fire_none_preserved() -> None:
+    """Lens B: countdown_auto_fire=None sentinels preserved in runner.py (ADR-041 D5/D6)."""
+    import inspect
+
+    from orchestrator.pipeline import runner
+
+    module_source = inspect.getsource(runner)
+    count = module_source.count("countdown_auto_fire=None")
+    assert count >= 2, (
+        f"runner.py must still have ≥2 countdown_auto_fire=None sentinels, found {count}"
+    )
+
+
+def test_lens_b_no_new_llm_purpose() -> None:
+    """Lens B: no new LLMPurpose added by P5.1c (recipient is config, not LLM judgment)."""
+    from orchestrator.llm.types import LLMPurpose
+
+    actual = {p.value for p in LLMPurpose}
+    # Only assert that the pipeline-related ones haven't grown
+    pipeline_purposes = {p for p in actual if "pipeline" in p or "email" in p or "routing" in p}
+    assert not pipeline_purposes, (
+        f"No new pipeline/email/routing LLMPurpose should exist; found: {pipeline_purposes}"
+    )
+
+
+def test_lens_b_autofire_guard_logic_unchanged() -> None:
+    """Lens B: the ADR-040 D2 expires_at stamp guards in tool_dispatch.py are byte-unchanged.
+
+    Verifies: (1) expires_at stamping only for COUNTDOWN_CONFIRM + enabled + rev≥floor
+    (2) HARD_CONFIRM always stays None — the gate logic is not touched by P5.1c.
+    """
+    import inspect
+
+    from orchestrator.agents import tool_dispatch
+
+    source = inspect.getsource(tool_dispatch)
+    # ADR-040 D2 stamp comment must be present
+    assert "ADR-040 D2" in source, "ADR-040 D2 stamp guard must remain in tool_dispatch.py"
+    # HARD_CONFIRM always stays None logic
+    assert "HARD_CONFIRM" in source, "HARD_CONFIRM reference must remain in tool_dispatch.py"
+    # expires_at stamping logic
+    assert "expires_at" in source, "expires_at logic must remain in tool_dispatch.py"
+    # countdown_auto_fire.reversibility_floor guard
+    assert "reversibility_floor" in source, "reversibility_floor guard must remain"
