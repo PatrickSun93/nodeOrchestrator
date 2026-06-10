@@ -397,8 +397,17 @@ def test_act_run_attributed_to_schedule_owner(ctx: AppContext) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_act_create_run_fails_after_successful_run_does_not_raise(ctx: AppContext) -> None:
-    """Y3: create_pipeline_run failure after successful run_pipeline must log, not re-raise."""
+def test_act_create_run_fails_after_successful_run_does_not_raise(
+    ctx: AppContext, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Y3: create_pipeline_run failure after successful run_pipeline must log, not re-raise.
+
+    Guards the split-try invariant: even when create_pipeline_run fails, the
+    successful run_pipeline result is acknowledged via a WARNING log containing
+    "succeeded".  A reverted single combined try/except returns early from the
+    except block and never reaches that log path — this assertion would then fail.
+    """
+    import logging
     from unittest.mock import patch
 
     router = _mock_router()
@@ -408,9 +417,12 @@ def test_act_create_run_fails_after_successful_run_does_not_raise(ctx: AppContex
     pipe_id = _make_pipeline(ctx)
     sid = _make_schedule(ctx, pipe_id, next_fire=_NOW - 1)
 
-    with patch(
-        "orchestrator.pipeline.store.create_pipeline_run",
-        side_effect=Exception("simulated db failure"),
+    with (
+        caplog.at_level(logging.WARNING, logger="orchestrator.api.app"),
+        patch(
+            "orchestrator.pipeline.store.create_pipeline_run",
+            side_effect=Exception("simulated db failure"),
+        ),
     ):
         # Must not propagate the exception.
         _schedule_act_on_writer(ctx, sid, _NOW)
@@ -419,6 +431,16 @@ def test_act_create_run_fails_after_successful_run_does_not_raise(ctx: AppContex
     sched = get_schedule(ctx.writer_store.conn, sid)
     assert sched is not None
     assert sched.next_fire > _NOW - 1, "next_fire must be advanced even when create_pipeline_run fails"  # noqa: E501
+
+    # Split-try guard: the inner try/except emits a WARNING acknowledging that
+    # run_pipeline succeeded even though create_pipeline_run failed ("run ... succeeded").
+    # With a reverted single combined try/except the except block returns early and this
+    # log is never emitted — causing this assertion to fail on the revert.
+    warning_msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("succeeded" in m for m in warning_msgs), (
+        "split-try must emit a WARNING acknowledging the successful run when "
+        "create_pipeline_run fails; a single combined try/except cannot satisfy this"
+    )
 
 
 # ---------------------------------------------------------------------------
