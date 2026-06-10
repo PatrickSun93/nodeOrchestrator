@@ -2,229 +2,182 @@
 task_id: P5.1b
 stage: senior-plan-vs-impl
 actor: senior
-date: "2026-06-09"
-verdict: needs_architect
+date: "2026-06-10"
+cycle: 2
+verdict: clean
 reviewed_branch: origin/claude/P5.1b-impl
-reviewed_at: a7e485c
+reviewed_at: cf8680a
 plan: docs/process/senior-plans/P5.1b.md
 adr: ADR-042
-routing_absorbed: docs/process/reviews/P5.1b/architect-routing-on-plan.md
-inputs:
-  - docs/process/senior-plans/P5.1b.md            # the plan (ADR-042 Accepted)
-  - docs/process/reviews/P5.1b/architect-routing-on-plan.md  # Y1 interval-only / Y2 keep / N3 GC
-  - docs/decisions/ADR-042-recurring-pipeline-scheduler.md
-findings:
-  - id: PVI-1
-    severity: yellow
-    atomic: P5.1b-5
-    title: "DELETE/PATCH owner-check binds to the URL pipeline, not the schedule's parent pipeline (cross-pipeline authorization gap)"
-  - id: PVI-2
-    severity: green
-    atomic: P5.1b-2
-    title: "Partial index added beyond 'DDL exactly the ADR-042 D2 columns' — realizes the D2 'indexable' intent; harmless additive"
-  - id: PVI-3
-    severity: green
-    atomic: P5.1b-4
-    title: "Missing-parent-pipeline act does not advance next_fire → schedule re-discovered every tick (log churn); matches plan spec but worth a follow-on note"
-  - id: PVI-4
-    severity: green
-    atomic: P5.1b-5
-    title: "GET on a missing pipeline returns [] while POST/DELETE/PATCH return 404 — minor verb inconsistency (plan did not mandate either)"
+routing_absorbed:
+  - docs/process/reviews/P5.1b/architect-routing-on-plan.md   # Y1 interval-only / Y2 keep / N3 GC
+  - docs/process/reviews/P5.1b/architect-routing-on-impl.md   # all-α, cycle-2 rework
+supersedes: "cycle-1 plan-vs-impl (a7e485c, needs_architect: PVI-1 🟡 + PVI-2/3/4 🟢)"
+findings: []   # all cycle-1 findings (PVI-1..4) resolved by the cycle-2 α rework
 ---
 
-# P5.1b — senior plan-vs-impl
+# P5.1b — senior plan-vs-impl (cycle 2, covers cycle 1)
 
-Reviewed `origin/main...origin/claude/P5.1b-impl` @ `a7e485c` (6 atomics) against
-`docs/process/senior-plans/P5.1b.md`, ADR-042 (Accepted), and the absorbed plan-stage routing
-(`architect-routing-on-plan.md`: Y1 interval-only / Y2 keep endpoints / N3 ack-deferred-GC). Read
-on `main` via diff (no checkout — shared worktree).
+Re-reviewed the cycle-2 α rework `cf8680a` (single commit on top of cycle-1 `a7e485c`)
+against `docs/process/senior-plans/P5.1b.md`, ADR-042 (Accepted), and the architect's
+impl-stage routing (`architect-routing-on-impl.md`: **all-α, one rework cycle**). Read on
+`main` via `git show cf8680a` / `git diff` (no checkout — shared worktree). The cycle-2
+diff is exactly `app.py` (3 hunks) + `tests/api/test_schedule_endpoints.py` (3 tests) +
+`tests/api/test_schedule_sweeper.py` (3 tests) — 177 ins / 23 del, nothing else.
 
-**Bottom line:** The impl is **faithful to the plan and ADR-042 on every constitutional axis** —
-spine byte-untouched, cron correctly deferred, interval-only arithmetic, the new 1:N
-`pipeline_schedules` table, the sibling sweeper sharing **zero** spine code, claim-before-run +
-writer re-check, boot re-arm = skip-to-next, opt-in default-OFF, ADR amendments inscribed, and
-ADR-042 Accept performed by the architect (not the junior, RC-3). Tests are non-vacuous and cover
-both Lens A (scheduler safety) and Lens B (spine no-regression). **One 🟡** plan-implied-invariant
-drift on the owner-private endpoint surface (PVI-1) routes the verdict to `needs_architect`; three
-🟢 observations are non-blocking.
+**Bottom line:** all **7 routed α fixes** (A1/PVI-1 must-fix + A2/A3/Y3/A4/A5/A6) are
+**implemented faithfully and exhaustively**, each with a **non-vacuous test**, with **no
+plan-external expansion** and the **spine still byte-frozen**. The four cycle-1 findings
+(PVI-1 🟡, PVI-2/3/4 🟢) are **all closed**. **Verdict → `clean`.**
+
+This file **supersedes the cycle-1 review** (`needs_architect`); the cycle-1 content
+remains in git history at `a7e485c` for the audit trail.
 
 ---
 
-## Per-atomic faithfulness
+## Cycle-1 findings — resolution ledger
 
-### P5.1b-1 — `pipeline/schedule.py` interval-only arithmetic — ✅ faithful
+| Cycle-1 finding | Routed | Cycle-2 fix | Status |
+|---|---|---|---|
+| **PVI-1 / A1** 🟡 must-fix — DELETE/PATCH bind owner-check to URL pipeline, not the schedule's parent (cross-pipeline IDOR) | α | IDOR guard added to **both** verbs + 2 cross-pipeline 404 tests | ✅ **closed** |
+| **PVI-3 / A3** 🟢 — missing-parent act does not advance `next_fire` (log churn every tick) | α | claim restructured **before** the pipeline-state gate → orphan advances + test | ✅ **closed** |
+| **PVI-4 / A5** 🟢 — GET on missing pipeline returns `[]` (verb inconsistency) | α | GET now raises 404 + test | ✅ **closed** |
+| **PVI-2 / A6** 🟢 — partial index beyond "DDL exactly D2 columns" | α (ratify-as-correct) | confirmed in-spirit (realizes D2 "indexable"); no behavioural change | ✅ **closed** |
 
-- `compute_next_fire` interval = `after_ms + int(expr) * 1000`; `validate_schedule_expr` rejects
-  non-positive / non-integer / empty; **unknown kind → `ValueError`**; **`kind=cron` →
-  `ValueError` (validate) / `NotImplementedError` (compute)** — exactly the Y1 absorption and
-  ADR-042 D3.
-- Pure, no LLM / no I/O (ADR-042 D3); **no new `LLMPurpose`** (grep clean across the diff).
-- The **N2 drift doc-comment** ("recompute at claim time … drifts by up to `sweep_interval_s` … the
-  correct price of skip-to-next") is present in the module docstring, as the routing required.
-- Cron is rejected before the sweeper can ever see it (validated at create, P5.1b-5) — the
-  "`kind` column never implies a working cron path" guarantee holds.
+Plus the routing's two r0b/R0-A-originated items not in my cycle-1 file:
 
-### P5.1b-2 — `pipeline_schedules` table + store CRUD + due-query — ✅ faithful (1 🟢)
-
-- DDL columns match ADR-042 D2 byte-for-byte; appended to `PIPELINE_SCHEMA` via `CREATE TABLE IF
-  NOT EXISTS` (idempotent, no ALTER to `pipelines`).
-- All seven store functions present with the planned signatures; `list_due_schedules` =
-  `WHERE enabled=1 AND next_fire <= ?` (reader-path discovery). Record round-trips `bool(enabled)`
-  correctly. `psch_` + uuid4, `created_at` epoch-ms — as specified.
-- **PVI-2 (🟢):** an extra `CREATE INDEX IF NOT EXISTS idx_pipeline_schedules_due ON
-  pipeline_schedules (enabled, next_fire) WHERE enabled = 1` is added beyond the plan's "DDL
-  exactly the ADR-042 D2 columns" wording. This is **not** scope expansion — it *realizes* the
-  explicit ADR-042 D2 rationale ("it gives the sweeper an **indexable** `WHERE enabled=1 AND
-  next_fire <= ?` discovery", ADR-042:138). Additive, idempotent, zero behavior change. Noted, not
-  blocking.
-
-### P5.1b-3 — `PipelineSchedulerConfig` + loader + `config/pipeline.yaml` + wiring — ✅ faithful
-
-- `PipelineSchedulerConfig{frozen, extra="forbid", enabled=False, sweep_interval_s: int = Field(60,
-  ge=1)}`.
-- `load_pipeline_scheduler_config` is the **byte-for-byte control-flow mirror** of
-  `load_countdown_auto_fire_config` (`autonomy/config.py:33-57`): absent file → default; `None`
-  → default; non-dict top level → `ValueError`; absent section → default; malformed section →
-  `ValueError` (refuse-start). Verified line-by-line against the reference.
-- `AppContext.pipeline_scheduler` default-factory (test-compat default OFF), `_build_context`
-  loads `config_dir / "pipeline.yaml"` and threads it into the `AppContext(...)` return.
-- `config/pipeline.yaml` ships `{enabled: false, sweep_interval_s: 60}` with the ADR-042-D7
-  fail-closed header comment.
-
-### P5.1b-4 — sibling `_schedule_sweeper` + `_discover_due_schedules` + boot re-arm + lifespan — ✅ faithful (1 🟢)
-
-- `_discover_due_schedules` runs on the **reader** (`get_reader_conn`), returns `schedule_id`s,
-  never appends.
-- `_schedule_act_on_writer` follows the **ADR-042 D4 order**: (1) authoritative re-read +
-  still-due re-check (`enabled and next_fire <= now`), (2) parent-pipeline re-check, (3) **claim:
-  `update_schedule_next_fire(compute_next_fire(...))` BEFORE the run**, (4)
-  `run_pipeline(... owner_user_id=schedule.owner_user_id)` → `create_pipeline_run(run_id=
-  result.run_id, ...)`. `PipelineDeps` constructed exactly as `/run`. Disabled parent → next_fire
-  advanced (claim runs before the `if not pipeline.enabled` skip), run skipped — matches D4 step 2.
-- **Claim-before-run double-fire crux** is implemented and **tested non-vacuously**
-  (`test_act_double_fire_guard`: second act asserts `router.call.call_count == 0`).
-- **Boot re-arm** = advance past-due without running (`test_rearm_advances_past_due_without_running`
-  asserts `call_count == 0` *and* next_fire advanced; `test_rearm_leaves_future_schedules_unchanged`
-  asserts future schedules untouched) — D5 skip-to-next, distinct from discover-and-run.
-- **Sibling shares zero spine code:** `_schedule_act_on_writer` / `_schedule_sweeper` import and
-  call **none** of `_countdown_sweeper` / `_discover_expired_pendings` / `_writer_approve_helper`;
-  the diff adds only new functions — **no `-` removals** touch any spine symbol,
-  `countdown_auto_fire=None`, `_execute_local_call`, or the gate. `runner.py`, `tool_dispatch.py`,
-  and `autonomy/` are **absent from the diffstat** (byte-untouched). Lens-B asserted in-test
-  (`countdown_auto_fire.enabled is False`; `"countdown_auto_fire=None" in module_source`).
-- Lifespan: when `enabled`, boot re-arm on the writer executor **before** `create_task`; teardown
-  cancels both sweepers + `suppress(CancelledError)` **before** `ctx.shutdown()`; when disabled,
-  nothing started (byte-identical to P5.1a).
-- **PVI-3 (🟢):** when the parent pipeline is **missing** (deleted), the act returns at step 2
-  **without** advancing `next_fire` — so the orphaned schedule stays due and is re-discovered +
-  re-warn-logged on **every** sweep tick. This **matches the plan/ADR-042 D4 spec** ("missing →
-  log + skip") and is not a safety issue (no run fires), so it is not a drift. Flagging only as a
-  cheap future-hardening candidate (advance-or-delete the orphan to stop the log churn) — architect
-  may capture for the cron/GC follow-on or ignore.
-
-### P5.1b-5 — owner-private schedule-management endpoints — 🟡 PVI-1 + 🟢 PVI-4
-
-- POST: `validate_schedule_expr` **first** → 422 (incl. **`kind=cron` → 422 deferred**); owner
-  check on reader (404 missing, 403 non-owner); initial `next_fire = compute_next_fire(...)`;
-  `create_schedule` on writer with `owner_user_id = principal.user_id` (server-derived, never from
-  the body — `_ScheduleCreateRequest` is `extra="forbid"`). 201. Faithful.
-- GET / DELETE / PATCH owner-gated; PATCH recomputes `next_fire` from now on re-enable (plan's
-  "does not fire immediately"). Tests cover owner happy-path + non-owner-403 each verb,
-  missing-404, malformed-422, cron-422, and create→appears-in-due.
-
-- **PVI-1 (🟡) — authorization is bound to the wrong object on DELETE and PATCH.** Both verbs do:
-  ```
-  pipeline = get_pipeline(writer_conn, pipeline_id)      # pipeline_id from the URL
-  if pipeline.owner_user_id != principal.user_id: 403
-  sched = get_schedule(writer_conn, schedule_id)         # schedule_id from the URL — UNRELATED fetch
-  if sched is None: 404
-  delete_schedule / set_schedule_enabled(...)            # acts on sched
-  ```
-  There is **no check that `sched.pipeline_id == pipeline_id`**. The owner gate is evaluated against
-  the **URL pipeline**, but the mutation targets a schedule fetched by **global `schedule_id`**.
-  The plan's invariant (P5.1b-5 acceptance: *"Owner-check reuses the **parent pipeline's**
-  `owner_user_id` — a schedule inherits **its** pipeline's owner"*; ADR-042 D9 *"owner of the
-  parent pipeline only"*) means the **schedule's actual parent** (`sched.pipeline_id`), not an
-  arbitrary URL-supplied pipeline.
-
-  **Consequence:** a user who owns *any* pipeline `P_self` can `DELETE` / `PATCH` *another* user's
-  schedule `S_victim` by calling `…/pipelines/{P_self}/schedules/{S_victim}` — the owner gate
-  passes (caller owns `P_self`), then the act lands on `S_victim`. This is exactly the class
-  ADR-039 D1 / ADR-041 D7 fail-closed owner-private posture exists to prevent: a cross-tenant
-  authorization bypass on a mutating verb.
-
-  **Why this slipped the acceptance criteria + both test paths:** the criteria say "non-owner gets
-  403"; the impl *does* 403 a non-owner of the URL pipeline (`test_delete_schedule_non_owner_403`
-  / `test_patch_schedule_non_owner_403` both reuse the **same** `pipe_id` for URL and schedule
-  parent), so the surface passes. The drift is on the **plan-implied invariant** the criteria
-  don't spell out: owner-of-the-schedule's-parent ≠ owner-of-the-URL-pipeline when they differ.
-  **No cross-pipeline test exists** (grep: no `cross`/`other_pipeline`/`mismatch` case).
-
-  **Practical exploitability is low** — `schedule_id` is `psch_` + uuid4 hex (128-bit,
-  unguessable), so an attacker must already know a victim's id (leak via logs / shared UI / error
-  text) and own ≥1 pipeline. It is a **defense-in-depth / correctness gap**, not a trivially
-  reachable hole. But it sits on the constitutional owner-private surface and the fix is one cheap
-  guard. **Surfaced for architect routing — not fixed here** (senior does not self-route; the
-  natural α-fix is `if sched.pipeline_id != pipeline_id: raise 404` in DELETE + PATCH, plus a
-  cross-pipeline 404 test; GET is already safe because it scopes via
-  `list_schedules_for_pipeline(pipeline_id)`, and POST creates under the URL pipeline so it is
-  inherently consistent).
-
-- **PVI-4 (🟢):** `GET` on a missing pipeline returns `[]`; POST/DELETE/PATCH return 404. Minor
-  verb inconsistency; the plan did not mandate a code for GET-on-missing and `[]` arguably avoids a
-  trivial existence-oracle. Non-blocking; mention only.
-
-### P5.1b-6 — inscribe ADR-042 amendments — ✅ faithful
-
-- **ADR-041 D8** gains the `pipeline_schedules` side-table note; **ADR-041 D10** flips to
-  "P5.1b realized (ADR-042); P5.1c (`RB-PIPELINE-EMAIL`) remains deferred" with interval-only/cron
-  -deferred wording.
-- **ADR-040** annotation: `_schedule_sweeper` reuses the *pattern*, shares **no** spine code,
-  `RB-PIPELINE-SCHED` named as the **milder neighbor** of `RB-AUTOFIRE`.
-- **ADR-025 D6** annotation: the **second** bounded background task (discover-on-reader /
-  act-on-writer, clean teardown).
-- **ADR-042 Status = Accepted (architect, 2026-06-09)** — performed by the architect during
-  routing absorption; the impl branch did **not** touch ADR-042's status (absent from the
-  diffstat), so RC-3 (no junior/senior self-accept) holds.
+| Finding | Routed | Cycle-2 fix | Status |
+|---|---|---|---|
+| **A2 / Y1** 🟡 — `_schedule_act_on_writer` docstring drifts from code | α | docstring rewritten to the new always-claim-then-gate order | ✅ |
+| **Y3** 🟡 — single `try` could discard a successful run if `create_pipeline_run` throws | α | **split try** (run in one, create in a nested try/except that warns, never re-raises) + mock test | ✅ |
+| **A4** 🟢→α — spine-isolation AST test only covered `_schedule_sweeper` | α | added the mirror AST test for `_schedule_act_on_writer` (the higher-risk act fn) | ✅ |
 
 ---
 
-## Constitutional carry-forward (Lens B) — all clear
+## Per-fix faithfulness (cycle-2 diff)
+
+### A1 / PVI-1 — cross-pipeline IDOR guard (must-fix) — ✅ faithful, non-vacuous
+
+- **DELETE** (`app.py:2104-2107`) and **PATCH** (`app.py:2153-2156`) both gain, immediately
+  after the `get_schedule` fetch and the not-None 404, the guard
+  `if sched.pipeline_id != pipeline_id: raise HTTPException(404, …)` — exactly the routed
+  α-fix and the natural disposition I surfaced in cycle-1. The mutation is now bound to the
+  schedule's **actual parent**, not the URL pipeline.
+- GET was already safe (it scopes via `list_schedules_for_pipeline(pipeline_id)` and never
+  fetches by global `schedule_id`); POST creates under the URL pipeline — both inherently
+  consistent. No guard needed there, and none was (wrongly) added. Correct scoping of the fix.
+- **Tests non-vacuous** (`test_delete_schedule_cross_pipeline_idor_404`,
+  `test_patch_schedule_cross_pipeline_idor_404`): both create `pipe_self` + `pipe_other`
+  (same owner — isolates the *new* parent-binding guard from the pre-existing 403 owner
+  path), create the schedule under `pipe_other`, then hit `…/{pipe_self}/schedules/{sid_other}`
+  and assert **404**. With the guard removed, `get_schedule` returns the row and the verb
+  proceeds (200/204) → the assertion fails. **Fail-on-revert holds.** Testing with a single
+  owner is the *cleaner* isolation of the binding bug (it does not lean on the ownership
+  difference), so the choice is correct, not a weakening.
+
+### A2 / Y1 — docstring truth — ✅ faithful
+
+- The `_schedule_act_on_writer` docstring is rewritten so steps 2–5 describe the **new**
+  control flow: step 2 fetches the pipeline (state check deferred), step 3 **always** claims
+  (`next_fire` advance) regardless of pipeline state, step 4 is the missing/disabled gate
+  (next_fire already advanced), step 5 is the split run/create. This now matches the code
+  produced by A3 — the docstring and the body agree. (The routing's literal phrasing
+  predated A3; the junior correctly reconciled both into the post-A3 truth rather than
+  documenting a state the code no longer has.)
+
+### A3 / Y2 / PVI-3 — orphan advances `next_fire` — ✅ faithful, non-vacuous
+
+- The claim (`update_schedule_next_fire(…, compute_next_fire(...))`) is moved **above** the
+  pipeline-state gate; the `pipeline is None` branch now `return`s **after** the advance, as
+  does the `not pipeline.enabled` branch. An orphaned (deleted-pipeline) schedule is therefore
+  re-discovered only after the next interval, not every tick — the log-churn PVI-3 flagged is
+  gone, and the behaviour is now consistent with the disabled path.
+- Crash-safety preserved: claim still happens **before** any run, so the double-fire guard is
+  unaffected (the existing `test_act_double_fire_guard` is untouched).
+- **Test non-vacuous** (`test_act_missing_pipeline_advances_next_fire_no_run`): deletes the
+  pipeline row, runs the act, asserts `next_fire` advanced **and** `router.call.call_count == 0`.
+  Revert the claim-before-gate reordering → `next_fire` would not advance → assertion fails.
+
+### Y3 — split try, never discard a successful run — ✅ faithful, non-vacuous
+
+- `run_pipeline` now sits in its **own** try (on failure: `_log.error` + `return`; `next_fire`
+  already advanced so the failed run is not retried until next interval).
+  `create_pipeline_run` sits in a **separate nested** try/except that logs a **warning**
+  ("run %s succeeded") and does **not** re-raise — the successful run is never lost to a
+  bookkeeping-row write error. Exactly the routed split.
+- **Vacuous-test trap checked and cleared:** the test patches
+  `orchestrator.pipeline.store.create_pipeline_run`, while `app.py` imports that symbol via a
+  **function-local** `from orchestrator.pipeline.store import (create_pipeline_run, …)`
+  (`app.py:623-624`) executed on every call. Because the local import re-resolves the module
+  attribute at call time, the patch (active around the `_schedule_act_on_writer` call) **does**
+  bind the mocked object — the simulated DB failure genuinely fires. The test then asserts the
+  call does not raise and `next_fire` is still advanced. **Non-vacuous** (this is the P5.1a-cyc2
+  vacuous-mock class; it does not recur here).
+- Minor honesty note (🟢, not a finding): after a caught `create_pipeline_run` failure, control
+  falls through to the unconditional terminal `_log.info("… run … ok")`. The "ok" refers to
+  `run_pipeline` success, which is **truthful** (the run did succeed; only the side-table row
+  failed, separately warned). Both facts are logged — acceptable, no drift.
+
+### A4 — spine-isolation AST test for the act fn — ✅ faithful
+
+- `test_schedule_act_on_writer_does_not_call_countdown_spine` mirrors the existing sweeper
+  test: `ast.parse(inspect.getsource(_schedule_act_on_writer))`, collect `ast.Call` nodes whose
+  `func` is an `ast.Name`, assert none of `_countdown_sweeper` / `_discover_expired_pendings` /
+  `_writer_approve_helper` appear. The forbidden symbols are module-level functions invoked as
+  bare names, so the `ast.Name`-only scope is **correct** (no `ast.Attribute` false-negative
+  gap for these), and the AST approach (vs substring) avoids docstring-mention false positives.
+
+### A5 / PVI-4 — GET verb consistency — ✅ faithful, non-vacuous
+
+- The GET `_read()` helper now `raise HTTPException(404, …)` on a missing pipeline instead of
+  `return []`, matching POST/DELETE/PATCH. `test_list_schedules_missing_pipeline_404` asserts
+  404 on `nonexistent_pipe` — fails if the `return []` is restored.
+
+### A6 / PVI-2 — partial index ratified — ✅ no change, correct
+
+- No diff (correctly): the routing dispositioned A6 as "ratified as correct — additive,
+  in-spirit, no behavioural change." `idx_pipeline_schedules_due` realizes the explicit
+  ADR-042 D2 "indexable `WHERE enabled=1 AND next_fire <= ?`" intent. Confirmed kept; nothing
+  to rewrite.
+
+---
+
+## Constitutional carry-forward (Lens B) — still all clear in cycle 2
+
+The cycle-2 diff touches **only** `_schedule_act_on_writer` and the two endpoint handlers in
+`app.py`, plus the two test files. None of the spine symbols appear in the diff:
 
 | Invariant | Result |
 |---|---|
-| `run_pipeline` byte-identical | ✅ `runner.py` absent from diffstat (scheduler is a *second caller*) |
-| `_countdown_sweeper` / `_discover_expired_pendings` / `_writer_approve_helper` byte-untouched | ✅ no `-` removals on any; only additive new functions |
-| `countdown_auto_fire=None` preserved (reversible-only) | ✅ unchanged; asserted in-test |
-| gate (`score`/`decide_tier`/`emit_gate_decision`) + `_execute_local_call` untouched | ✅ absent from diff |
-| No new routing `LLMPurpose` | ✅ grep clean (no `LLMPurpose`/`content-gen` in the diff) |
-| scheduler-OFF ⇒ byte-identical to P5.1a | ✅ lifespan gates all new work behind `pipeline_scheduler.enabled`; default OFF |
+| `run_pipeline` byte-identical | ✅ `runner.py` absent from the cycle-2 diffstat |
+| `_countdown_sweeper` / `_discover_expired_pendings` / `_writer_approve_helper` byte-untouched | ✅ no hunk touches them; the new act fn calls **none** of them (now AST-asserted, A4) |
+| `countdown_auto_fire=None` reversible-only preserved | ✅ unchanged |
+| gate (`score`/`decide_tier`/`emit_gate_decision`) + `_execute_local_call` untouched | ✅ absent from the diff |
+| No new routing `LLMPurpose` | ✅ the diff adds no `LLMPurpose`; the only LLM in a scheduled run is the unchanged `run_pipeline` content-gen |
+| scheduler-OFF ⇒ byte-identical to P5.1a | ✅ all new work still gated behind `pipeline_scheduler.enabled`; default OFF unchanged |
 
-No-LLM-in-scheduling held: the only LLM in a scheduled run remains the analyze/reduce content-gen
-inside the unchanged `run_pipeline`. `RB-PIPELINE-SCHED` inscribed honestly, not softened.
+`RB-PIPELINE-SCHED` remains inscribed honestly; cron stays fully deferred (no stub path
+leaked in the rework).
 
 ---
 
-## Plan-external expansion / omission scan
+## Plan-external expansion / omission scan (cycle 2)
 
-- **Omissions:** none — all six atomics and every acceptance criterion are present.
-- **Expansions:** only PVI-2 (the partial index), which realizes an explicit ADR-042 D2 stated
-  intent rather than adding new scope. No unrequested feature, no out-of-scope file, no opportunistic
-  bundling under deferral language (cron stays fully deferred; no stub cron path leaked in).
+- **Omissions:** none — every one of the 7 routed α items is present (A6 correctly as a
+  no-op confirmation).
+- **Expansions:** none — the diff is confined to the three files the routing implies, and
+  every hunk maps 1:1 to a routed finding. No opportunistic bundling, no defensive hardening
+  under deferral language, no cron stub.
 
 ---
 
 ## Verdict
 
-**`needs_architect`** — one 🟡 plan-implied-invariant drift (PVI-1: DELETE/PATCH bind the owner
-check to the URL pipeline rather than the schedule's actual parent, a cross-tenant authorization gap
-on the owner-private surface, untested). The three 🟢 items are non-blocking observations. All
-constitutional/spine invariants hold; the slice is otherwise faithful to the plan, ADR-042, and the
-absorbed routing.
+**`clean`.** The cycle-2 α rework faithfully and completely resolves the must-fix IDOR
+(A1/PVI-1) and the full robustness/honesty cluster (A2/A3/Y3/A4/A5/A6), each with a
+non-vacuous, fail-on-revert test; the spine is byte-frozen; no plan-external expansion. All
+cycle-1 findings are closed and nothing new surfaced.
 
-Per ADR-008 Amendment 1 (Route B, W-005), state advances to `awaiting_R0_A` regardless of verdict;
-this `needs_architect` frontmatter flags PVI-1 for architect routing (the natural disposition is an
-α in-cycle fix — the guard + a cross-pipeline 404 test — but the routing call is the architect's,
-not mine; senior does not self-route a finding).
-</content>
-</invoke>
+Per ADR-008 Amendment 1 (Route B, W-005), state advances to `awaiting_R0_A` regardless of
+verdict; this `clean` frontmatter signals no senior-side plan-vs-impl drift remains for the
+cycle-2 external review round.
