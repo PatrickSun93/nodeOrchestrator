@@ -1,7 +1,18 @@
 task_id: P5.1c
 state: awaiting_architect_accept
 cycle: 1
-last_transition_at: '2026-06-10T21:41:23.796755Z'
+last_transition_at: '2026-06-10T21:56:18.928328Z'
 cycle_started_at: '2026-06-10T21:14:14.871153Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-10T21:56:18.928328Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: awaiting_architect_accept
+  reason: 'Correcting a spurious accept-gate advance: the post-commit hook advanced
+    awaiting_architect_accept→awaiting_junior_impl when _parse_adr_status (workflow/cli.py)
+    substring-matched the bare word ''Accepted'' in ADR-043''s Status-line prose (''matching
+    the eventual Accepted status''), but ADR-043 is genuinely still Proposed and the
+    senior has not yet absorbed the plan-stage routing. Status prose reworded (656a76c);
+    restoring to awaiting_architect_accept so the proper flow runs: senior absorbs
+    routing → architect Accepts ADR-043 → advance to junior.'
 requires_cross_family_review: true
