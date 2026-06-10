@@ -1,7 +1,22 @@
 task_id: P5.1b
-state: awaiting_R0_A
-cycle: 1
-last_transition_at: '2026-06-09T21:45:17.710386Z'
-cycle_started_at: '2026-06-09T20:13:46.305817Z'
-override_history: []
+state: awaiting_junior_impl
+cycle: 2
+last_transition_at: '2026-06-10T05:44:15.287282Z'
+cycle_started_at: '2026-06-10T05:44:15.287282Z'
+override_history:
+- timestamp: '2026-06-10T05:44:12.650036Z'
+  actor: architect
+  from_state: awaiting_R0_A
+  to_state: awaiting_architect_decision
+  reason: 3 impl reviews needs_architect (A1/PVI-1 must-fix IDOR + robustness cluster);
+    architect routing all-α captured in architect-routing-on-impl.md. Moving to architect_decision
+    to take the documented impl-rework override path.
+- timestamp: '2026-06-10T05:44:15.287282Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 all-α impl rework (ADR-008 Decision 11): A1 IDOR guard + cross-pipeline
+    test, A2 docstring, A3 advance-next_fire-on-missing, Y3 split-try audit, A4 extend
+    AST spine-test, A5 GET→404, A6 confirm index. No spine change, no ADR amendment.
+    See architect-routing-on-impl.md; rework on PR #68 branch claude/P5.1b-impl.'
 requires_cross_family_review: true
