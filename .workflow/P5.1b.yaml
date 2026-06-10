@@ -1,8 +1,8 @@
 task_id: P5.1b
-state: awaiting_R0_A
-cycle: 2
-last_transition_at: '2026-06-10T06:08:45.458565Z'
-cycle_started_at: '2026-06-10T05:44:15.287282Z'
+state: awaiting_junior_impl
+cycle: 3
+last_transition_at: '2026-06-10T19:56:35.625232Z'
+cycle_started_at: '2026-06-10T19:56:35.625232Z'
 override_history:
 - timestamp: '2026-06-10T05:44:12.650036Z'
   actor: architect
@@ -19,4 +19,20 @@ override_history:
     test, A2 docstring, A3 advance-next_fire-on-missing, Y3 split-try audit, A4 extend
     AST spine-test, A5 GET→404, A6 confirm index. No spine change, no ADR amendment.
     See architect-routing-on-impl.md; rework on PR #68 branch claude/P5.1b-impl.'
+- timestamp: '2026-06-10T19:56:32.546314Z'
+  actor: architect
+  from_state: awaiting_R0_A
+  to_state: awaiting_architect_decision
+  reason: Cycle-2 R0-A needs_architect (B1 vacuous Y3 test + B2 ADR-042 D4 text sync);
+    all 6 prior α items resolved + fail-on-revert confirmed; plan-vs-impl + R0-B clean.
+    Routing all-α in architect-routing-on-impl-cycle2.md. Moving to architect_decision
+    for the impl-rework override path.
+- timestamp: '2026-06-10T19:56:35.625232Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-3 α close-out (ADR-008 Decision 11): B1 rewrite the Y3 split-try
+    test to fail-on-revert; B2 one-line ADR-042 D4 text sync to match advance-on-missing.
+    Test + ADR-text only, no product code change, spine byte-frozen. See architect-routing-on-impl-cycle2.md;
+    rework on PR #68.'
 requires_cross_family_review: true
