@@ -247,7 +247,13 @@ not.)
 `analysis_prompts` + `output_config`), `enabled` (default true), `created_at`.
 `owner_user_id` is captured from the **creating principal** at definition time
 (ADR-039 D1/D6) — the single source of audit ownership. **No** schedule columns
-(`cron`/`interval`/`next_fire`) — those are P5.1b.
+(`cron`/`interval`/`next_fire`) in `pipelines` itself — those are in the P5.1b
+`pipeline_schedules` side table (ADR-042 D2).
+
+> **P5.1b amendment (ADR-042):** A new `pipeline_schedules` side table adds schedule
+> persistence co-located in the main DB (1:N per pipeline): `schedule_id`, `pipeline_id`,
+> `owner_user_id`, `kind`, `expr`, `next_fire`, `enabled`, `created_at`. `CREATE TABLE IF
+> NOT EXISTS` via `init_pipeline_schema` (idempotent, no ALTER to `pipelines`).
 
 **Run history** is **append-only fact** → the event log already is this: a run's events
 live in its room (Decision 7), threadable by `parent_id`. A thin `pipeline_runs` index
@@ -276,11 +282,11 @@ survive restart by virtue of the side table (the P5.1b scheduler adds boot re-ar
 
 This ADR is the **first inscription** of the pipeline contract; it is intentionally
 scoped to the *safe* slice so later producers extend a written contract:
-- **P5.1b (deferred):** the recurring scheduler (cron/interval, next-fire, re-arm), the
-  `pipelines` table's schedule columns, restart re-arm of timers (the ADR-040 boot-re-arm
-  pattern as a **sibling** scheduler — NOT a generalization of the spine-critical
-  countdown sweeper), catch-up semantics, and incremental feed state. Extends this ADR
-  (or ADR-042). Adds a second bounded background task (ADR-025 D6 note).
+- **P5.1b (realized — ADR-042):** the recurring scheduler (interval-only in P5.1b; cron
+  deferred to a focused follow-on), `pipeline_schedules` side table, restart re-arm of
+  timers (boot re-arm = skip-to-next), catch-up semantics, and a second bounded background
+  task (`_schedule_sweeper`, ADR-025 D6). ADR-042 is the contract. Incremental feed state
+  remains deferred.
 - **P5.1c (deferred):** the headless email actuator authorization — the
   `RB-AUTOFIRE`-beyond crossing (`send_email` is HARD-tier *and* reversibility=3 < floor
   5, so headless email inverts the two guards `RB-AUTOFIRE` installed). Opt-in, per-schedule,

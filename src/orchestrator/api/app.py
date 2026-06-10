@@ -72,6 +72,7 @@ from orchestrator.derived.snapshot import produce_snapshot
 from orchestrator.llm.config_loader import load_tools_config
 from orchestrator.llm.types import LLMRequest, LLMResponse
 from orchestrator.mcp.client import MCPSession
+from orchestrator.pipeline.config import PipelineSchedulerConfig, load_pipeline_scheduler_config
 from orchestrator.skills.loader import load_skills
 from orchestrator.skills.schema import Skill
 from orchestrator.tools.executor import LocalToolRegistry, execute_pending_tool_calls
@@ -123,6 +124,8 @@ class AppContext:
     reader_conns: list[sqlite3.Connection] = field(default_factory=list)
     # COUNTDOWN auto-fire config (ADR-040 D7). Default OFF (fail-closed) for test compat.
     countdown_auto_fire: CountdownAutoFireConfig = field(default_factory=CountdownAutoFireConfig)
+    # Pipeline scheduler config (ADR-042 D7). Default OFF (fail-closed) for test compat.
+    pipeline_scheduler: PipelineSchedulerConfig = field(default_factory=PipelineSchedulerConfig)
     # config_dir: retained so plugin management routes can resolve config/plugins.yaml.
     # D-A: _plugin_registry is a local in _build_context (not retained on AppContext);
     # config_dir is not recoverable from sandbox_root (sandbox_root = config_dir.parent).
@@ -332,6 +335,47 @@ class _PipelineRunResponse(BaseModel):
     error: str | None
 
 
+# ---------------------------------------------------------------------------
+# Schedule management request/response models (ADR-042 D9 / P5.1b-5)
+# ---------------------------------------------------------------------------
+
+
+class _ScheduleCreateRequest(BaseModel):
+    """Request body for POST /pipelines/{id}/schedules.
+
+    extra=forbid: forge guard.  owner_user_id is NOT accepted from the body —
+    it is derived server-side from request.state.principal (ADR-039 D1).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: str
+    expr: str
+
+
+class _ScheduleResponse(BaseModel):
+    """Response for a single schedule record."""
+
+    model_config = ConfigDict(frozen=True)
+
+    schedule_id: str
+    pipeline_id: str
+    owner_user_id: str
+    kind: str
+    expr: str
+    next_fire: int
+    enabled: bool
+    created_at: int
+
+
+class _ScheduleEnableRequest(BaseModel):
+    """Request body for PATCH /pipelines/{id}/schedules/{sid}."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool
+
+
 def _writer_approve_helper(
     ctx: AppContext,
     rid: RoomId,
@@ -538,6 +582,219 @@ async def _countdown_sweeper(
             _log.error("sweeper: unexpected error (loop continues): %s", exc, exc_info=True)
 
 
+def _discover_due_schedules(
+    ctx: AppContext,
+    now_ms_val: int,
+) -> list[str]:
+    """Return schedule_ids whose next_fire is at or before now_ms_val (reader path).
+
+    Runs on reader_executor so discovery never blocks the event loop.
+    Results are approximate (stale reader); the act re-checks authoritatively on the writer.
+    """
+    from orchestrator.pipeline.store import list_due_schedules as _list_due
+
+    records = _list_due(ctx.get_reader_conn(), now_ms_val)
+    return [r.schedule_id for r in records]
+
+
+def _schedule_act_on_writer(
+    ctx: AppContext,
+    schedule_id: str,
+    now_ms_val: int,
+) -> None:
+    """Authoritative act for one due schedule on the writer executor (ADR-042 D4).
+
+    Order (D4):
+      1. Re-read schedule on writer conn; skip if not still due+enabled.
+      2. Fetch parent pipeline (state check deferred until after claim).
+      3. Claim: advance next_fire BEFORE run (skip-to-next; crash-safe).
+         Always claim regardless of pipeline state — orphan/disabled schedules
+         are re-due only after the next interval, not every tick.
+      4. Skip run if pipeline missing (orphan) or disabled; next_fire already
+         advanced in step 3 so a restored/re-enabled pipeline resumes cleanly.
+      5. Run: run_pipeline (one try) → create_pipeline_run (nested try/except
+         so a log-index failure does not discard the successful run result).
+
+    Never calls _countdown_sweeper, _discover_expired_pendings,
+    or _writer_approve_helper (D1 — sibling shares zero spine-critical code).
+    """
+    from orchestrator.pipeline.runner import PipelineDeps, run_pipeline
+    from orchestrator.pipeline.schedule import compute_next_fire
+    from orchestrator.pipeline.store import (
+        create_pipeline_run,
+        get_pipeline,
+        get_schedule,
+        update_schedule_next_fire,
+    )
+
+    writer_conn = ctx.writer_store.conn
+
+    # Step 1: authoritative re-read + still-due re-check.
+    schedule = get_schedule(writer_conn, schedule_id)
+    if schedule is None:
+        _log.debug("schedule-sweeper: schedule %s gone, skip", schedule_id)
+        return
+    if not schedule.enabled or schedule.next_fire > now_ms_val:
+        _log.debug(
+            "schedule-sweeper: schedule %s no longer due (enabled=%s next_fire=%d now=%d), skip",
+            schedule_id,
+            schedule.enabled,
+            schedule.next_fire,
+            now_ms_val,
+        )
+        return
+
+    # Step 2: fetch parent pipeline (result used after claim in step 3).
+    pipeline = get_pipeline(writer_conn, schedule.pipeline_id)
+
+    # Step 3: claim — advance next_fire BEFORE run (ADR-042 D4/D5 crash-safe).
+    # Advance regardless of pipeline state so orphan/disabled schedules do not
+    # re-appear as due on every subsequent tick.
+    new_next_fire = compute_next_fire(schedule.kind, schedule.expr, now_ms_val)
+    update_schedule_next_fire(writer_conn, schedule_id, new_next_fire)
+    _log.info(
+        "schedule-sweeper: claimed schedule %s, next_fire advanced to %d",
+        schedule_id,
+        new_next_fire,
+    )
+
+    # Step 4: pipeline-state gate (next_fire already advanced).
+    if pipeline is None:
+        _log.warning(
+            "schedule-sweeper: pipeline %s for schedule %s missing, skip",
+            schedule.pipeline_id,
+            schedule_id,
+        )
+        return
+
+    if not pipeline.enabled:
+        _log.info(
+            "schedule-sweeper: pipeline %s disabled, skipping run for schedule %s",
+            schedule.pipeline_id,
+            schedule_id,
+        )
+        return
+
+    # Step 5: run.
+    deps = PipelineDeps(
+        writer_store=ctx.writer_store,
+        llm_router=ctx.llm_router,
+        tools=ctx.tools,
+        mcp_sessions=ctx.mcp_sessions,
+        local_tools=ctx.local_tools,
+        sandbox_root=ctx.sandbox_root,
+        bus=ctx.bus,
+    )
+    try:
+        result = run_pipeline(
+            schedule.pipeline_id,
+            pipeline.definition,
+            deps=deps,
+            owner_user_id=schedule.owner_user_id,
+        )
+    except Exception as exc:
+        _log.error(
+            "schedule-sweeper: run_pipeline failed for schedule %s: %s",
+            schedule_id,
+            exc,
+            exc_info=True,
+        )
+        return
+
+    try:
+        create_pipeline_run(
+            writer_conn,
+            pipeline_id=schedule.pipeline_id,
+            room_id=result.room_id,
+            owner_user_id=schedule.owner_user_id,
+            run_id=result.run_id,
+            status="completed" if result.succeeded else "failed",
+        )
+    except Exception as exc:
+        _log.warning(
+            "schedule-sweeper: create_pipeline_run failed for schedule %s (run %s succeeded): %s",
+            schedule_id,
+            result.run_id,
+            exc,
+            exc_info=True,
+        )
+    _log.info(
+        "schedule-sweeper: run %s for schedule %s pipeline %s %s",
+        result.run_id,
+        schedule_id,
+        schedule.pipeline_id,
+        "ok" if result.succeeded else "failed",
+    )
+
+
+
+async def _schedule_sweeper(
+    ctx: AppContext,
+    cfg: PipelineSchedulerConfig,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Periodic sweeper: discovers due schedules + fires pipeline runs (ADR-042 D1).
+
+    Sibling to _countdown_sweeper; shares its shape but NONE of its code.
+    Started in lifespan only when cfg.enabled. Cancelled cleanly in teardown.
+    """
+    _log.info(
+        "schedule sweeper started (sweep_interval_s=%d)",
+        cfg.sweep_interval_s,
+    )
+    while True:
+        await asyncio.sleep(cfg.sweep_interval_s)
+        try:
+            current_ms = now_ms()
+            import functools as _functools
+
+            due_ids = await loop.run_in_executor(
+                ctx.reader_executor,
+                _functools.partial(_discover_due_schedules, ctx, current_ms),
+            )
+            for schedule_id in due_ids:
+                await loop.run_in_executor(
+                    ctx.writer_executor,
+                    _functools.partial(_schedule_act_on_writer, ctx, schedule_id, current_ms),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _log.error(
+                "schedule-sweeper: unexpected error (loop continues): %s", exc, exc_info=True
+            )
+
+
+def _rearm_schedules_on_boot(ctx: AppContext) -> None:
+    """Advance past-due enabled schedules forward without running them (ADR-042 D5).
+
+    Runs on the writer at lifespan startup, before the sweeper task is created.
+    Schedules whose next_fire is already in the future are left untouched.
+    """
+    from orchestrator.pipeline.schedule import compute_next_fire
+    from orchestrator.pipeline.store import (
+        list_due_schedules as _list_due,
+    )
+    from orchestrator.pipeline.store import (
+        update_schedule_next_fire,
+    )
+
+    current_ms = now_ms()
+    writer_conn = ctx.writer_store.conn
+    past_due = _list_due(writer_conn, current_ms)
+    for schedule in past_due:
+        new_next_fire = compute_next_fire(schedule.kind, schedule.expr, current_ms)
+        update_schedule_next_fire(writer_conn, schedule.schedule_id, new_next_fire)
+        _log.info(
+            "boot re-arm: schedule %s advanced from %d to %d (skip-to-next)",
+            schedule.schedule_id,
+            schedule.next_fire,
+            new_next_fire,
+        )
+    if past_due:
+        _log.info("boot re-arm: advanced %d past-due schedule(s)", len(past_due))
+
+
 class _NoopLLMRouter:
     """Placeholder until P3.2-4 installs RealLLMRouter via _build_context."""
 
@@ -674,6 +931,9 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
     # COUNTDOWN auto-fire config (ADR-040 D7 / P4.6-1). Absent → disabled (fail-closed).
     countdown_auto_fire_cfg = load_countdown_auto_fire_config(config_dir / "autonomy.yaml")
 
+    # Pipeline scheduler config (ADR-042 D7 / P5.1b-3). Absent → disabled (fail-closed).
+    pipeline_scheduler_cfg = load_pipeline_scheduler_config(config_dir / "pipeline.yaml")
+
     # Merge MCP tool registry + retain sessions (ADR-028 D2 — fixes session-discard).
     # Graceful: unavailable servers are warned+skipped (skip_unavailable=True).
     from orchestrator.mcp.adapter import build_mcp_tool_registry_and_sessions_from_config
@@ -785,6 +1045,7 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
         reader_local=_reader_local,
         reader_conns=_reader_conns,
         countdown_auto_fire=countdown_auto_fire_cfg,
+        pipeline_scheduler=pipeline_scheduler_cfg,
         config_dir=config_dir,
     )
 
@@ -1706,6 +1967,216 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
 
         return await loop.run_in_executor(ctx.writer_executor, _run_on_writer)
 
+    # ---------------------------------------------------------------------------
+    # Schedule management endpoints (ADR-042 D9 / P5.1b-5)
+    # All routes: owner-private (owner from parent pipeline), fail-closed auth.
+    # principal derived server-side — never from the body (ADR-039 D1).
+    # ---------------------------------------------------------------------------
+
+    @app.post(
+        "/pipelines/{pipeline_id}/schedules",
+        response_model=_ScheduleResponse,
+        status_code=201,
+    )
+    async def _create_schedule(
+        pipeline_id: str, body: _ScheduleCreateRequest, request: Request
+    ) -> _ScheduleResponse:
+        """Create a schedule for a pipeline (owner-private; 403 for non-owner).
+
+        ``kind=cron`` is rejected with 422 (deferred — ADR-042 D3 Y1 routing).
+        """
+        from orchestrator.pipeline.schedule import (
+            compute_next_fire,
+            validate_schedule_expr,
+        )
+        from orchestrator.pipeline.store import (
+            create_schedule,
+            get_pipeline,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        # Validate expr + kind before touching the DB; 422 on invalid or deferred.
+        try:
+            validate_schedule_expr(body.kind, body.expr)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        # Owner check on reader.
+        pipeline = await loop.run_in_executor(
+            ctx.reader_executor,
+            lambda: get_pipeline(ctx.get_reader_conn(), pipeline_id),
+        )
+        if pipeline is None:
+            raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
+        if pipeline.owner_user_id != _principal.user_id:
+            raise HTTPException(status_code=403, detail="access denied: not the owner")
+
+        def _write() -> _ScheduleResponse:
+            initial_next_fire = compute_next_fire(body.kind, body.expr, now_ms())
+            record = create_schedule(
+                ctx.writer_store.conn,
+                pipeline_id=pipeline_id,
+                owner_user_id=_principal.user_id,
+                kind=body.kind,
+                expr=body.expr,
+                next_fire=initial_next_fire,
+            )
+            return _ScheduleResponse(
+                schedule_id=record.schedule_id,
+                pipeline_id=record.pipeline_id,
+                owner_user_id=record.owner_user_id,
+                kind=record.kind,
+                expr=record.expr,
+                next_fire=record.next_fire,
+                enabled=record.enabled,
+                created_at=record.created_at,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.get(
+        "/pipelines/{pipeline_id}/schedules",
+        response_model=list[_ScheduleResponse],
+    )
+    async def _list_schedules(
+        pipeline_id: str, request: Request
+    ) -> list[_ScheduleResponse]:
+        """List schedules for a pipeline (owner-private)."""
+        from orchestrator.pipeline.store import get_pipeline, list_schedules_for_pipeline
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _read() -> list[_ScheduleResponse]:
+            pipeline = get_pipeline(ctx.get_reader_conn(), pipeline_id)
+            if pipeline is None:
+                raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            records = list_schedules_for_pipeline(ctx.get_reader_conn(), pipeline_id)
+            return [
+                _ScheduleResponse(
+                    schedule_id=r.schedule_id,
+                    pipeline_id=r.pipeline_id,
+                    owner_user_id=r.owner_user_id,
+                    kind=r.kind,
+                    expr=r.expr,
+                    next_fire=r.next_fire,
+                    enabled=r.enabled,
+                    created_at=r.created_at,
+                )
+                for r in records
+            ]
+
+        return await loop.run_in_executor(ctx.reader_executor, _read)
+
+    @app.delete(
+        "/pipelines/{pipeline_id}/schedules/{schedule_id}",
+        status_code=204,
+    )
+    async def _delete_schedule(
+        pipeline_id: str, schedule_id: str, request: Request
+    ) -> None:
+        """Delete a schedule (owner-private)."""
+        from orchestrator.pipeline.store import delete_schedule, get_pipeline, get_schedule
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> None:
+            pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
+            if pipeline is None:
+                raise HTTPException(
+                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
+                )
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            sched = get_schedule(ctx.writer_store.conn, schedule_id)
+            if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if sched.pipeline_id != pipeline_id:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            delete_schedule(ctx.writer_store.conn, schedule_id)
+
+        await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.patch(
+        "/pipelines/{pipeline_id}/schedules/{schedule_id}",
+        response_model=_ScheduleResponse,
+    )
+    async def _patch_schedule(
+        pipeline_id: str,
+        schedule_id: str,
+        body: _ScheduleEnableRequest,
+        request: Request,
+    ) -> _ScheduleResponse:
+        """Enable or disable a schedule (owner-private).
+
+        On re-enable, recomputes next_fire from now so a long-disabled schedule
+        does not fire immediately.
+        """
+        from orchestrator.pipeline.schedule import compute_next_fire
+        from orchestrator.pipeline.store import (
+            get_pipeline,
+            get_schedule,
+            set_schedule_enabled,
+            update_schedule_next_fire,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _ScheduleResponse:
+            pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
+            if pipeline is None:
+                raise HTTPException(
+                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
+                )
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            sched = get_schedule(ctx.writer_store.conn, schedule_id)
+            if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if sched.pipeline_id != pipeline_id:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            set_schedule_enabled(ctx.writer_store.conn, schedule_id, body.enabled)
+            # On re-enable: recompute next_fire from now (avoid immediate stale fire).
+            if body.enabled:
+                new_next_fire = compute_next_fire(sched.kind, sched.expr, now_ms())
+                update_schedule_next_fire(ctx.writer_store.conn, schedule_id, new_next_fire)
+            updated = get_schedule(ctx.writer_store.conn, schedule_id)
+            assert updated is not None
+            return _ScheduleResponse(
+                schedule_id=updated.schedule_id,
+                pipeline_id=updated.pipeline_id,
+                owner_user_id=updated.owner_user_id,
+                kind=updated.kind,
+                expr=updated.expr,
+                next_fire=updated.next_fire,
+                enabled=updated.enabled,
+                created_at=updated.created_at,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
 
 def _configure(app: FastAPI) -> None:
     """Construction-time configure step — registers auth middleware.
@@ -1749,13 +2220,28 @@ def create_app(config_dir: Path, db_path: Path) -> FastAPI:
                 name="countdown-sweeper",
             )
 
+        # Start pipeline schedule sweeper if enabled (ADR-042 D1/D7 / P5.1b-4).
+        _schedule_sweeper_task: asyncio.Task[None] | None = None
+        if ctx.pipeline_scheduler.enabled:
+            _loop = asyncio.get_running_loop()
+            # Boot re-arm: advance past-due schedules without running (ADR-042 D5).
+            await _loop.run_in_executor(ctx.writer_executor, lambda: _rearm_schedules_on_boot(ctx))
+            _schedule_sweeper_task = asyncio.create_task(
+                _schedule_sweeper(ctx, ctx.pipeline_scheduler, _loop),
+                name="schedule-sweeper",
+            )
+
         yield
 
-        # Tear down sweeper before ctx.shutdown() (cancel cleanly, no pending-task warning).
+        # Tear down sweepers before ctx.shutdown() (cancel cleanly, no pending-task warning).
         if _sweeper_task is not None:
             _sweeper_task.cancel()
             with suppress(asyncio.CancelledError):
                 await _sweeper_task
+        if _schedule_sweeper_task is not None:
+            _schedule_sweeper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _schedule_sweeper_task
         ctx.shutdown()
 
     app = FastAPI(

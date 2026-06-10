@@ -43,11 +43,23 @@ def test_init_pipeline_schema_idempotent() -> None:
     init_pipeline_schema(conn)  # second call must not raise
 
 
-def test_schema_has_no_schedule_columns() -> None:
-    """Verify schema contains no cron/interval/next_fire columns (ADR-041 D10)."""
-    assert "cron" not in PIPELINE_SCHEMA
-    assert "interval" not in PIPELINE_SCHEMA
-    assert "next_fire" not in PIPELINE_SCHEMA
+def test_pipelines_table_has_no_schedule_columns() -> None:
+    """pipelines table itself has no schedule columns (ADR-041 D10: those are P5.1b).
+
+    P5.1b adds a *side table* pipeline_schedules (ADR-042 D2); the pipelines
+    table stays schedule-free.  This test targets the pipelines CREATE block.
+    """
+    # Extract only the pipelines table DDL block (up to the pipeline_runs block)
+    pipelines_block = PIPELINE_SCHEMA.split("CREATE TABLE IF NOT EXISTS pipeline_runs")[0]
+    assert "next_fire" not in pipelines_block
+    assert "pipeline_schedules" not in pipelines_block
+
+
+def test_schema_has_pipeline_schedules_table() -> None:
+    """pipeline_schedules table exists in schema (ADR-042 D2 / P5.1b-2)."""
+    assert "pipeline_schedules" in PIPELINE_SCHEMA
+    assert "next_fire" in PIPELINE_SCHEMA
+    assert "schedule_id" in PIPELINE_SCHEMA
 
 
 def test_pipeline_table_has_owner_user_id() -> None:

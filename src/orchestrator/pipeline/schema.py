@@ -1,9 +1,9 @@
-"""Pipeline domain types — definition, run record, result (ADR-041 D8)."""
+"""Pipeline domain types — definition, run record, result, schedule record (ADR-041 D8 / ADR-042 D2)."""  # noqa: E501
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -92,3 +92,21 @@ class PipelineRunResult:
             "summary": self.summary,
             "error": self.error,
         }
+
+
+# Schedule kind — interval implemented; cron column kept for forward-compat (ADR-042 D3).
+ScheduleKind = Literal["interval", "cron"]
+
+
+@dataclass(frozen=True)
+class PipelineScheduleRecord:
+    """A row from the pipeline_schedules side table (ADR-042 D2)."""
+
+    schedule_id: str
+    pipeline_id: str
+    owner_user_id: str
+    kind: str
+    expr: str
+    next_fire: int  # epoch-ms; mutable runtime state, updated on every fire
+    enabled: bool
+    created_at: int

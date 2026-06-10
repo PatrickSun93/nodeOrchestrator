@@ -196,7 +196,8 @@ Mirroring ADR-040 D1's reader/writer split:
      human may have disabled/deleted the schedule, or a prior sweep tick already claimed it).
      If not still due → **log + skip** (benign, like the sweeper's `already_resolved`).
   2. **Re-check the parent pipeline:** load via `get_pipeline(writer_conn, pipeline_id)`. If
-     the pipeline is **missing** (deleted) → log + skip. If `pipelines.enabled=0` → skip the
+     the pipeline is **missing** (deleted) → log + **advance `next_fire`** + skip the run
+     (breaks the orphan re-discovery loop; A3 routing). If `pipelines.enabled=0` → skip the
      run **but still advance `next_fire`** (so re-enabling resumes cleanly; the disabled
      pipeline simply never runs).
   3. **Claim — advance `next_fire` FIRST** via `update_schedule_next_fire(writer_conn,
