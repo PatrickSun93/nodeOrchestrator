@@ -122,3 +122,7 @@ The MVP demo connector is the **official filesystem MCP server** (`@modelcontext
 - `src/orchestrator/autonomy/scoring.py` (`score`/`decide_tier`/`gate`/`ToolMeta`/`UnknownToolError`) + `agents/tool_dispatch.py` (`process_tool_calls` — the path MCP feeds) + `autonomy/emission.py` (`emit_gate_decision`) + `config/tools.yaml` + `llm/config_loader.py::load_tools_config` (the registry MCP joins).
 - `src/orchestrator/core/event.py` (`ToolCallMeta`/`ToolResultMeta`; `TOOL_CALL`/`TOOL_RESULT`/`TOOL_FAILED`) + `llm/purposes.py` (`TOOL_OUTPUT_INTERPRET` — the existing content-gen interpret purpose; **no new purpose**).
 - ADR-005 (autonomy scoring/tiers/reversibility), ADR-006 (unknown-tool→fail-closed = discovery≠permission), ADR-013 (operator tool dispatch — the path MCP extends), ADR-023 (the bootstrap), the P2.7-S3 review (the trust-boundary + c2 env-inheritance pattern). `handoff.md` §3.3 ("MCP 作为插件不是核心" — the P3.5 relation); roadmap §3(C)/§9.
+- **P5.1c note (ADR-043):** The gate logic governing MCP tool autonomy decisions is
+  byte-frozen across P5.1c. The pipeline-email actuator is a post-gate layer that
+  actuates an already-gated `TOOL_CALL_PENDING` (HARD tier); it does not affect MCP
+  tool gating or the autonomy-decision path.

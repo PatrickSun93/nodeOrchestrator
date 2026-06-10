@@ -181,6 +181,15 @@ and its `approval_source: Literal["human", "auto_timer"]` are **unchanged** (the
 `auto_pipeline` marker + the headless-email actuator are P5.1c). The `RB-AUTOFIRE`
 exclusions (HARD-never, reversibility-floor) remain byte-intact.
 
+> **P5.1c amendment (ADR-043):** One narrowly-authorized irreversible exception is
+> inscribed in P5.1c: a `send_email` pending produced by a *scheduled* pipeline run may
+> be headlessly actuated when the schedule is opted in and **promoted to live** (not just
+> enabled). The exception is scheduled-only, opt-in, owner-config-pinned recipient,
+> dry-run-first, via the post-run `_actuate_pipeline_emails` actuator (ADR-043 D1/D2/D5/D6).
+> Interactive/manual pipeline runs are unaffected — their `send_email` pending still waits
+> for a human `/confirm`. The gate, `_execute_local_call`, and `countdown_auto_fire=None`
+> are all byte-frozen across P5.1c (ADR-043 Scope).
+
 **The mechanism that guarantees "no headless actuation" (the load-bearing detail).** The
 runner calls `process_tool_calls` with **`countdown_auto_fire=None`** — so no
 `TOOL_CALL_PENDING` the pipeline produces is ever stamped with `expires_at`
@@ -287,13 +296,14 @@ scoped to the *safe* slice so later producers extend a written contract:
   timers (boot re-arm = skip-to-next), catch-up semantics, and a second bounded background
   task (`_schedule_sweeper`, ADR-025 D6). ADR-042 is the contract. Incremental feed state
   remains deferred.
-- **P5.1c (deferred):** the headless email actuator authorization — the
+- **P5.1c (realized — ADR-043):** the headless email actuator authorization — the
   `RB-AUTOFIRE`-beyond crossing (`send_email` is HARD-tier *and* reversibility=3 < floor
   5, so headless email inverts the two guards `RB-AUTOFIRE` installed). Opt-in, per-schedule,
-  recipient-allowlisted, owner-attributed, reusing `_writer_approve_helper` as a third
-  caller with a new `approval_source="auto_pipeline"` marker; inscribes the
-  **`RB-PIPELINE-EMAIL`** residual honestly. Its own isolated dual-lens. Extends this ADR
-  (or ADR-043).
+  owner-config-pinned recipient (case-insensitive match), dry-run-first, owner-attributed,
+  reusing `_writer_approve_helper` as a third caller with `approval_source="auto_pipeline"`;
+  inscribes the **`RB-PIPELINE-EMAIL`** residual honestly (ADR-043 D7). Isolated dual-lens
+  (Lens A = crossing/over-actuation; Lens B = spine/reversible-envelope no-regression).
+  **The P5.1 wave closes with P5.1c.**
 
 ## Considered alternatives
 

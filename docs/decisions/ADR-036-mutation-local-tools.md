@@ -140,6 +140,20 @@ The two **drift sync-tests** (b35 subprocess, b46 network) auto-extend: adding `
 
 ---
 
+## P5.1c annotation (ADR-043)
+
+> **`send_email` HARD tier is unchanged** across P5.1c: `decide_tier` is byte-frozen
+> (ADR-043 Scope). `send_email` becomes headless-actuatable **only** via the narrow
+> pipeline-email path (ADR-043 D2/D4) — scheduled-run-only, opt-in, owner-config-pinned
+> recipient, dry-run-first — and **never** via AUTO_EXECUTE (D2 "HARD-never" constitutional
+> test). The recipient domain/explicit allowlist (D3-ii above) is **still enforced
+> downstream** inside the `_make_send_email` impl (ADR-043 D3 notes this as an additional
+> narrowing layered in the actuator, not a replacement). The unsandboxed transparency
+> warning (ADR-037 R9) is intact: `send_email` remains unsandboxed; the pipeline-email
+> actuator does not alter the transport posture.
+
+---
+
 ## References
 
 - ADR-028 D2 (trust binary + the third local-but-untrusted class), D3 (mutation deferral — **amended by this ADR**: the three are no-longer-deferred), D5 (single-writer liveness bound), D6 (empty-executor-diff + t1/t2/t3/t4).
