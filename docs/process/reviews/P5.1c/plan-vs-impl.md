@@ -2,155 +2,220 @@
 task_id: P5.1c
 stage: plan-vs-impl
 actor: senior
-date: "2026-06-10"
-verdict: needs_architect
+date: "2026-06-11"
+cycle: 2
+verdict: clean
 reviewed_branch: origin/claude/P5.1c-impl
-reviewed_commit: 4f08f20
+reviewed_commit: c658685
+prev_cycle_commit: 4f08f20
 plan: docs/process/senior-plans/P5.1c.md
 adr: ADR-043
-routing_absorbed: docs/process/reviews/P5.1c/architect-routing-on-plan.md
+routing_absorbed: docs/process/reviews/P5.1c/architect-routing-on-impl.md
+supersedes: "cycle-1 plan-vs-impl (verdict needs_architect @ 4f08f20)"
 summary: >
-  6 atomics all present and faithful to plan + ADR-043 + the 5 α-absorbed routing
-  items. Byte-frozen surfaces verified zero-diff. One 🟡 deviation from a routed
-  absorption (R0B-Y2 TYPED_METADATA registration) — justified and invariant-preserving,
-  but on an explicitly-routed item, so surfaced for architect blessing. Two 🟢 test
-  hygiene notes. No plan-external expansion, no omissions.
+  Cycle-2 all-α rework verified against the architect impl-stage routing. The
+  cycle-2 diff is exactly the 4 routed files (ADR-043 D6 text + app.py +12 + 2
+  test files) — zero scope creep, frozen spine still zero-diff vs main. All four
+  routed dispositions landed faithfully: Y1 (ADR-043 D6 amended to the
+  callsite-enforcement pattern + the shared-OBSERVATION-conflict rationale, no
+  code change), Y2 (live gate now mirrors the dry-run both-non-empty guard), Y3
+  (unknown email_mode fails closed via explicit `!= "live"`), and the
+  cross-pipeline IDOR tests on all 3 email endpoints. The cycle-1 surfaced 🟡
+  (PvI-Y1) is resolved per the architect's blessed disposition. One residual 🟢
+  doc-accuracy nit (the amended D6 text + the event.py comment name
+  `model_validate()` as the enforcement, but the production write-callsite enforces
+  via the constructor; `model_validate` is the test-only round-trip) — non-blocking,
+  rides a future doc-touch. Verdict clean.
 findings:
+  - id: PvI2-G1
+    severity: green
+    title: ADR-043 D6 text + event.py comment name model_validate() as enforcement, but the production write-callsite enforces via the constructor (model_validate is test-only)
+resolved_from_cycle_1:
   - id: PvI-Y1
-    severity: yellow
-    title: PipelineEmailDryRunMeta not registered in TYPED_METADATA (deviates from R0B-Y2 routed text)
+    disposition: resolved (architect routed α-doc; ADR-043 D6 amended to callsite-enforcement pattern)
   - id: PvI-G1
-    severity: green
-    title: No cross-pipeline IDOR (schedule-not-for-pipeline → 404) test on the 3 new email endpoints
+    disposition: resolved (3 cross-pipeline IDOR tests added — optin/promote/disable → 404)
   - id: PvI-G2
-    severity: green
-    title: Two Lens-B supplementary tests assert substring presence, not byte content
+    disposition: not routed for action; remains as the cycle-1 belt-and-suspenders note (non-blocking)
 ---
 
-# P5.1c — Senior plan-vs-impl review
+# P5.1c — Senior plan-vs-impl review (cycle 2, re-review)
 
-**Branch reviewed:** `origin/claude/P5.1c-impl` @ `4f08f20` (read via
-`git diff origin/main...origin/claude/P5.1c-impl` from `main`; no checkout — shared worktree).
+**Branch reviewed:** `origin/claude/P5.1c-impl` @ `c658685` (read via
+`git diff 4f08f20..origin/claude/P5.1c-impl` and `git diff origin/main...` from
+`main`; no checkout — shared worktree).
 
-**Audit lens (per senior-planner.md §"plan-vs-impl"):** I am the only party who knows
-what the plan said. External reviewers see deliverable-vs-spec; I see plan-vs-deliverable
-— specifically whether the impl satisfies the acceptance criteria's *surface* while
-drifting on a plan-implied *invariant* or a routed absorption instruction. This review's
-one 🟡 is exactly that class.
+**Supersedes:** the cycle-1 plan-vs-impl review (`verdict: needs_architect` @
+`4f08f20`), whose single 🟡 (PvI-Y1) was routed all-α by the architect
+(`architect-routing-on-impl.md`). This cycle verifies the rework against that
+routing.
 
----
+**Scope of the cycle-2 diff (4 files, all routed):**
 
-## 1. Per-atomic fidelity
+| File | Change | Routed item |
+|---|---|---|
+| `docs/decisions/ADR-043-headless-pipeline-email.md` | D6 paragraph rewritten (1 line replaced) | Y1 (α-doc) |
+| `src/orchestrator/api/app.py` | +12 lines: fail-closed `elif != "live"` branch + both-non-empty live gate | Y3 + Y2 (α) |
+| `tests/api/test_pipeline_email_actuator.py` | +48: `test_unknown_email_mode_does_not_actuate` | Y3 test (α) |
+| `tests/api/test_schedule_endpoints.py` | +59: 3× `test_email_*_cross_pipeline_idor_404` | IDOR test (α) |
 
-| Atomic | Plan intent | Impl @ 4f08f20 | Verdict |
-|---|---|---|---|
-| **P5.1c-1** | 3-state email columns + guarded ALTER + record fields + 3 mutators, defaults OFF/dry_run | `store.py`: `email_enabled/email_mode/email_recipient` in `CREATE TABLE` + `_ensure_schedule_email_columns` PRAGMA-guarded idempotent ALTER, called after `executescript`; all 4 readers populate the 3 fields; `create_schedule` defaults OFF; `set_schedule_email_optin` (→dry_run) / `promote_schedule_email_live` (→live) / `disable_schedule_email` (→off), each commits; `schema.py` record gains the 3 fields | ✅ faithful |
-| **P5.1c-2** | Owner-private 3-state endpoints (optin→dry-run / promote→live / disable→off), mirror `_patch_schedule` auth, response surfaces email fields, codegen lock | 3 POST endpoints (`/email-optin` `/email-promote` `/email-disable`); each does `_principal` + `owner_user_id != principal → 403`, `get_pipeline None → 404`, `get_schedule None → 404`, **`sched.pipeline_id != pipeline_id → 404`**; promote on `not email_enabled → 409`; optin `email_recipient: str = Field(min_length=1)` → 422 on empty; `_ScheduleResponse` gains email fields; `openapi.json` + `ui/src/api/schema.ts` regenerated | ✅ faithful (one 🟢 test gap, PvI-G1) |
-| **P5.1c-3** | Actuator: dedicated scan (NOT `_discover_expired_pendings`), eligibility gate (tool==send_email ∧ live ∧ case-insensitive recipient), actuate via `_writer_approve_helper(...,"auto_pipeline",owner,loop)`, two Literal widenings only, keyword `loop`, docstring honesty | `_PIPELINE_EMAIL_TOOL="send_email"` literal const; `_actuate_pipeline_emails` early-returns on `not email_enabled`; dedicated `get_room_events` scan keyed on `tool_name`/resolution, never touches `expires_at`; gate `pending_to.lower() != pinned.lower()` (R0B-Y1); live actuation via helper with `"auto_pipeline"` + `owner_user_id`; only edits are the two `Literal` annots (`app.py:383`, `event.py:224`); `_schedule_act_on_writer` gains **keyword** `loop=None` (R0A-Y3 — 6 positional test call-sites untouched); step 6 guarded by `email_enabled and loop is not None`; docstring rewritten to state the crossing truthfully (R0A-Y1) | ✅ faithful |
-| **P5.1c-4** | Dry-run posture: typed `PipelineEmailDryRunMeta` **registered in TYPED_METADATA** keyed to OBSERVATION; dry-run records preview, no actuate/transport; pending stays waiting | Typed `PipelineEmailDryRunMeta(recipient, subject, would_actuate, owner_user_id, approval_source)` exists; `_record_email_dry_run` appends an OBSERVATION carrying `model_dump()`; no `_writer_approve_helper`, no TOOL_CALL, no transport; pending unresolved. **BUT not registered in `TYPED_METADATA`** — validated at callsite via the typed constructor instead (see PvI-Y1) | ⚠️ 🟡 deviation (PvI-Y1) |
-| **P5.1c-5** | Honest rewrite of ADR-042 D1 isolation test (R0A-Y1) + Lens A/B pins; field-set pin byte-unchanged (R0A-Y2) | `test_schedule_act_on_writer_does_not_call_countdown_spine` rewritten: drops `_writer_approve_helper` from `_schedule_act_on_writer`'s forbidden set, keeps COUNTDOWN spine forbidden for **both** `_schedule_act_on_writer` and `_actuate_pipeline_emails`, adds positive pins (sole reach is `_actuate_pipeline_emails`; it is the only helper-caller). HARD-never test genuinely exercises `git_push`/`apply_edit` live pendings → 0 TOOL_CALL. `test_constitution.py` **byte-unchanged** (R0A-Y2 ✓). Recipient-pin, default-OFF, idempotency, owner-attribution all tested | ✅ faithful (two 🟢, PvI-G2) |
-| **P5.1c-6** | Inscribe cross-ADR amendments (041 D5/D10, 042 D1, 040 D3/D4/D8, 036, 005/013/027), ADR-042 amendment explicitly names the D1 isolation as *deliberately lifted* | All seven ADRs annotated; ADR-042 amendment names the intentional-lift-not-silent-bypass + points at the rewritten test; ADR-043 own decision text not edited; not self-accepted (RC-3) | ✅ faithful |
-
-**Routing absorption (all 5 α-items) verified landed in impl:**
-D1 test honest-rewrite (R0A-Y1) ✓ · field-set pin untouched, value-set widen only (R0A-Y2) ✓ ·
-keyword `loop`, positional call-sites unchanged (R0A-Y3) ✓ · case-insensitive recipient,
-both sides lowercased (R0B-Y1) ✓ · typed `PipelineEmailDryRunMeta` (R0B-Y2) ✓ *mechanism deviates — PvI-Y1*.
+No fifth file. **Zero plan-external expansion.** The byte-frozen spine
+(`pipeline/runner.py`, `agents/tool_dispatch.py`, `tools/executor.py`,
+`autonomy/scoring.py`) remains **zero-diff vs `origin/main`** — re-confirmed this
+cycle.
 
 ---
 
-## 2. Byte-frozen surface scan (the load-bearing check)
+## 1. Per-routed-item fidelity
 
-`git diff origin/main...origin/claude/P5.1c-impl` produces **zero diff-lines** on every frozen surface:
+### Y1 — TYPED_METADATA → ADR-043 D6 text (α, doc-only) ✅ faithful
+
+The architect routed: *"the impl is correct (callsite-typed enforcement);
+registering `OBSERVATION → PipelineEmailDryRunMeta` would break every other
+free-form OBSERVATION event; amend ADR-043 D6 to describe the
+callsite-typed-enforcement pattern + the shared-OBSERVATION-conflict rationale;
+**no code change**."*
+
+The cycle-2 D6 amendment does exactly this:
+- Names the enforcement as **callsite-typed construction** — the actuator
+  constructs `PipelineEmailDryRunMeta(...)` directly + `model_dump()` before
+  storing. (Accurate: `app.py:756`.)
+- States the **infeasibility rationale** precisely: `validate_metadata()` applies
+  the registered schema to *every* OBSERVATION event at append, so all
+  pre-existing free-form OBSERVATION producers (runner output, MCP interpret)
+  would fail validation.
+- Keeps the **scope-narrowing** intact: reuses the existing `OBSERVATION`
+  EventType, no new `EventType`; `OBSERVATION` stays free-form in
+  `TYPED_METADATA`.
+- Points at the `core/event.py` code comment that names the callsite enforcement
+  as the explicit design choice (the comment exists, `event.py:432-434`).
+
+**No code change** — verified: the cycle-2 diff touches no `src` file other than
+`app.py`, and `event.py` is byte-unchanged. ✅
+
+This resolves cycle-1 **PvI-Y1** per the architect's blessed disposition
+(callsite-validation accepted as faithful; ADR text brought into line). One
+residual prose nit (PvI2-G1, §3) — non-blocking.
+
+### Y3 — unknown email_mode fails closed (α) ✅ faithful
+
+`app.py:679-686` adds, between the dry-run branch and the live gate:
+
+```python
+elif schedule.email_mode != "live":
+    # Unknown mode — fail-closed (ADR-043 D5: live requires email_mode explicitly set).
+    _log.debug(...); continue
+```
+
+The branch order is now: `email_enabled` early-return → `== "dry_run"` record →
+`!= "live"` skip (fail-closed) → **only `== "live"` reaches actuation**. An
+unknown/garbage `email_mode` no longer falls through to send. This matches the
+routed disposition (explicit `== "live"`, fail-closed-on-unknown at the
+irreversible crossing) and ADR-043 D5. The test
+`test_unknown_email_mode_does_not_actuate` corrupts `email_mode` to
+`"bogus_unknown"` via direct SQL, runs the actuator, and asserts **0 TOOL_CALL
+and 0 OBSERVATION** — faithfully pinning that an unknown mode neither actuates nor
+records. ✅
+
+### Y2 — live gate both-non-empty (α) ✅ faithful
+
+`app.py:689` changes the live eligibility gate from
+`pending_to.lower() != pinned.lower()` to:
+
+```python
+if not (pending_to and pinned and pending_to.lower() == pinned.lower()):
+    ... continue
+```
+
+This mirrors the dry-run path's `would_actuate` guard exactly (`app.py:754`:
+`bool(pending_to and pinned and pending_to.lower() == pinned.lower())`), closing
+the divergence flagged by R0-A: an empty pinned recipient or empty pending `to`
+can no longer satisfy the live gate by lowercasing two empty strings to equality.
+The two paths now share one predicate shape. ✅ Matches ADR-043 D3/D5.
+
+### IDOR test — cross-pipeline 404 on the 3 email endpoints (🟢→α) ✅ faithful
+
+`test_schedule_endpoints.py` gains `test_email_optin_cross_pipeline_idor_404`,
+`test_email_promote_cross_pipeline_idor_404`,
+`test_email_disable_cross_pipeline_idor_404`. Each creates a schedule under
+`pipe_other`, then hits the endpoint under `pipe_self`'s URL with `pipe_other`'s
+`schedule_id` and asserts **404** — exercising the `sched.pipeline_id !=
+pipeline_id → 404` guard that the cycle-1 review confirmed was already
+implemented in all three endpoints. This is the **P5.1b A1** cross-pipeline
+authorization test the architect routed in. The promote case correctly opts-in
+under the *correct* pipeline first so the schedule is promote-eligible, isolating
+the IDOR path (not a 409). ✅ Resolves cycle-1 **PvI-G1**.
+
+### R0B-Y2 codegen overshoot — accept (hygiene)
+
+Routed `accept-as-is`; no rework expected and none present. ✅
+
+---
+
+## 2. Byte-frozen surface re-scan
+
+`git diff origin/main...origin/claude/P5.1c-impl` on the frozen set returns
+**zero diff-lines** (re-confirmed this cycle):
 
 | Surface | Result |
 |---|---|
-| `pipeline/runner.py` (incl. `run_pipeline`, `countdown_auto_fire=None` ×2) | **0 diff-lines** ✓ |
-| `agents/tool_dispatch.py` (the two RB-AUTOFIRE `expires_at` stamps) | **0 diff-lines** ✓ |
-| `tools/executor.py` (`_execute_local_call`) | **0 diff-lines** ✓ |
-| `autonomy/scoring.py` (`score`/`decide_tier`/gate) | **0 diff-lines** ✓ |
-| `_countdown_sweeper` / `_discover_expired_pendings` defs | unchanged — names appear in the diff **only** in docstrings + the rewritten isolation test, never as edited defs ✓ |
+| `pipeline/runner.py` (incl. `run_pipeline`, `countdown_auto_fire=None`) | **0** ✓ |
+| `agents/tool_dispatch.py` (RB-AUTOFIRE `expires_at` stamps) | **0** ✓ |
+| `tools/executor.py` (`_execute_local_call`) | **0** ✓ |
+| `autonomy/scoring.py` (`score`/`decide_tier`/gate) | **0** ✓ |
 
-The crossing is, as designed, a narrow post-run authorization layer (`_actuate_pipeline_emails`
-+ `_record_email_dry_run` + step 6 wiring) that reaches the **non-frozen** `_writer_approve_helper`
-and touches nothing in the spine. No plan-external expansion: the only other large hunks
-(`openapi.json` +755, `ui/src/api/schema.ts` +661) are the codegen lock P5.1c-2 explicitly required.
+No new routing `LLMPurpose`; the crossing remains the narrow post-run
+authorization layer (`_actuate_pipeline_emails` + `_record_email_dry_run` + step-6
+wiring) reaching only the non-frozen `_writer_approve_helper`.
 
 ---
 
 ## 3. Findings
 
-### 🟡 PvI-Y1 — `PipelineEmailDryRunMeta` not registered in `TYPED_METADATA` (deviates from the routed R0B-Y2 absorption)
+### 🟢 PvI2-G1 — D6 text + event.py comment name `model_validate()` as enforcement, but the production write-callsite enforces via the constructor
 
-**Plan P5.1c-4 acceptance + routing R0B-Y2 both say, literally:** "*registered in
-`TYPED_METADATA` (`event.py:394`) keyed to the existing OBSERVATION event type*" /
-"*registered in `TYPED_METADATA`, structurally enforced rather than convention.*"
+The amended D6 text says *"the reader calls
+`PipelineEmailDryRunMeta.model_validate(event.metadata)` to round-trip-validate"*
+and the `event.py:432-434` comment says enforcement is *"at callsites via explicit
+`PipelineEmailDryRunMeta.model_validate()`"*. In the production code:
 
-**Impl does NOT register it.** `event.py:428-431` instead adds a NOTE explaining that
-OBSERVATION is deliberately left out of the global registry, because existing OBSERVATION
-events (runner output, MCP interpret) carry free-form metadata and would fail
-`PipelineEmailDryRunMeta` validation; structural typing is enforced at the callsite via the
-typed `PipelineEmailDryRunMeta(...)` constructor in `_record_email_dry_run`.
+- **Write-time** enforcement is real and is via the **constructor** —
+  `_record_email_dry_run` builds `PipelineEmailDryRunMeta(...)` then `model_dump()`
+  (`app.py:756`). A schema drift fails here, at construction.
+- There is **no production reader** that calls `model_validate` — a `git grep`
+  across `src` finds `PipelineEmailDryRunMeta` only at the class def, the write
+  construction, and docstrings/comments. The `model_validate` round-trip exists
+  **only in the test** (`test_pipeline_email_dry_run_meta_schema`).
 
-**My assessment (evidence, not a routing call):** the deviation is *technically forced* — I
-confirmed `validate_metadata` (`event.py:574`) applies a registered schema to **every** event
-of that type, so registering OBSERVATION globally would byte-break existing free-form
-OBSERVATION producers. The R0B-Y2 *intent* ("structurally typed rather than convention,
-caught immediately") **is** preserved: the dry-run record is constructed through the Pydantic
-model, so a schema drift fails at construction. So this is a faithful realization of the
-*invariant* via a *different mechanism* than the routed text named.
+So the *invariant* the architect blessed (typed, structurally-enforced dry-run
+record) holds — write-time construction is the actual guard. The prose just names
+the test-only round-trip (`model_validate`) as if it were the production
+enforcement/reader. This is a wording imprecision **within an already-blessed
+mechanism**, not an invariant drift or a correctness hole.
 
-**Why I'm not waving it through (`needs_architect`, not `clean`):** R0B-Y2 was an explicit
-α-absorption the architect routed; the routed text named a specific mechanism
-(`TYPED_METADATA` registration) that the impl could not follow. Per senior-planner.md
-§"Halt + surface" ("impl satisfies acceptance criteria but drifts on plan-implied invariant
-→ surface the drift; don't fix in the review; that's architect routing") this is the architect's
-call to bless. Three dispositions the architect may pick:
-  1. **Accept callsite-validation as faithful** (my lean — invariant preserved, registration
-     was infeasible as written) → amend P5.1c-4 / ADR-043 D6 text to say "typed class
-     enforced at callsite (OBSERVATION stays globally free-form)"; verdict bumps clean.
-  2. Want the registry mechanism after all → would require a sub-keyed/per-author registry
-     or a dedicated EventType (the latter was explicitly rejected in ADR-043 D6 scope-narrowing).
-  3. Want a `model_validate()` round-trip assertion added to the dry-run path to harden the
-     "caught immediately" guarantee.
+**Disposition:** non-blocking 🟢. A one-line tighten ("write-time enforced via
+construction; read-time `model_validate` round-trip exercised in tests") can ride
+any future doc-touch. **Not worth a rework cycle** — P5.1 closes on this merge.
+Surfaced for the record, not for routing.
 
-Not blocking — no product-correctness hole; the dry-run path is reversible and typed.
+### Carried from cycle-1 (no action this cycle)
 
-### 🟢 PvI-G1 — No cross-pipeline IDOR test on the 3 new email endpoints
-
-P5.1c-2 acceptance lists "*schedule-not-for-pipeline → 404 (mirror `_patch_schedule`)*". The
-guard **is implemented** in all three email endpoints (`if sched.pipeline_id != pipeline_id:
-raise 404`). But `test_schedule_endpoints.py` has no `test_email_*_cross_pipeline_idor_404`,
-while the pre-existing endpoints each have a `test_*_cross_pipeline_idor_404`. Given P5.1b cyc1
-landed a cross-pipeline IDOR **must-fix** on exactly this side-table auth surface (senior+R0-A
-caught it, r0b missed it), the missing test on the new security-relevant surface is worth a
-finder pass. Code is correct; only the test is absent. (Dual-lens Lens A may want to add it.)
-
-### 🟢 PvI-G2 — Two Lens-B supplementary tests assert substring presence, not byte content
-
-`test_lens_b_no_new_llm_purpose` (`test_schedule_sweeper.py`) filters the purpose set by
-substring (`"pipeline"|"email"|"routing"`) rather than asserting the full set is unchanged —
-a new `AGENT_RESPONSE`-adjacent purpose without those substrings would slip past it.
-`test_lens_b_autofire_guard_logic_unchanged` asserts the strings `"ADR-040 D2"` / `"expires_at"`
-/ `"HARD_CONFIRM"` / `"reversibility_floor"` are *present* in `tool_dispatch.py` source — it
-would still pass if the stamp **logic** changed while keeping those tokens. The **real** guards
-are the project's existing constitutional/byte-frozen tests (which my §2 scan confirms pass
-with zero diff), so these are belt-and-suspenders; flagging only so a reviewer doesn't read
-them as the primary byte-pin.
+- **PvI-G2** (two Lens-B supplementary tests assert substring/token presence, not
+  byte content) — not routed for action; the real guards are the existing
+  constitutional/byte-frozen tests (§2 zero-diff). Remains as the cycle-1
+  belt-and-suspenders note. Non-blocking.
 
 ---
 
 ## 4. Verdict
 
-**`needs_architect`** — driven solely by **PvI-Y1**: the impl deviates from the literal
-mechanism of a routed (α-absorbed) instruction (R0B-Y2 `TYPED_METADATA` registration). The
-deviation is justified and invariant-preserving (my lean: accept), but blessing a deviation
-from a routed absorption is the architect's call, not mine — I surface, the architect routes.
-The two 🟢 are test-hygiene notes for the dual-lens finders, not blockers.
+**`clean`.** The cycle-2 all-α rework landed all four routed dispositions
+faithfully (Y1 doc-only D6 amendment, Y2 both-non-empty, Y3 fail-closed, the 3
+cross-pipeline IDOR tests), with **zero scope creep** (exactly the 4 routed
+files), the byte-frozen spine **still zero-diff vs main**, no new `LLMPurpose`,
+and no further ADR amendment beyond the routed Y1 D6 text. Cycle-1's single 🟡
+(PvI-Y1) is resolved per the architect's blessed disposition. The one residual is
+a 🟢 doc-accuracy nit (PvI2-G1) that does not block.
 
-Everything else — all 6 atomics, all 5 routing absorptions, the honesty-crux test rewrite
-(R0A-Y1, the headline), the field-set pin byte-unchanged (R0A-Y2), and every byte-frozen
-surface — is faithful with zero drift. No plan-external expansion; no omissions.
-
-Per ADR-008 Amendment 1 (Route B) the state advances to `awaiting_R0_A` regardless of
-verdict; this `needs_architect` frontmatter flags PvI-Y1 for the architect's routing pass
-alongside the dual-lens R0 reviews.
+Per ADR-008 Amendment 1 (Route B) the state advances to `awaiting_R0_A` for the
+cycle-2 dual-lens re-review.
