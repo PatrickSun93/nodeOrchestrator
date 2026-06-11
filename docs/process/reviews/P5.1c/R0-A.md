@@ -1,237 +1,167 @@
 ---
 task_id: P5.1c
-stage: impl (R0-A on impl) — isolated dual-lens (Lens A ∥ Lens B)
+stage: impl (R0-A on impl) — cycle 2 re-review (all-α rework)
 reviewer: architect-partner (R0-A)
-verdict: needs_architect
+verdict: clean
 verified_against: >
-  origin/claude/P5.1c-impl @ 4f08f20 (P5.1c-1..6 + mypy fixup) vs origin/main @ 34a309e;
-  plan docs/process/senior-plans/P5.1c.md; ADR-043 (Accepted);
-  architect-routing-on-plan.md (all-α absorbed)
-gates: "ruff clean · mypy --strict clean (305 files) · pytest green (PYTEST_EXIT=0, full suite 100%)"
-lenses: A (crossing / over-actuation + irreversible-send safety) · B (spine + reversible-envelope no-regression)
-findings: "0🔴 · 3🟡"
-disposition_surface:
-  Y1-dryrun-meta-not-in-typed-metadata: "α(lean) — ADR-043 D6 mechanism infeasible-as-written; impl callsite-typed (correct) but un-surfaced; D6 text ↔ impl contradiction → amend ADR-043 D6 (architect-only, no code change)"
-  Y2-live-gate-omits-both-non-empty: "α(lean,small) — live recipient gate misses ADR-043 D3 'both non-empty'; diverges from dry-run would_actuate; not API-reachable; mirror the dry-run guard"
-  Y3-live-branch-fail-open-on-unknown-mode: "α(lean,small) — live actuation entered by `!= 'dry_run'` (negation), not explicit `== 'live'`; fail-OPEN on any unknown email_mode, contra ADR-043 D5 'live requires email_mode explicitly set'; not API-reachable; match `== 'live'` explicitly"
+  origin/claude/P5.1c-impl @ c658685 (cycle-2 rework, single commit on 4f08f20);
+  cycle-2 delta git diff 4f08f20..c658685; full origin/main...c658685 (origin/main @ 04e16d6);
+  cycle-1 R0-A (this file, prior revision — 0🔴 · 3🟡) + architect-routing-on-impl.md (all-α)
+gates: "ruff check clean · ruff format = pre-existing backlog only (P5.1c files zero new debt) · mypy --strict clean (305 files) · pytest 2459 passed (EXIT=0, full suite); independent run, detached worktree @ c658685, uv sync --all-extras"
+cycle1_resolution:
+  Y1-dryrun-meta-not-in-typed-metadata: "RESOLVED (α-doc) — ADR-043 D6 text amended to describe callsite-typed construction + shared-OBSERVATION infeasibility rationale; no code change; core/event.py:431-434 comment it cites genuinely exists"
+  Y2-live-gate-omits-both-non-empty: "RESOLVED (α) — live gate now `not (pending_to and pinned and pending_to.lower()==pinned.lower())` (app.py:691), byte-identical to dry-run would_actuate (app.py:754); paths cannot diverge"
+  Y3-live-branch-fail-open-on-unknown-mode: "RESOLVED (α) — explicit `elif email_mode != 'live': continue` fail-closed (app.py:679-687); only `== 'live'` reaches actuation; guarded by test_unknown_email_mode_does_not_actuate"
+  cross-pipeline-idor-test: "RESOLVED (🟢→α) — 3 tests (optin/promote/disable) assert cross-pipeline schedule → 404; endpoint guards confirmed at app.py:2428/2487/2549"
+findings: "0🔴 · 0🟡 (cycle-2 introduces none; all cycle-1 items resolved)"
 ---
 
-# R0-A on impl — P5.1c headless pipeline email (the P5 honesty crux)
+# R0-A on impl — P5.1c headless pipeline email — **cycle 2 (all-α rework re-review)**
 
-Reviewed strict — the first headless **irreversible actuation** in the product. Read
-`git diff origin/main...origin/claude/P5.1c-impl` from `main` (no checkout, shared worktree);
-canonical gates run in an isolated detached worktree (`uv sync --all-extras`). The crossing is
-**structurally sound and faithful to ADR-043 C0–C8 across both lenses**: every named Lens-A and
-Lens-B invariant holds, and the **R0A-Y1 headline** (the vacuous-isolation-test risk) is honestly
-resolved. Two 🟡 are ADR-vs-impl faithfulness gaps that need an architect routing call — **neither
-is an over-actuation hole; no 🔴**.
+Re-review of the single cycle-2 rework commit **`c658685`** against the cycle-1 routing
+(`architect-routing-on-impl.md`, all-α). Read `git diff 4f08f20..c658685` for the delta and
+`origin/main...c658685` for the full crossing from `main` (no checkout, shared worktree); canonical
+gates re-run independently in an isolated detached worktree (`uv sync --all-extras`). The rework
+**faithfully absorbs all five routed dispositions, touches nothing outside the routed scope, keeps the
+byte-frozen spine intact, and introduces no new findings.** **Verdict: clean.**
 
-## Gates (independent run — detached worktree @ 4f08f20, `uv sync --all-extras`)
+The cycle-2 delta is exactly the routed surface — **4 files, +118/−3**: `ADR-043` D6 text (Y1),
+`app.py` +12 (Y2 + Y3, both inside `_actuate_pipeline_emails`), and two test files (the Y3 guard +
+the 3 cross-pipeline IDOR tests). No spine file, no `core/event.py` code, no `openapi.json`/`schema.ts`
+re-touch, no `.workflow/` commit. Nothing opportunistic rode along.
 
-- `ruff check .` — **clean** ("All checks passed!")
-- `uv run mypy` (strict; `files=src,tests`) — **clean** ("no issues found in 305 source files")
-- `pytest` — **green** (`PYTEST_EXIT=0`, full suite at 100%, all-passed; the four P5.1c test files —
-  `test_pipeline_email_actuator` · `test_schedule_sweeper` · `test_schedule_store` ·
-  `test_schedule_endpoints` — re-run clean independently). The lone stderr line ("Exception in
-  thread Thread-227" from `test_net_trust.py`'s hung-DNS timeout test) is **pre-existing noise** — a
-  daemon thread raising `LocalToolError: network_timeout` by design; `net_trust.py` is not in this diff
-  and the suite exit is 0.
+## Cycle-1 findings — resolution verified
 
-## Lens A — over-actuation + irreversible-send safety (held)
+### Y3 (fail-open → fail-closed on unknown `email_mode`) — RESOLVED ✓
 
-Verified against the actual actuator `_actuate_pipeline_emails` (`app.py`, post-`_discover_due_schedules`):
-
-1. **`send_email`-only.** Module-level literal `_PIPELINE_EMAIL_TOOL = "send_email"`; discovery
-   filters `meta.tool_name != _PIPELINE_EMAIL_TOOL → continue`. The **D4 HARD-never** test
-   (`test_schedule_sweeper.py::test_hard_never_generalize_non_send_email_not_actuated`) genuinely
-   appends `git_push` **and** `apply_edit` HARD pendings with `email_enabled`+`live` and asserts
-   `TOOL_CALL == 0` — **non-vacuous**; it exercises real non-`send_email` HARD pendings.
-2. **Opted-in + promoted-to-live only.** `if not schedule.email_enabled: return` (OFF never touches
-   pendings); `dry_run` → record + `continue`; `live` → gate → actuate. The opt-in state is the
-   **authoritative writer re-read** at step 1 (`app.py:809`, `get_schedule(writer_conn, …)`), not the
-   stale reader.
-3. **Config-pinned recipient, case-insensitive.** `pending_to.lower() != pinned.lower() → continue`
-   (left waiting); `to` is read from the **pending record** and compared to schedule **config** — the
-   LLM cannot redirect even within the domain allowlist. `test_live_mode_case_insensitive_recipient_match`
-   (`Alice@Example.Com` ↔ `alice@example.com`) actuates. *(But see Y2 — the "both non-empty" half of D3
-   is missing.)*
-4. **`send_email` allowlist still enforced.** The actuator routes through `_writer_approve_helper →
-   execute_pending_tool_calls → _execute_local_call → _make_send_email` (allowlist,
-   `network_tools.py:466-495`), all byte-unchanged — the pin is an *additional* narrowing, not a
-   replacement (verified by the unchanged downstream path).
-5. **Idempotent (at-most-once).** Two independent guards: the actuator's own `resolved_call_ids`
-   scan (skips any pending already resolved by a `TOOL_CALL`/`TOOL_RESULT`/`TOOL_CALL_CANCELLED` —
-   `PENDING_RESOLUTION_TYPES`) **and** the inherited still-pending check in `_writer_approve_helper`.
-   `test_idempotency_no_double_send` re-invokes the actuator twice → **exactly 1** `TOOL_CALL`.
-   A crash between run and actuation **under**-sends (next_fire already advanced in step 3), never
-   double-sends.
-6. **Owner-attributed.** Actuates with `approval_source="auto_pipeline"` +
-   `approver_user_id=schedule.owner_user_id`; `test_live_mode_actuates_matching_pending` asserts
-   `tool_name=="send_email"`, `approval_source=="auto_pipeline"`, `approver_user_id==owner` on the
-   appended `TOOL_CALL`.
-7. **Fail-closed unconfigured.** `email_enabled INTEGER NOT NULL DEFAULT 0`; the guarded
-   `ALTER TABLE` migrates pre-existing rows to OFF; `test_actuate_noop_when_email_disabled` → 0
-   `TOOL_CALL` + 0 `OBSERVATION`.
-8. **Dry-run truly does not send.** `_record_email_dry_run` appends **one** `OBSERVATION` carrying a
-   typed `PipelineEmailDryRunMeta` then `continue`s — no helper, no `TOOL_CALL`, no transport; the
-   pending stays waiting. `test_dry_run_records_observation_no_actuation` asserts 0 `TOOL_CALL`,
-   exactly 1 schema-valid `OBSERVATION`, pending still present.
-
-## Lens B — spine + reversible-envelope no-regression (held)
-
-1. **Gate + executor byte-frozen.** `autonomy/scoring.py` (`score`/`decide_tier`/`emit_gate_decision`),
-   `tools/executor.py` (`_execute_local_call`), `agents/tool_dispatch.py` (the two RB-AUTOFIRE stamps),
-   `pipeline/runner.py` — **none appear in the diff**. `test_lens_b_autofire_guard_logic_unchanged` +
-   `test_lens_b_countdown_auto_fire_none_preserved` pin them.
-2. **COUNTDOWN spine untouched.** `_countdown_sweeper` / `_discover_expired_pendings` appear in the
-   `app.py` diff **only** inside docstring text; their bodies are byte-unchanged. The actuator uses a
-   **dedicated scan** keyed on `tool_name` + resolution and **never reads/writes `expires_at`**
-   (isolation test Part 2 pins this).
-3. **`run_pipeline` `countdown_auto_fire=None` preserved** (`runner.py` not in diff; test asserts ≥2
-   sentinels).
-4. **No new routing `LLMPurpose`.** `test_lens_b_no_new_llm_purpose` + the existing canonical
-   constitutional test; the recipient is **config**, not an LLM judgment.
-5. **Existing `_writer_approve_helper` callers behavior-identical.** Only the param `Literal` is
-   widened to `["human","auto_timer","auto_pipeline"]`; the body is unchanged; the `human`/`auto_timer`
-   paths and interactive `/confirm` are untouched.
-6. **Field-set constitutional pin byte-unchanged.** `tests/core/test_constitution.py` is **not in the
-   diff**; `test_lens_b_field_set_pin_byte_unchanged` re-asserts the canonical five `ToolCallMeta`
-   field names. (R0A-Y2 absorbed correctly — value-set widening, not field-set.)
-
-## R0A-Y1 special re-check — the isolation test is honestly rewritten (held; the headline)
-
-`test_schedule_act_on_writer_does_not_call_countdown_spine` (`test_schedule_sweeper.py:492-553`) is
-rewritten exactly per the absorbed routing:
-
-- **drops** `_writer_approve_helper` from `_schedule_act_on_writer`'s forbidden set (now legitimately
-  reachable — but only via the narrow `_actuate_pipeline_emails` path);
-- **keeps** `_countdown_sweeper` + `_discover_expired_pendings` forbidden for **both**
-  `_schedule_act_on_writer` (Part 1) **and** `_actuate_pipeline_emails` (Part 2 — the second-function
-  AST check the old one-hop test lacked);
-- **adds the positive pin** (Part 3): `_schedule_act_on_writer` **must** call `_actuate_pipeline_emails`,
-  `_actuate_pipeline_emails` **must** call `_writer_approve_helper`, and `_schedule_act_on_writer` **must
-  not** call `_writer_approve_helper` directly.
-
-The `_schedule_act_on_writer` docstring is rewritten truthfully — the false "Never calls
-`_writer_approve_helper`" line is gone; step 6 states the crossing. The ADR-042 amendment (P5.1c-6)
-names the lift explicitly ("deliberately lifted … an **intentional lift, not a silent bypass**") and
-points at this test. The test is **no longer vacuous**: it fails if the COUNTDOWN spine is touched, if
-the helper is reached off the named path, or if the positive reach disappears. **The P5.1b-cyc3
-vacuous-test failure mode is closed.**
-
-## ADR amendments (P5.1c-6) — faithful
-
-All eight inscribed as brief annotation blocks, originals preserved: **ADR-041** D5 (the one authorized
-irreversible exception) + D10 ("the P5.1 wave closes with P5.1c"); **ADR-040** D3 (third caller,
-additive) + D4 (value-set widening; field-set pin byte-unchanged) + `RB-PIPELINE-EMAIL` ("heavier
-neighbour" crossing the reversibility line RB-AUTOFIRE held); **ADR-036** (HARD tier unchanged,
-allowlist enforced downstream, ADR-037 R9 unsandboxed warning intact); **ADR-005/013/027** (post-gate
-note, no logic change). RC-3 honored — ADR-043's own decision text is untouched.
-
-## Findings (0🔴 · 2🟡 — both need an architect routing call)
-
-### 🟡 Y1 — `PipelineEmailDryRunMeta` is not registered in `TYPED_METADATA`; the impl deviates from ADR-043 D6's named mechanism, un-surfaced
-
-**Evidence.** ADR-043 D6 (Accepted), plan P5.1c-4, and the absorbed **R0B-Y2** all state the dry-run
-meta is "**registered in `TYPED_METADATA` (`core/event.py:394`)** — structurally enforced, not
-convention-by-string." The impl does **not** register it: `event.py:428-431` leaves a NOTE, and
-structural typing is achieved by **callsite construction** — `PipelineEmailDryRunMeta(...).model_dump()`
-in `_record_email_dry_run`.
-
-**The deviation is technically correct — and effectively forced.** `validate_metadata()`
-(`event.py:534-553`) runs the registered schema against **every** event of that type at append.
-Registering `OBSERVATION → PipelineEmailDryRunMeta` would force **all** OBSERVATION events (runner
-output, MCP interpret — free-form metadata) to validate against it and **fail at append**. ADR-043 D6
-is internally contradictory: it asks for a strict global schema on OBSERVATION **and** "reuses the
-existing OBSERVATION event type (no new `EventType`)." Since a new `EventType` is rejected, callsite
-typed-construction is the only honest way to structurally type the preview while reusing OBSERVATION.
-The **R0B-Y2 intent is met** — the load-bearing dry-run evidence is a real Pydantic class, validated on
-write (construction) and round-trip-validated in `test_dry_run_records_observation_no_actuation` +
-`test_pipeline_email_dry_run_meta_schema`.
-
-**Why it still needs you.** (1) It is an **un-surfaced deviation from an Accepted ADR's named
-mechanism** on the honesty-crux slice — per "Surface, don't improvise," the junior should have halted on
-the D6 contradiction rather than silently substituting (good in-code NOTE notwithstanding).
-(2) **ADR-043 D6 text now contradicts the impl** ("registered in TYPED_METADATA" vs callsite
-validation); P5.1c-6 correctly left ADR-043's own decision text unedited (RC-3), so the contradiction is
-live. At the honesty crux, an Accepted ADR that names a mechanism the impl deliberately does not use is
-exactly the inscription-drift this slice must not carry.
-
-**Lean: α.** The impl approach should **stand** (it is correct, arguably more correct than D6 as
-written); absorb by amending **ADR-043 D6** text + the R0B-Y2 note to describe **callsite typed
-construction** (validated on write; OBSERVATION stays free-form/shared via the `event.py` NOTE) rather
-than global registration. This is an **ADR-043 decision-text amendment → architect-only** (RC-3); **no
-code change**. (β = leave D6 text as-is and accept the drift — weaker at this slice.)
-
-### 🟡 Y2 — the live recipient-eligibility gate omits ADR-043 D3's "both non-empty"; it diverges from the dry-run path that checks it
-
-**Evidence.** ADR-043 D3 (Accepted): actuate "iff its `to` matches the pinned recipient — a
-case-insensitive match (both sides lowercased), **both non-empty**; otherwise the pending keeps waiting
-(fail-closed)." The **live** gate checks only `pending_to.lower() != pinned.lower()`. When **both** are
-empty, `"" == ""` passes → it would actuate. The **dry-run** path computes
-`would_actuate = bool(pending_to and pinned and pending_to.lower() == pinned.lower())` — it **does**
-require both non-empty. So the live gate is (a) **less strict than ADR-043 D3** and (b) **inconsistent
-with the dry-run preview**, which is meant to be the faithful "what live would do" evidence.
-
-**Reachability.** Not exploitable through the supported surface: the opt-in endpoint requires
-`email_recipient: str = Field(min_length=1)` (422 on empty) and promote requires `email_enabled`, so an
-API-created live schedule always has a non-empty pinned recipient (→ an empty `pending_to` correctly
-mismatches and waits). Even out-of-band, the downstream `send_email` allowlist fail-closes on an empty
-`to`. So this is a **defense-in-depth + faithfulness + dry-run/live-consistency** gap, **not** a live
-exfil path.
-
-**Lean: α (small).** Mirror the dry-run guard in the live gate — actuate only when
-`pending_to and pinned and pending_to.lower() == pinned.lower()` — so the live gate matches ADR-043 D3
-"both non-empty" and the preview and live actuation can never diverge. One line, low risk. β (defer) is
-defensible given the compounded guards, but at the honesty crux closing the ADR-text gap is cheap.
-
-### 🟡 Y3 — the live branch is entered by negation (`!= "dry_run"`), not an explicit `== "live"` — fail-**open** on any unknown `email_mode`
-
-**Evidence.** The mode discrimination in `_actuate_pipeline_emails` is:
+The live branch is no longer entered by negation. `_actuate_pipeline_emails` now discriminates the
+mode **explicitly** (`app.py:670-687`):
 
 ```python
 if schedule.email_mode == "dry_run":
-    _record_email_dry_run(...)
-    continue
-# Live mode: eligibility gate ...   ← reached by ANY email_mode != "dry_run"
+    _record_email_dry_run(...); continue
+elif schedule.email_mode != "live":
+    # Unknown mode — fail-closed (ADR-043 D5: live requires email_mode explicitly set).
+    _log.debug("... unknown email_mode=%r ... skipping (fail-closed)", ...); continue
+# live mode falls through — reachable ONLY when email_mode == "live"
 ```
 
-So the **irreversible live-actuation branch is entered for every `email_mode` value that is not exactly
-`"dry_run"`** — `"live"`, but equally any unexpected value (`""`, `"LIVE"`, a future 4th state, a
-botched-migration default). For the **most dangerous branch in the product** this is **fail-open**:
-the safe posture is to actuate **only** on an explicit `== "live"` and treat any other value as
-non-actuating. ADR-043 D5 frames it exactly this way — "**LIVE** (`email_enabled=1`, `email_mode='live'`)"
-and "the dangerous state (live) requires *both* flags **explicitly set**." Entering live by *negating*
-`dry_run` is the opposite of "explicitly set."
+Any value that is neither `"dry_run"` nor exactly `"live"` (`""`, `"LIVE"`, a botched-migration
+default, a future 4th state) now **fails closed — no actuation, no observation**. This is the
+fail-closed-on-unknown posture ADR-043 D5 demands at the irreversible crossing.
 
-**Reachability.** Not exploitable today: `email_mode` is only ever written as `'dry_run'`
-(`set_schedule_email_optin` + the DDL default) or `'live'` (`promote_schedule_email_live`); there is no
-endpoint to set an arbitrary mode, so `!= "dry_run"` ≡ `== "live"` in practice. Like Y2, this is
-**defense-in-depth + faithfulness**, not a reachable exfil path — but it is the one anti-pattern the
-honesty crux most exists to forbid (the irreversible step taken on an *implied* rather than *explicit*
-signal).
+**Guard test is real, not vacuous** — `test_unknown_email_mode_does_not_actuate`
+(`test_pipeline_email_actuator.py:519`): opts a schedule in (`email_enabled=True`), then corrupts
+`email_mode` to `'bogus_unknown'` via direct UPDATE, appends a `send_email` pending whose `to`
+**matches** the pinned recipient (so the *only* thing preventing a send is the fail-closed branch),
+runs the actuator, asserts `0 TOOL_CALL` **and** `0 OBSERVATION`. Verified executed + passing
+(`4 passed` on the targeted run).
 
-**Lean: α (small).** Make **live** the explicitly-matched branch:
-`if email_mode == "dry_run": …record…; elif email_mode == "live": …actuate…; else: …log + skip (no
-send)…` — so an unknown mode fails **closed**. One small change; pairs naturally with Y2 (both tighten
-the same eligibility gate to ADR-043 D3/D5's fail-closed spec). β (accept, the store enforces the
-two-literal invariant) is defensible but weaker at this slice.
+### Y2 (live gate omits "both non-empty") — RESOLVED ✓
 
-> **Y2 + Y3 are the same theme** — the live eligibility gate is looser than ADR-043 D3/D5's fail-closed
-> spec in two independent ways (empty-recipient match; live-by-negation). Both are one-line tightenings,
-> neither API-reachable, and they are naturally absorbed together. Y1 is the only finding requiring an
-> Accepted-ADR text amendment (architect-only).
+The live eligibility gate (`app.py:689-691`) now reads:
 
-## Routing surface for the architect
+```python
+pending_to = str(meta.params.get("to", "")); pinned = schedule.email_recipient or ""
+if not (pending_to and pinned and pending_to.lower() == pinned.lower()): continue
+```
 
-| # | What | Lean | Your call |
-|---|---|---|---|
-| **Y1** | `PipelineEmailDryRunMeta` not in `TYPED_METADATA`; ADR-043 D6 mechanism infeasible-as-written; impl callsite-typed (correct) but un-surfaced; D6 text ↔ impl contradiction | **α** — amend ADR-043 D6 text + R0B-Y2 note (impl stands; architect-only ADR edit, no code change) | α / β |
-| **Y2** | live gate omits ADR-043 D3 "both non-empty"; diverges from dry-run `would_actuate` (not API-reachable) | **α (small)** — mirror the dry-run guard in the live gate | α / β |
-| **Y3** | live branch entered by `!= "dry_run"` (negation), not explicit `== "live"`; fail-open on unknown `email_mode`, contra ADR-043 D5 (not API-reachable) | **α (small)** — match `== "live"` explicitly; unknown → fail-closed (pairs with Y2) | α / β |
+This predicate is **byte-identical** to the dry-run path's `would_actuate` computation
+(`_record_email_dry_run`, `app.py:754`: `bool(pending_to and pinned and pending_to.lower() ==
+pinned.lower())`). The live gate and the dry-run preview now apply the same both-non-empty +
+case-insensitive rule and **cannot diverge** — closing the cycle-1 faithfulness/consistency gap. As
+noted cycle-1, both-empty remains structurally unreachable through the supported surface
+(`_EmailOptinRequest.email_recipient` is `Field(min_length=1)`), so this is a defense-in-depth +
+preview-fidelity tightening; the existing live-mismatch / case-insensitive / dry-run-mismatch tests
+(`test_live_mode_recipient_mismatch_stays_waiting`, `…case_insensitive_recipient_match`,
+`test_dry_run_would_actuate_false_on_mismatch`) continue to pin the shared predicate. (A dedicated
+both-empty-live test isn't added — acceptable: unreachable scenario, identical predicate already
+covered via the dry-run path.)
 
-No 🔴; nothing impossible; all gates green (ruff · mypy · pytest `EXIT=0`). The crossing's bounds —
-`send_email`-only literal + HARD-never test, default-OFF + dry-run-first, owner-pinned recipient,
-owner-attributed audit, at-most-once idempotency, byte-frozen gate/executor/COUNTDOWN spine — all hold.
-Both findings are honest-inscription / faithfulness items: exactly the routing calls this slice's
-honesty bar exists for.
+### Y1 (ADR-043 D6 mechanism infeasible-as-written) — RESOLVED ✓ (doc-only; no code change)
+
+`core/event.py` is **zero-diff this cycle** (confirmed — the cycle-2 delta does not touch it), so the
+correct callsite-typed-construction impl stands untouched, as routed. ADR-043 **D6 text is amended**
+to match the sound code: the false "**registered in `TYPED_METADATA`** (`core/event.py:394`) —
+structurally enforced" clause is replaced with a description of **callsite-typed construction**
+(actuator builds `PipelineEmailDryRunMeta(...)` + `model_dump()` on write; reader
+`model_validate()`s on read) **and** the shared-`OBSERVATION` infeasibility rationale (registering
+`OBSERVATION → PipelineEmailDryRunMeta` would force every free-form `OBSERVATION` — runner output, MCP
+interpret — to validate against it and fail at append; a new `EventType` is out of scope). The ADR
+now also points at the in-code NOTE. I verified that NOTE **genuinely exists** at
+`core/event.py:431-434` ("OBSERVATION is not globally registered here … enforced at callsites via
+explicit `PipelineEmailDryRunMeta.model_validate()` (ADR-043 D6)") — the ADR no longer describes a
+mechanism the code doesn't use, and it carries no stale `:394` line-ref. Faithful to the routed intent
+("make the ADR match the sound code").
+
+> **Inscription note for the Accept moment (not a finding).** The D6 fix is an **in-place edit of an
+> Accepted ADR's own decision text** (the infeasible clause is replaced, not annotation-preserved —
+> unlike the cycle-1 P5.1c-6 amendments to *other* ADRs, which were additive blocks preserving
+> originals). This is consistent with the routed intent (a factually-infeasible mechanism description
+> shouldn't be preserved verbatim), and the architect explicitly routed Y1 as α-doc — so it is
+> architect-directed, not self-routing (RC-3 honored). Flagging only so the architect **re-ratifies the
+> D6 body at Accept** and decides whether the Status line / amendment-history should log "D6 text
+> corrected at cycle-2 per impl-routing Y1" (currently the Status line is unchanged from the original
+> Accept).
+
+### 🟢→α cross-pipeline IDOR test — RESOLVED ✓ (the P5.1b A1 lesson)
+
+Three tests added (`test_schedule_endpoints.py`), one per email endpoint —
+`test_email_{optin,promote,disable}_cross_pipeline_idor_404`. Each creates **two pipelines under the
+same owner** (`_USER_A`), a schedule under `pipe_other`, then drives the email op via `pipe_self`'s URL
+with `pipe_other`'s `schedule_id` and asserts **404**. The same-owner construction isolates the
+**cross-pipeline** dimension specifically (not cross-user) — exactly the P5.1b A1 gap. I confirmed the
+endpoint guards the test pins genuinely exist: each handler does `if sched.pipeline_id != pipeline_id:
+raise HTTPException(404, …)` at **`app.py:2428` (optin) / `:2487` (promote) / `:2549` (disable)**,
+returning the same "not found" detail as the absent-schedule case (no existence leak). Guard + test
+both present.
+
+## Byte-frozen spine — re-confirmed (cycle-2 changed nothing here)
+
+The cycle-2 delta is confined to `_actuate_pipeline_emails` (+ADR +tests); I re-verified the full
+`origin/main...c658685` spine set regardless:
+
+- **Constitutional gate / executor** — no `autonomy/*.py`, no `tools/executor.py` in the diff →
+  `_execute_local_call` and the scoring/HARD-guard gate are byte-frozen. `tests/core/test_constitution.py`
+  is **not in the diff** → the HARD-never `send_email` field-set pin is untouched and still passes (full suite).
+- **COUNTDOWN spine** — `_countdown_sweeper` and `_discover_expired_pendings` extracted from both
+  refs and **`diff` is empty** (byte-identical); `run_pipeline` `countdown_auto_fire=None`
+  (`pipeline/runner.py`) **not in the diff**.
+- **Existing approve callers** — the `human` caller (`app.py:1653`) and the `auto_timer` caller
+  (inside the byte-identical `_countdown_sweeper`, `app.py:562`) are unchanged. The only spine-adjacent
+  edits remain the two **ratified** `Literal` widenings to admit `"auto_pipeline"`
+  (`_writer_approve_helper` signature + `ToolCallMeta.approval_source`) — the **mechanism ADR-043 D2
+  prescribes**, with the helper body and the `ToolCallMeta` field-set otherwise byte-unchanged. Not a
+  spine violation.
+- **No new routing `LLMPurpose`** — recipient is owner-config, not an LLM judgment; unchanged.
+
+## R0B-Y2 codegen overshoot — accepted as hygiene (per routing), not re-touched
+
+The routing accepted the cycle-1 whole-`/pipelines` openapi/`ui-schema` regeneration as zero-runtime
+hygiene (P5.1b whole-app codegen-lock precedent). Confirmed the cycle-2 delta does **not** re-touch
+`openapi.json` or `schema.ts` — no action taken, as routed. Nothing to re-review.
+
+## Gates — independent run (detached worktree @ c658685, `uv sync --all-extras`)
+
+- `uv run ruff check .` — **clean** ("All checks passed!").
+- `uv run ruff format --check` — 49 files "would reformat", but this is a **pre-existing repo backlog**:
+  `origin/main`'s `app.py` + `event.py` also fail it, and `ruff format --diff` wants to touch **none** of
+  the P5.1c-added lines (email-actuator region empty). **Zero new format debt**; `ruff check` (the
+  canonical lint gate) is the enforced one and is clean.
+- `uv run mypy` (strict; `files=src,tests`) — **clean** ("no issues found in **305** source files");
+  matches cycle-1. *(Note: `mypy .` trips the known `plugins/` duplicate-module collision — out of
+  canonical scope; the no-arg invocation is the gate.)*
+- `uv run pytest` — **2459 passed (EXIT=0)**, full suite, 385s. The lone stderr line ("Exception in
+  thread … `test_net_trust.py` … `network_timeout`") is **pre-existing noise** — a by-design hung-DNS
+  daemon-thread timeout; `net_trust.py` is not in this diff and the suite exit is 0. The 4 cycle-2
+  tests re-run clean independently (`4 passed`).
+
+## Verdict — clean
+
+All three cycle-1 🟡 (Y1 D6-text, Y2 both-non-empty, Y3 fail-closed) and the 🟢→α cross-pipeline IDOR
+test are resolved exactly as routed; the rework is confined to the routed surface; the byte-frozen set
+(gate · `_execute_local_call` · COUNTDOWN spine · `run_pipeline` `countdown_auto_fire=None` · existing
+`human`/`auto_timer` callers · constitutional field-set pin) is intact; gates are green on an
+independent run; cycle-2 introduces **0🔴 · 0🟡**. From the R0-A lens the honesty-crux crossing is
+ready to Accept. The one Accept-moment item is non-blocking: the architect re-ratifies the in-place
+**ADR-043 D6** decision-text edit (Y1) and decides whether to log it in the Status/amendment-history.
