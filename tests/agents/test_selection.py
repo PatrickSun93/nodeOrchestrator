@@ -624,3 +624,98 @@ def test_mcp_tool_result_excluded_observation_rendered_fix1() -> None:
     assert "NOT instructions" in full_system, (
         f"Untrusted-framing header must be in system prompt. Got: {full_system[:500]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# P6.1-B1: untrusted TOOL_FAILED excluded from excerpt (fail-on-revert test)
+# ADR-034 D3-iv / ADR-035 D3-iii — the exclusion set covers TOOL_FAILED too.
+# ---------------------------------------------------------------------------
+
+
+def test_untrusted_tool_failed_excluded_trusted_local_rendered_p6b1() -> None:
+    """Fail-on-revert (contributing.md Q5) for P6.1-B1.
+
+    Assertion 1 (must FAIL if selection.py is reverted to TOOL_RESULT-only):
+      An untrusted TOOL_CALL (mcp__ prefix) + its correlated TOOL_FAILED
+      carrying a unique marker → the rendered excerpt must NOT contain the marker.
+
+    Assertion 2 (guards against over-broad blanket exclusion):
+      A trusted-local TOOL_CALL + its correlated TOOL_FAILED carrying a marker
+      → the rendered excerpt MUST contain the marker (trusted-local failure
+      signal stays visible per ADR-033 D2 turn-loop semantics).
+    """
+    from orchestrator.agents.selection import _render_snapshot_excerpt
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        ToolResultMeta,
+        generate_event_id,
+        generate_room_id,
+        now_ms,
+    )
+
+    room_id = generate_room_id()
+    mcp_call_id = "mcp-fail-call-p6b1"
+    trusted_call_id = "trusted-fail-call-p6b1"
+    untrusted_marker = "UNTRUSTED_TOOL_FAILED_MARKER_P6B1"
+    trusted_marker = "TRUSTED_TOOL_FAILED_MARKER_P6B1"
+
+    ts = now_ms()
+
+    # Untrusted: mcp__ TOOL_CALL + its correlated TOOL_FAILED.
+    untrusted_tc = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.TOOL_CALL,
+        author="agent:a",
+        timestamp=ts,
+        content="{}",
+        metadata={"tool_name": "mcp__evil__exfil", "call_id": mcp_call_id},
+    )
+    untrusted_tf = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.TOOL_FAILED,
+        author="agent:a",
+        timestamp=ts,
+        content=untrusted_marker,
+        metadata=ToolResultMeta(call_id=mcp_call_id, success=False).model_dump(),
+    )
+
+    # Trusted-local: non-mcp__, non-subprocess, non-network TOOL_CALL + its TOOL_FAILED.
+    trusted_tc = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.TOOL_CALL,
+        author="agent:a",
+        timestamp=ts,
+        content="{}",
+        metadata={"tool_name": "read_file", "call_id": trusted_call_id},
+    )
+    trusted_tf = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.TOOL_FAILED,
+        author="agent:a",
+        timestamp=ts,
+        content=trusted_marker,
+        metadata=ToolResultMeta(call_id=trusted_call_id, success=False).model_dump(),
+    )
+
+    snapshot = [untrusted_tc, untrusted_tf, trusted_tc, trusted_tf]
+    excerpt = _render_snapshot_excerpt(snapshot)
+
+    assert excerpt is not None, "excerpt must be non-None (trusted TOOL_FAILED must render)"
+
+    # Assertion 1 — fails on revert: untrusted TOOL_FAILED must be excluded.
+    assert untrusted_marker not in excerpt, (
+        f"Untrusted mcp__ TOOL_FAILED must NOT appear in excerpt (P6.1 B1). "
+        f"If this assertion fails, the selection.py exclusion predicate was "
+        f"reverted to TOOL_RESULT-only. Got excerpt: {excerpt[:500]}"
+    )
+
+    # Assertion 2 — guards against over-broad exclusion: trusted TOOL_FAILED must render.
+    assert trusted_marker in excerpt, (
+        f"Trusted-local TOOL_FAILED MUST appear in excerpt (ADR-033 D2 failure signal). "
+        f"B-β posture (blanket exclusion) is rejected. Got excerpt: {excerpt[:500]}"
+    )
