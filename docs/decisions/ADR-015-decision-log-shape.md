@@ -95,6 +95,8 @@ Sort key: `(entry.timestamp, entry.event_id)` ascending. **No reordering for "im
 - **P1.5+ async-reshape** introduces concurrent dispatch → multiple agents may emit decisions at the same ms (ADR-011 D1 reserves this re-shape). If causal/insertion ordering becomes load-bearing for DecisionLog consumers (e.g., dependency graphs across same-ms decisions), revisit via ADR-015 amendment toward rowid-based ordering. The amendment would need to revisit D1 (pure function) — likely by passing rowid as a derived field on Event (caller-pre-fetched).
 - **Cross-room memory promotion logic** (P1.6.5/P1.7 per `handoff.md` §4.5 deferred) may add insertion-order-dependent semantics; revisit at that ADR.
 
+**[P6.1 A-i note]** Precondition re-reviewed at P6.1 (ADR-030's position-anchored scan does not invalidate it); the derived `(timestamp, id)` lex order stands as the inscribed decision; the store's `(timestamp, rowid)` order is unchanged; rowid-on-Event migration remains a future amendment, not opened here.
+
 ### 5. Consumer protocol: query event_store + derive; no persistence
 
 Consumers retrieve DecisionLog via:

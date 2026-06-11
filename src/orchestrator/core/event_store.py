@@ -358,9 +358,11 @@ class EventStore:
     def get_room_events(self, room_id: RoomId) -> list[Event]:
         """Return all events in a room.
 
-        Ordered by `(timestamp ASC, id ASC)` — deterministic across
-        events at the same millisecond. Index `idx_events_room_ts_id`
-        covers this query end-to-end (no sort step).
+        Ordered by `(timestamp ASC, rowid ASC)` — rowid (implicit
+        B-tree key) is the insertion-order tie-breaker for events that
+        share a millisecond timestamp (see schema comment at line 69).
+        Index `idx_events_room_ts` on `(room_id, timestamp)` covers
+        the room filter and timestamp ordering.
 
         Returns ``[]`` if the room has no events OR if the room does
         not exist. The empty case is legitimate (a freshly created
