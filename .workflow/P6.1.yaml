@@ -1,7 +1,7 @@
 task_id: P6.1
-state: awaiting_brief
+state: awaiting_senior_plan
 cycle: 1
-last_transition_at: '2026-06-11T06:47:51.705493Z'
+last_transition_at: '2026-06-11T06:59:33.853627Z'
 cycle_started_at: '2026-06-11T06:47:51.705493Z'
 override_history: []
 requires_cross_family_review: true
