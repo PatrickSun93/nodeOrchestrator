@@ -1,8 +1,8 @@
 task_id: P5.1c
-state: awaiting_architect_decision
-cycle: 1
-last_transition_at: '2026-06-11T00:12:45.206896Z'
-cycle_started_at: '2026-06-10T21:14:14.871153Z'
+state: awaiting_junior_impl
+cycle: 2
+last_transition_at: '2026-06-11T05:45:03.101459Z'
+cycle_started_at: '2026-06-11T05:45:03.101459Z'
 override_history:
 - timestamp: '2026-06-10T21:56:18.928328Z'
   actor: architect
@@ -15,4 +15,20 @@ override_history:
     senior has not yet absorbed the plan-stage routing. Status prose reworded (656a76c);
     restoring to awaiting_architect_accept so the proper flow runs: senior absorbs
     routing → architect Accepts ADR-043 → advance to junior.'
+- timestamp: '2026-06-11T05:44:59.391176Z'
+  actor: architect
+  from_state: awaiting_senior_revision
+  to_state: awaiting_architect_decision
+  reason: 3 impl reviews needs_architect (Y1 TYPED_METADATA doc / Y2 both-non-empty
+    / Y3 fail-open + cross-pipeline IDOR test); architect routing all-α in architect-routing-on-impl.md.
+    Taking the documented impl-rework override path.
+- timestamp: '2026-06-11T05:45:03.101459Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 all-α impl rework: Y1 amend ADR-043 D6 text (callsite-enforcement,
+    no code), Y3 live branch == ''live'' fail-closed + test, Y2 live gate both-non-empty,
+    add cross-pipeline IDOR test on email endpoints; R0B-Y2 codegen accepted as hygiene.
+    No spine change, no further ADR amendment. See architect-routing-on-impl.md; rework
+    on branch claude/P5.1c-impl.'
 requires_cross_family_review: true
