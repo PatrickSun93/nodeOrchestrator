@@ -676,11 +676,19 @@ def _actuate_pipeline_emails(
                 schedule=schedule,
             )
             continue
+        elif schedule.email_mode != "live":
+            # Unknown mode — fail-closed (ADR-043 D5: live requires email_mode explicitly set).
+            _log.debug(
+                "pipeline-email: unknown email_mode=%r for pending %s — skipping (fail-closed)",
+                schedule.email_mode,
+                evt.id,
+            )
+            continue
 
-        # Live mode: eligibility gate — recipient case-insensitive match.
+        # Live mode: eligibility gate — both non-empty + case-insensitive match (ADR-043 D3/D5).
         pending_to = str(meta.params.get("to", ""))
         pinned = schedule.email_recipient or ""
-        if pending_to.lower() != pinned.lower():
+        if not (pending_to and pinned and pending_to.lower() == pinned.lower()):
             _log.debug(
                 "pipeline-email: recipient mismatch for pending %s in room %s "
                 "(pending_to=%r, pinned=%r) — leaving pending",

@@ -509,3 +509,51 @@ def test_pipeline_email_dry_run_meta_schema() -> None:
     dumped = meta.model_dump()
     restored = PipelineEmailDryRunMeta.model_validate(dumped)
     assert restored == meta
+
+
+# ---------------------------------------------------------------------------
+# Y3: unknown email_mode fails closed — no actuation (ADR-043 D5)
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_email_mode_does_not_actuate(ctx: AppContext) -> None:
+    """An unknown email_mode value must not actuate (fail-closed, ADR-043 D5)."""
+    pipe_id = _make_pipeline(ctx)
+    # Build a schedule manually in an unknown mode by patching the record directly.
+    rec = create_schedule(
+        ctx.writer_store.conn,
+        pipeline_id=pipe_id,
+        owner_user_id=_USER,
+        kind="interval",
+        expr="60",
+        next_fire=_NOW - 1,
+    )
+    # First opt-in to set email_enabled=True, then manually corrupt email_mode.
+    set_schedule_email_optin(ctx.writer_store.conn, rec.schedule_id, recipient=_RECIPIENT)
+    ctx.writer_store.conn.execute(
+        "UPDATE pipeline_schedules SET email_mode = 'bogus_unknown' WHERE schedule_id = ?",
+        (rec.schedule_id,),
+    )
+    ctx.writer_store.conn.commit()
+
+    from orchestrator.pipeline.store import get_schedule
+
+    schedule = get_schedule(ctx.writer_store.conn, rec.schedule_id)
+    assert schedule is not None
+    assert schedule.email_enabled is True
+    assert schedule.email_mode == "bogus_unknown"
+
+    room_id = _make_room(ctx)
+    _append_send_email_pending(ctx, room_id, to=_RECIPIENT)
+
+    loop = asyncio.new_event_loop()
+    try:
+        _actuate_pipeline_emails(ctx, schedule, room_id, loop=loop)
+    finally:
+        loop.close()
+
+    events = ctx.writer_store.get_room_events(room_id)
+    tool_calls = [e for e in events if e.type == EventType.TOOL_CALL]
+    assert len(tool_calls) == 0, "unknown email_mode must not actuate (fail-closed)"
+    observations = [e for e in events if e.type == EventType.OBSERVATION]
+    assert len(observations) == 0, "unknown email_mode must not record observation"

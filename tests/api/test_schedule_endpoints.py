@@ -542,3 +542,62 @@ def test_schedule_response_includes_email_fields(
         items = r2.json()
         assert len(items) == 1
         assert items[0]["email_enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# P5.1c: cross-pipeline IDOR for email endpoints (P5.1b A1 lesson, ADR-043 D5)
+# ---------------------------------------------------------------------------
+
+
+def test_email_optin_cross_pipeline_idor_404(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """A1 lesson: email-optin with schedule from another pipeline → 404 (IDOR guard)."""
+    pipe_self = _make_pipeline(sched_ctx)
+    pipe_other = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        # Create schedule under pipe_other
+        sid_other = c.post(
+            f"/pipelines/{pipe_other}/schedules", json={"kind": "interval", "expr": "60"}
+        ).json()["schedule_id"]
+        # Attempt to email-optin using pipe_self's URL but pipe_other's schedule_id
+        resp = c.post(
+            f"/pipelines/{pipe_self}/schedules/{sid_other}/email-optin",
+            json={"email_recipient": "alice@example.com"},
+        )
+    assert resp.status_code == 404
+
+
+def test_email_promote_cross_pipeline_idor_404(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """A1 lesson: email-promote with schedule from another pipeline → 404 (IDOR guard)."""
+    pipe_self = _make_pipeline(sched_ctx)
+    pipe_other = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        sid_other = c.post(
+            f"/pipelines/{pipe_other}/schedules", json={"kind": "interval", "expr": "60"}
+        ).json()["schedule_id"]
+        # Opt in under the correct pipeline first so the schedule is eligible for promote
+        c.post(
+            f"/pipelines/{pipe_other}/schedules/{sid_other}/email-optin",
+            json={"email_recipient": "alice@example.com"},
+        )
+        # Now try to promote using the wrong pipeline URL
+        resp = c.post(f"/pipelines/{pipe_self}/schedules/{sid_other}/email-promote")
+    assert resp.status_code == 404
+
+
+def test_email_disable_cross_pipeline_idor_404(
+    sched_app: FastAPI, sched_ctx: AppContext
+) -> None:
+    """A1 lesson: email-disable with schedule from another pipeline → 404 (IDOR guard)."""
+    pipe_self = _make_pipeline(sched_ctx)
+    pipe_other = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        sid_other = c.post(
+            f"/pipelines/{pipe_other}/schedules", json={"kind": "interval", "expr": "60"}
+        ).json()["schedule_id"]
+        # Attempt to email-disable using pipe_self's URL but pipe_other's schedule_id
+        resp = c.post(f"/pipelines/{pipe_self}/schedules/{sid_other}/email-disable")
+    assert resp.status_code == 404
