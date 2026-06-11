@@ -571,6 +571,494 @@
           }
         }
       }
+    },
+    "/pipelines": {
+      "get": {
+        "summary": " List Pipelines",
+        "description": "List pipelines owned by the current principal (owner-private).",
+        "operationId": "_list_pipelines_pipelines_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/_PipelineResponse"
+                  },
+                  "type": "array",
+                  "title": "Response  List Pipelines Pipelines Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": " Create Pipeline",
+        "description": "Create a new pipeline definition. owner_user_id captured from principal.",
+        "operationId": "_create_pipeline_pipelines_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_PipelineCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PipelineResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pipelines/{pipeline_id}": {
+      "get": {
+        "summary": " Get Pipeline",
+        "description": "Get a single pipeline definition (owner-private \u2014 403 for non-owner).",
+        "operationId": "_get_pipeline_pipelines__pipeline_id__get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PipelineResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pipelines/{pipeline_id}/run": {
+      "post": {
+        "summary": " Run Pipeline",
+        "description": "Trigger a manual pipeline run (owner-private \u2014 403 for non-owner).\n\nRuns synchronously on writer_executor (mirrors _write_and_turn).\nA pipeline_runs index row is written (T2).",
+        "operationId": "_run_pipeline_pipelines__pipeline_id__run_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PipelineRunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pipelines/{pipeline_id}/schedules": {
+      "post": {
+        "summary": " Create Schedule",
+        "description": "Create a schedule for a pipeline (owner-private; 403 for non-owner).\n\n``kind=cron`` is rejected with 422 (deferred \u2014 ADR-042 D3 Y1 routing).",
+        "operationId": "_create_schedule_pipelines__pipeline_id__schedules_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ScheduleCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ScheduleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": " List Schedules",
+        "description": "List schedules for a pipeline (owner-private).",
+        "operationId": "_list_schedules_pipelines__pipeline_id__schedules_get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/_ScheduleResponse"
+                  },
+                  "title": "Response  List Schedules Pipelines  Pipeline Id  Schedules Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pipelines/{pipeline_id}/schedules/{schedule_id}": {
+      "delete": {
+        "summary": " Delete Schedule",
+        "description": "Delete a schedule (owner-private).",
+        "operationId": "_delete_schedule_pipelines__pipeline_id__schedules__schedule_id__delete",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          },
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": " Patch Schedule",
+        "description": "Enable or disable a schedule (owner-private).\n\nOn re-enable, recomputes next_fire from now so a long-disabled schedule\ndoes not fire immediately.",
+        "operationId": "_patch_schedule_pipelines__pipeline_id__schedules__schedule_id__patch",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          },
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ScheduleEnableRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ScheduleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-optin": {
+      "post": {
+        "summary": " Schedule Email Optin",
+        "description": "Opt a schedule into headless email (\u2192 dry-run state, owner-private, ADR-043 D5/D6).",
+        "operationId": "_schedule_email_optin_pipelines__pipeline_id__schedules__schedule_id__email_optin_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          },
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ScheduleEmailOptinRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ScheduleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-promote": {
+      "post": {
+        "summary": " Schedule Email Promote",
+        "description": "Promote email opt-in dry-run \u2192 live (explicit second action, ADR-043 D6).",
+        "operationId": "_schedule_email_promote_pipelines__pipeline_id__schedules__schedule_id__email_promote_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          },
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ScheduleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-disable": {
+      "post": {
+        "summary": " Schedule Email Disable",
+        "description": "Disable email opt-in for a schedule (\u2192 OFF state, owner-private, ADR-043 D5).",
+        "operationId": "_schedule_email_disable_pipelines__pipeline_id__schedules__schedule_id__email_disable_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          },
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ScheduleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1213,6 +1701,152 @@
         "title": "_LogoutResponse",
         "description": "Response body for POST /logout (ADR-039 D3). Documents OpenAPI contract."
       },
+      "_PipelineCreateRequest": {
+        "properties": {
+          "sources": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "analysis_prompts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Analysis Prompts"
+          },
+          "output_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Output Config",
+            "default": {}
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sources",
+          "analysis_prompts"
+        ],
+        "title": "_PipelineCreateRequest",
+        "description": "Request body for POST /pipelines.\n\nextra=forbid: forge guard (mirrors _LoginRequest).\nowner_user_id is NOT accepted from the body \u2014 it is derived server-side\nfrom request.state.principal (ADR-039 D1)."
+      },
+      "_PipelineResponse": {
+        "properties": {
+          "pipeline_id": {
+            "type": "string",
+            "title": "Pipeline Id"
+          },
+          "owner_user_id": {
+            "type": "string",
+            "title": "Owner User Id"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "created_at": {
+            "type": "integer",
+            "title": "Created At"
+          },
+          "sources": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Sources"
+          },
+          "analysis_prompts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Analysis Prompts"
+          },
+          "output_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Output Config"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pipeline_id",
+          "owner_user_id",
+          "enabled",
+          "created_at",
+          "sources",
+          "analysis_prompts",
+          "output_config"
+        ],
+        "title": "_PipelineResponse",
+        "description": "Response for a single pipeline definition."
+      },
+      "_PipelineRunResponse": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "pipeline_id": {
+            "type": "string",
+            "title": "Pipeline Id"
+          },
+          "succeeded": {
+            "type": "boolean",
+            "title": "Succeeded"
+          },
+          "sources_read": {
+            "type": "integer",
+            "title": "Sources Read"
+          },
+          "branches_succeeded": {
+            "type": "integer",
+            "title": "Branches Succeeded"
+          },
+          "branches_failed": {
+            "type": "integer",
+            "title": "Branches Failed"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "room_id",
+          "pipeline_id",
+          "succeeded",
+          "sources_read",
+          "branches_succeeded",
+          "branches_failed",
+          "summary",
+          "error"
+        ],
+        "title": "_PipelineRunResponse",
+        "description": "Response for POST /pipelines/{id}/run."
+      },
       "_PluginInfo": {
         "properties": {
           "plugin_id": {
@@ -1277,6 +1911,127 @@
         "type": "object",
         "title": "_PluginWriteResponse",
         "description": "Response for all plugin write operations (boot-only; ADR-038 D2 / DP1a)."
+      },
+      "_ScheduleCreateRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "expr": {
+            "type": "string",
+            "title": "Expr"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "expr"
+        ],
+        "title": "_ScheduleCreateRequest",
+        "description": "Request body for POST /pipelines/{id}/schedules.\n\nextra=forbid: forge guard.  owner_user_id is NOT accepted from the body \u2014\nit is derived server-side from request.state.principal (ADR-039 D1)."
+      },
+      "_ScheduleEmailOptinRequest": {
+        "properties": {
+          "email_recipient": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Email Recipient"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email_recipient"
+        ],
+        "title": "_ScheduleEmailOptinRequest",
+        "description": "Request body for POST /pipelines/{id}/schedules/{sid}/email-optin (ADR-043 D5)."
+      },
+      "_ScheduleEnableRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "_ScheduleEnableRequest",
+        "description": "Request body for PATCH /pipelines/{id}/schedules/{sid}."
+      },
+      "_ScheduleResponse": {
+        "properties": {
+          "schedule_id": {
+            "type": "string",
+            "title": "Schedule Id"
+          },
+          "pipeline_id": {
+            "type": "string",
+            "title": "Pipeline Id"
+          },
+          "owner_user_id": {
+            "type": "string",
+            "title": "Owner User Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "expr": {
+            "type": "string",
+            "title": "Expr"
+          },
+          "next_fire": {
+            "type": "integer",
+            "title": "Next Fire"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "created_at": {
+            "type": "integer",
+            "title": "Created At"
+          },
+          "email_enabled": {
+            "type": "boolean",
+            "title": "Email Enabled",
+            "default": false
+          },
+          "email_mode": {
+            "type": "string",
+            "title": "Email Mode",
+            "default": "dry_run"
+          },
+          "email_recipient": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Recipient"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schedule_id",
+          "pipeline_id",
+          "owner_user_id",
+          "kind",
+          "expr",
+          "next_fire",
+          "enabled",
+          "created_at"
+        ],
+        "title": "_ScheduleResponse",
+        "description": "Response for a single schedule record (ADR-042 D9 / ADR-043 D5)."
       }
     }
   }

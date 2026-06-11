@@ -51,6 +51,12 @@ The **gate decision logic is byte-frozen** — `score`/`decide_tier`/`emit_gate_
 
 ### D3. Auto-fire actuation — reuse the confirm-actuate closure (DP2 = (a))
 
+> **P5.1c amendment (ADR-043 D2):** `_writer_approve_helper` gains a **third caller** —
+> the pipeline-email actuator (`_actuate_pipeline_emails`) — with `approval_source=
+> "auto_pipeline"` and `approver_user_id=schedule.owner_user_id`. This is additive: the
+> existing two callers (`"human"` / `"auto_timer"`) are behavior-identical. ADR-040 D4
+> anticipated this ("additive `approval_source` markers").
+
 `_post_confirm`'s approve path is **extracted into a shared writer helper** called by **both** the HTTP confirm handler and the sweeper, **both on `writer_executor`**:
 
 - **The extraction span is steps 2–5 of the approve path (`app.py` `~:769-865` minus the cancel branch)** — the **room-state gate** (closed-room rejection, `:769-771`) + the **position-anchored still-pending check** (`:791-799`) + the agent-authored **reconstruct** (`:830-843`) + **execute** (`:849-858`) + **bus-publish** (`:863-864`), **all on the single writer**. The two guards (room-state + still-pending) **must be inside the helper**, not left in the HTTP handler — the sweeper discovers on the *reader* path (necessarily stale: a human may cancel/approve in the gap between discovery and the writer append), so the **writer-side still-pending re-check is the sole TOCTOU guard**, and the closed-room rejection is only *inherited* (DP3 "no new mechanism") if it lives in the shared helper. Extracting a reconstruct-only helper (the post-`:826` tail) would force the sweeper to **re-implement** both guards — duplicated mechanism, a Lens-B regression.
@@ -68,6 +74,13 @@ The `TOOL_CALL` stays `agent:<initiating_agent>`-authored (the gate approved *th
 
 - **`approver_user_id` stays `None`** for an auto-fire (no human approved) — but `None` alone collides with the pre-P4.5 legacy `None`, so silence would **under-record the single most security-relevant fact of this slice**.
 - **An explicit positive marker** is added: `approval_source: Literal["human", "auto_timer"] | None = None` on `ToolCallMeta` (additive nullable). The HTTP confirm path sets `"human"`; the sweeper sets `"auto_timer"`; pre-existing events read `None`. The audit then reads **"executed BY TIMER, no human approver"** — never an ambiguous null.
+
+> **P5.1c amendment (ADR-043 D2):** `approval_source` gains a third literal value
+> `"auto_pipeline"` (additive, same pattern as above). The pipeline-email actuator sets
+> `approval_source="auto_pipeline"` + `approver_user_id=schedule.owner_user_id` (the
+> owner's config-time standing authorization is the actuation authority — ADR-043 D3/D6).
+> The field-set constitutional pin (`test_constitution.py:281-287`) stays byte-unchanged:
+> P5.1c widens the Literal *value set*, not the *field set* (ADR-043 D2 / R0A-Y2).
 
 **Rejected:** a sentinel principal (`approver_user_id = "system:countdown-timer"`) — `approver_user_id` is a bare `<user_id>` field (ADR-039 D1 namespace); a non-user sentinel pollutes it and could confuse a future role/authz consumer. The marker lives in a **distinct** field.
 
@@ -140,6 +153,17 @@ This reads as honestly as `RB-FS/NET` and `RB-AUTHZ` did — the deliberate weak
 > applies a *pre-gated, pre-approved pending*; `RB-PIPELINE-SCHED` starts a new
 > *reversible* run. `countdown_auto_fire=None` in every scheduled run ensures the two
 > residuals are categorically separate (ADR-041 D5 / ADR-042 D6).
+
+### P5.1c annotation (ADR-043 / `RB-PIPELINE-EMAIL`)
+
+> **`RB-PIPELINE-EMAIL`** (ADR-043 / P5.1c) is the **heavier neighbor** that crosses the
+> reversibility line `RB-AUTOFIRE` held. `RB-AUTOFIRE` *refused* irreversibility (its
+> reversibility floor blocked `send_email`); `RB-PIPELINE-EMAIL` is the **one place in
+> the product allowed to cross that line** — sending an irreversible external email
+> headless. Bounded by: scheduled-run-only (ADR-043 D1); `send_email`-only literal
+> constant (D4); opt-in default OFF, dry-run-first, promote-to-live explicit second action
+> (D5/D6); owner-config-pinned recipient case-insensitively matched (D3); owner-attributed
+> audit trail (D6). The gate, executor, and COUNTDOWN spine are byte-frozen across P5.1c.
 
 ## Considered alternatives
 

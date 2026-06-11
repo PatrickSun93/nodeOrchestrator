@@ -104,6 +104,19 @@ trivial scaffolding to keep the load-bearing path byte-untouched: **spine-untouc
 for trivial control flow). A bug in schedule logic therefore **cannot** regress auto-fire
 idempotency, because the two sweepers share zero code.
 
+> **P5.1c amendment (ADR-043 D2/D8):** The "never calls `_writer_approve_helper`"
+> isolation stated above is **deliberately lifted** for the email actuator in P5.1c.
+> `_schedule_act_on_writer` now calls `_actuate_pipeline_emails` (a **dedicated, separate
+> function**) as a post-run step (step 6), and `_actuate_pipeline_emails` calls
+> `_writer_approve_helper` — but **only for `send_email`** and **only when the schedule
+> is opted-in and promoted to live**. The COUNTDOWN spine (`_countdown_sweeper` /
+> `_discover_expired_pendings`) stays genuinely uncalled. This is an **intentional lift,
+> not a silent bypass**: the isolation test is rewritten honestly in P5.1c-5 to reflect
+> the actual invariant (COUNTDOWN spine forbidden; positive pin that the sole new
+> actuation reach is `_actuate_pipeline_emails`). Additionally, `pipeline_schedules` gains
+> three email opt-in columns (`email_enabled`, `email_mode`, `email_recipient`) via a
+> guarded `ALTER TABLE ADD COLUMN` (ADR-043 D5).
+
 **Rejected — (a) generalize the ADR-040 sweeper into one `Scheduler`:** DRY, but couples
 two unlike concerns onto spine-critical code and risks regressing the auto-fire spine under
 a refactor (a Lens-B hazard). **Rejected — (c) external scheduler** (cron/APScheduler/

@@ -162,3 +162,7 @@ Execute the tool synchronously inside `process_tool_calls` when tier is `AUTO_EX
 - `src/orchestrator/llm/parsers/claude_code_output.py:89-108` — pre-investigation cite for D5.
 - `src/orchestrator/agents/dispatch.py:117-127` — the location where pre-investigation found `response.tool_calls` discarded (the absent wiring that this ADR addresses).
 - Implementation lands on `claude/P1.5.5-impl` post-Accept; ADR text lands on `claude/P1.5.5-plan`.
+- **P5.1c note (ADR-043):** Operator tool dispatch and the gate logic are byte-frozen
+  across P5.1c. The pipeline-email actuator is a post-gate actuation-authorization layer —
+  it acts after `process_tool_calls` has already produced a `TOOL_CALL_PENDING`, never
+  changing the tier decision. See ADR-043 for the crossing design.

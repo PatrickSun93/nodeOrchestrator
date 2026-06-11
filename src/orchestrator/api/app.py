@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.agents.dispatch import LLMRouterProtocol
 from orchestrator.agents.loader import load_agents
@@ -79,6 +79,8 @@ from orchestrator.tools.executor import LocalToolRegistry, execute_pending_tool_
 from orchestrator.tools.local import build_local_tool_registry
 
 if TYPE_CHECKING:
+    from orchestrator.core.event import ToolCallPendingMeta
+    from orchestrator.pipeline.schema import PipelineScheduleRecord
     from orchestrator.plugins.provenance import PluginRegistry, _RegistryRefuseAll
     from orchestrator.sandbox.posture import PostureResolver
 
@@ -354,7 +356,7 @@ class _ScheduleCreateRequest(BaseModel):
 
 
 class _ScheduleResponse(BaseModel):
-    """Response for a single schedule record."""
+    """Response for a single schedule record (ADR-042 D9 / ADR-043 D5)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -366,6 +368,9 @@ class _ScheduleResponse(BaseModel):
     next_fire: int
     enabled: bool
     created_at: int
+    email_enabled: bool = False
+    email_mode: str = "dry_run"
+    email_recipient: str | None = None
 
 
 class _ScheduleEnableRequest(BaseModel):
@@ -376,11 +381,19 @@ class _ScheduleEnableRequest(BaseModel):
     enabled: bool
 
 
+class _ScheduleEmailOptinRequest(BaseModel):
+    """Request body for POST /pipelines/{id}/schedules/{sid}/email-optin (ADR-043 D5)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    email_recipient: str = Field(min_length=1)
+
+
 def _writer_approve_helper(
     ctx: AppContext,
     rid: RoomId,
     pending_event_id: str,
-    approval_source: Literal["human", "auto_timer"],
+    approval_source: Literal["human", "auto_timer", "auto_pipeline"],
     approver_user_id: str | None,
     loop: asyncio.AbstractEventLoop,
 ) -> _ApproveOk | _ApproveSkipped | _ApproveFailed:
@@ -597,14 +610,185 @@ def _discover_due_schedules(
     return [r.schedule_id for r in records]
 
 
+# The one tool the pipeline-email actuator is allowed to headlessly actuate (ADR-043 D4).
+_PIPELINE_EMAIL_TOOL = "send_email"
+
+
+def _actuate_pipeline_emails(
+    ctx: AppContext,
+    schedule: PipelineScheduleRecord,
+    run_room_id: RoomId,
+    *,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Discover and actuate send_email pendings in a scheduled run's room (ADR-043 D2/D3/D4).
+
+    Runs on the writer executor after run_pipeline + create_pipeline_run succeed.
+    Returns immediately if email_enabled=False (OFF never touches pendings).
+
+    Discovery is a dedicated scan — does NOT reuse _discover_expired_pendings
+    (byte-frozen, keys on expires_at); this scan keys on tool_name == _PIPELINE_EMAIL_TOOL
+    and never reads/writes expires_at.
+
+    Eligibility gate (all must hold to actuate):
+      - tool_name == _PIPELINE_EMAIL_TOOL
+      - schedule.email_mode == 'live'
+      - pending to matches pinned recipient, case-insensitively (both sides lowercased)
+
+    In dry-run mode: records a typed PipelineEmailDryRunMeta OBSERVATION; does NOT actuate.
+    Ineligible pendings (mismatch, not-live) are left waiting — no mutation.
+    """
+    if not schedule.email_enabled:
+        return
+
+    from orchestrator.core.event import EventType, ToolCallPendingMeta
+
+    all_events = ctx.writer_store.get_room_events(run_room_id)
+    sorted_events = sorted(all_events, key=lambda e: (e.timestamp, e.id))
+
+    # Build set of resolved call_ids (already have a TOOL_CALL/TOOL_RESULT/TOOL_CALL_CANCELLED).
+    resolved_call_ids: set[str] = set()
+    for evt in sorted_events:
+        if evt.type in PENDING_RESOLUTION_TYPES:
+            cid = str(evt.metadata.get("call_id", ""))
+            if cid:
+                resolved_call_ids.add(cid)
+
+    for evt in sorted_events:
+        if evt.type != EventType.TOOL_CALL_PENDING:
+            continue
+        try:
+            meta = ToolCallPendingMeta.model_validate(evt.metadata)
+        except Exception:
+            continue
+        if meta.tool_name != _PIPELINE_EMAIL_TOOL:
+            continue
+        if meta.call_id in resolved_call_ids:
+            continue
+
+        # Found an unresolved send_email pending.
+        if schedule.email_mode == "dry_run":
+            # Dry-run: record what would be sent without actuating.
+            _record_email_dry_run(
+                ctx,
+                run_room_id,
+                meta,
+                schedule=schedule,
+            )
+            continue
+        elif schedule.email_mode != "live":
+            # Unknown mode — fail-closed (ADR-043 D5: live requires email_mode explicitly set).
+            _log.debug(
+                "pipeline-email: unknown email_mode=%r for pending %s — skipping (fail-closed)",
+                schedule.email_mode,
+                evt.id,
+            )
+            continue
+
+        # Live mode: eligibility gate — both non-empty + case-insensitive match (ADR-043 D3/D5).
+        pending_to = str(meta.params.get("to", ""))
+        pinned = schedule.email_recipient or ""
+        if not (pending_to and pinned and pending_to.lower() == pinned.lower()):
+            _log.debug(
+                "pipeline-email: recipient mismatch for pending %s in room %s "
+                "(pending_to=%r, pinned=%r) — leaving pending",
+                evt.id,
+                run_room_id,
+                pending_to,
+                pinned,
+            )
+            continue
+
+        # Actuate via _writer_approve_helper (reconstruct-from-record, idempotent).
+        result = _writer_approve_helper(
+            ctx,
+            run_room_id,
+            evt.id,
+            "auto_pipeline",
+            schedule.owner_user_id,
+            loop,
+        )
+        if isinstance(result, _ApproveOk):
+            _log.info(
+                "pipeline-email: actuated send_email pending=%s in room=%s "
+                "owner=%s → tool_call=%s",
+                evt.id,
+                run_room_id,
+                schedule.owner_user_id,
+                result.appended_event.id,
+            )
+        elif isinstance(result, _ApproveSkipped):
+            _log.debug(
+                "pipeline-email: skip pending=%s room=%s reason=%s",
+                evt.id,
+                run_room_id,
+                result.reason,
+            )
+        elif isinstance(result, _ApproveFailed):
+            _log.error(
+                "pipeline-email: execute failed pending=%s room=%s reason=%s",
+                evt.id,
+                run_room_id,
+                result.reason,
+            )
+
+
+def _record_email_dry_run(
+    ctx: AppContext,
+    room_id: RoomId,
+    pending_meta: ToolCallPendingMeta,
+    *,
+    schedule: PipelineScheduleRecord,
+) -> None:
+    """Append a PipelineEmailDryRunMeta OBSERVATION for a dry-run pass (ADR-043 D6)."""
+    from orchestrator.core.event import (
+        Event,
+        EventType,
+        PipelineEmailDryRunMeta,
+        generate_event_id,
+        now_ms,
+    )
+
+    pinned = schedule.email_recipient or ""
+    pending_to = str(pending_meta.params.get("to", ""))
+    would_actuate = bool(pending_to and pinned and pending_to.lower() == pinned.lower())
+
+    dry_run_meta = PipelineEmailDryRunMeta(
+        recipient=pending_to,
+        subject=str(pending_meta.params.get("subject", "")),
+        would_actuate=would_actuate,
+        owner_user_id=schedule.owner_user_id,
+        approval_source="auto_pipeline",
+    )
+    obs_event = Event(
+        id=generate_event_id(),
+        room_id=room_id,
+        type=EventType.OBSERVATION,
+        author=build_author("pipeline_email_actuator"),
+        timestamp=now_ms(),
+        content=(
+            "[dry-run] pipeline email would be sent"
+            if would_actuate
+            else "[dry-run] pipeline email would not be sent (recipient mismatch)"
+        ),
+        metadata=dry_run_meta.model_dump(),
+    )
+    try:
+        ctx.writer_store.append(obs_event)
+    except Exception as exc:
+        _log.warning("pipeline-email dry-run: failed to record observation: %s", exc)
+
+
 def _schedule_act_on_writer(
     ctx: AppContext,
     schedule_id: str,
     now_ms_val: int,
+    *,
+    loop: asyncio.AbstractEventLoop | None = None,
 ) -> None:
-    """Authoritative act for one due schedule on the writer executor (ADR-042 D4).
+    """Authoritative act for one due schedule on the writer executor (ADR-042 D4 / ADR-043 D2).
 
-    Order (D4):
+    Order:
       1. Re-read schedule on writer conn; skip if not still due+enabled.
       2. Fetch parent pipeline (state check deferred until after claim).
       3. Claim: advance next_fire BEFORE run (skip-to-next; crash-safe).
@@ -614,9 +798,10 @@ def _schedule_act_on_writer(
          advanced in step 3 so a restored/re-enabled pipeline resumes cleanly.
       5. Run: run_pipeline (one try) → create_pipeline_run (nested try/except
          so a log-index failure does not discard the successful run result).
-
-    Never calls _countdown_sweeper, _discover_expired_pendings,
-    or _writer_approve_helper (D1 — sibling shares zero spine-critical code).
+      6. Email actuation (ADR-043): if schedule.email_enabled, call
+         _actuate_pipeline_emails which reaches _writer_approve_helper only
+         via the narrow send_email path. The COUNTDOWN spine
+         (_countdown_sweeper/_discover_expired_pendings) stays uncalled.
     """
     from orchestrator.pipeline.runner import PipelineDeps, run_pipeline
     from orchestrator.pipeline.schedule import compute_next_fire
@@ -726,6 +911,19 @@ def _schedule_act_on_writer(
         "ok" if result.succeeded else "failed",
     )
 
+    # Step 6: email actuation (ADR-043 D2) — only when email_enabled.
+    # Reaches _writer_approve_helper only via the narrow _actuate_pipeline_emails path.
+    if schedule.email_enabled and loop is not None:
+        try:
+            _actuate_pipeline_emails(ctx, schedule, RoomId(result.room_id), loop=loop)
+        except Exception as exc:
+            _log.error(
+                "pipeline-email: actuation failed for schedule %s run %s: %s",
+                schedule_id,
+                result.run_id,
+                exc,
+                exc_info=True,
+            )
 
 
 async def _schedule_sweeper(
@@ -755,7 +953,9 @@ async def _schedule_sweeper(
             for schedule_id in due_ids:
                 await loop.run_in_executor(
                     ctx.writer_executor,
-                    _functools.partial(_schedule_act_on_writer, ctx, schedule_id, current_ms),
+                    _functools.partial(
+                        _schedule_act_on_writer, ctx, schedule_id, current_ms, loop=loop
+                    ),
                 )
         except asyncio.CancelledError:
             raise
@@ -2034,6 +2234,9 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 next_fire=record.next_fire,
                 enabled=record.enabled,
                 created_at=record.created_at,
+                email_enabled=record.email_enabled,
+                email_mode=record.email_mode,
+                email_recipient=record.email_recipient,
             )
 
         return await loop.run_in_executor(ctx.writer_executor, _write)
@@ -2070,6 +2273,9 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     next_fire=r.next_fire,
                     enabled=r.enabled,
                     created_at=r.created_at,
+                    email_enabled=r.email_enabled,
+                    email_mode=r.email_mode,
+                    email_recipient=r.email_recipient,
                 )
                 for r in records
             ]
@@ -2173,6 +2379,192 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 next_fire=updated.next_fire,
                 enabled=updated.enabled,
                 created_at=updated.created_at,
+                email_enabled=updated.email_enabled,
+                email_mode=updated.email_mode,
+                email_recipient=updated.email_recipient,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    # -----------------------------------------------------------------------
+    # P5.1c-2: email opt-in endpoints (owner-private, 3-state, ADR-043 D5/D6)
+    # -----------------------------------------------------------------------
+
+    @app.post(
+        "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-optin",
+        response_model=_ScheduleResponse,
+    )
+    async def _schedule_email_optin(
+        pipeline_id: str,
+        schedule_id: str,
+        body: _ScheduleEmailOptinRequest,
+        request: Request,
+    ) -> _ScheduleResponse:
+        """Opt a schedule into headless email (→ dry-run state, owner-private, ADR-043 D5/D6)."""
+        from orchestrator.pipeline.store import (
+            get_pipeline,
+            get_schedule,
+            set_schedule_email_optin,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _ScheduleResponse:
+            pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
+            if pipeline is None:
+                raise HTTPException(
+                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
+                )
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            sched = get_schedule(ctx.writer_store.conn, schedule_id)
+            if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if sched.pipeline_id != pipeline_id:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            set_schedule_email_optin(
+                ctx.writer_store.conn, schedule_id, recipient=body.email_recipient
+            )
+            updated = get_schedule(ctx.writer_store.conn, schedule_id)
+            assert updated is not None
+            return _ScheduleResponse(
+                schedule_id=updated.schedule_id,
+                pipeline_id=updated.pipeline_id,
+                owner_user_id=updated.owner_user_id,
+                kind=updated.kind,
+                expr=updated.expr,
+                next_fire=updated.next_fire,
+                enabled=updated.enabled,
+                created_at=updated.created_at,
+                email_enabled=updated.email_enabled,
+                email_mode=updated.email_mode,
+                email_recipient=updated.email_recipient,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.post(
+        "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-promote",
+        response_model=_ScheduleResponse,
+    )
+    async def _schedule_email_promote(
+        pipeline_id: str,
+        schedule_id: str,
+        request: Request,
+    ) -> _ScheduleResponse:
+        """Promote email opt-in dry-run → live (explicit second action, ADR-043 D6)."""
+        from orchestrator.pipeline.store import (
+            get_pipeline,
+            get_schedule,
+            promote_schedule_email_live,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _ScheduleResponse:
+            pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
+            if pipeline is None:
+                raise HTTPException(
+                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
+                )
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            sched = get_schedule(ctx.writer_store.conn, schedule_id)
+            if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if sched.pipeline_id != pipeline_id:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if not sched.email_enabled:
+                raise HTTPException(
+                    status_code=409,
+                    detail="cannot promote: email opt-in is OFF (call email-optin first)",
+                )
+            promote_schedule_email_live(ctx.writer_store.conn, schedule_id)
+            updated = get_schedule(ctx.writer_store.conn, schedule_id)
+            assert updated is not None
+            return _ScheduleResponse(
+                schedule_id=updated.schedule_id,
+                pipeline_id=updated.pipeline_id,
+                owner_user_id=updated.owner_user_id,
+                kind=updated.kind,
+                expr=updated.expr,
+                next_fire=updated.next_fire,
+                enabled=updated.enabled,
+                created_at=updated.created_at,
+                email_enabled=updated.email_enabled,
+                email_mode=updated.email_mode,
+                email_recipient=updated.email_recipient,
+            )
+
+        return await loop.run_in_executor(ctx.writer_executor, _write)
+
+    @app.post(
+        "/pipelines/{pipeline_id}/schedules/{schedule_id}/email-disable",
+        response_model=_ScheduleResponse,
+    )
+    async def _schedule_email_disable(
+        pipeline_id: str,
+        schedule_id: str,
+        request: Request,
+    ) -> _ScheduleResponse:
+        """Disable email opt-in for a schedule (→ OFF state, owner-private, ADR-043 D5)."""
+        from orchestrator.pipeline.store import (
+            disable_schedule_email,
+            get_pipeline,
+            get_schedule,
+        )
+
+        _principal = getattr(request.state, "principal", None)
+        assert _principal is not None, "principal is None: auth middleware invariant violated"
+
+        loop = asyncio.get_running_loop()
+
+        def _write() -> _ScheduleResponse:
+            pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
+            if pipeline is None:
+                raise HTTPException(
+                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
+                )
+            if pipeline.owner_user_id != _principal.user_id:
+                raise HTTPException(status_code=403, detail="access denied: not the owner")
+            sched = get_schedule(ctx.writer_store.conn, schedule_id)
+            if sched is None:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            if sched.pipeline_id != pipeline_id:
+                raise HTTPException(
+                    status_code=404, detail=f"schedule {schedule_id!r} not found"
+                )
+            disable_schedule_email(ctx.writer_store.conn, schedule_id)
+            updated = get_schedule(ctx.writer_store.conn, schedule_id)
+            assert updated is not None
+            return _ScheduleResponse(
+                schedule_id=updated.schedule_id,
+                pipeline_id=updated.pipeline_id,
+                owner_user_id=updated.owner_user_id,
+                kind=updated.kind,
+                expr=updated.expr,
+                next_fire=updated.next_fire,
+                enabled=updated.enabled,
+                created_at=updated.created_at,
+                email_enabled=updated.email_enabled,
+                email_mode=updated.email_mode,
+                email_recipient=updated.email_recipient,
             )
 
         return await loop.run_in_executor(ctx.writer_executor, _write)

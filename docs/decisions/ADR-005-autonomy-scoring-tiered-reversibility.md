@@ -293,3 +293,9 @@ redesign anyway; the larger drift is worse than the wait.
   obligation to the registry-miss path. Landed in C4.
 - Implementation entry point: C2 freeze commit (P1.2 interface
   freeze), to follow this ADR upon acceptance.
+- **P5.1c note (ADR-043):** The gate logic (`score` / `decide_tier` /
+  `emit_gate_decision`) is byte-frozen across P5.1c. The pipeline-email
+  actuator is a **post-gate actuation-authorization layer** — it actuates
+  a `TOOL_CALL_PENDING` the gate already produced (HARD tier, `expires_at=None`),
+  without re-tiering or altering the gate decision. `send_email`'s HARD tier
+  (reversibility=3 < all pipeline `threshold_confirm` values) is unchanged.

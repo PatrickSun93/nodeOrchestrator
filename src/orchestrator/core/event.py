@@ -211,8 +211,9 @@ class ToolCallMeta(_BaseMeta):
     The still-pending scan never inspects this field — it keys on type+call_id.
     The executed TOOL_CALL stays agent-authored; this field records who approved.
 
-    `approval_source` records how the call was approved (ADR-040 D4).
-    ``"human"`` — HTTP confirm endpoint; ``"auto_timer"`` — sweeper.
+    `approval_source` records how the call was approved (ADR-040 D4 / ADR-043 D2).
+    ``"human"`` — HTTP confirm endpoint; ``"auto_timer"`` — sweeper;
+    ``"auto_pipeline"`` — headless pipeline-email actuator (ADR-043 D2).
     ``None`` — AUTO_EXECUTE tier (no approval needed) or pre-P4.6 legacy event.
     Field set is pinned by the constitutional test in tests/core/test_constitution.py.
     """
@@ -221,7 +222,7 @@ class ToolCallMeta(_BaseMeta):
     call_id: str = Field(min_length=1)
     params: dict[str, Any] = Field(default_factory=dict)
     approver_user_id: str | None = None
-    approval_source: Literal["human", "auto_timer"] | None = None
+    approval_source: Literal["human", "auto_timer", "auto_pipeline"] | None = None
 
 
 class ToolResultMeta(_BaseMeta):
@@ -391,6 +392,28 @@ class ToolCallCancelledMeta(_BaseMeta):
     approver_user_id: str | None = None
 
 
+class PipelineEmailDryRunMeta(_BaseMeta):
+    """Metadata for OBSERVATION events recording a dry-run email decision (ADR-043 D6).
+
+    The dry-run preview is the owner's load-bearing evidence before promoting
+    a schedule from dry-run → live.  Structurally typed so schema drift is
+    caught immediately; reuses the existing OBSERVATION event type (no new EventType).
+
+    Fields:
+      recipient      — the pending's to: address the actuator discovered.
+      subject        — the pending's subject line.
+      would_actuate  — True iff to case-insensitively matches the pinned email_recipient.
+      owner_user_id  — schedule owner; would have been the approver_user_id.
+      approval_source — always "auto_pipeline" (for audit-trail consistency).
+    """
+
+    recipient: str
+    subject: str
+    would_actuate: bool
+    owner_user_id: str
+    approval_source: Literal["auto_pipeline"]
+
+
 TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.HYPOTHESIS: HypothesisMeta,
     EventType.DECISION: DecisionMeta,
@@ -405,6 +428,10 @@ TYPED_METADATA: dict[EventType, type[_BaseMeta]] = {
     EventType.EXTERNAL_VALIDATION: ExternalValidationMeta,
     EventType.TOOL_CALL_PENDING: ToolCallPendingMeta,
     EventType.TOOL_CALL_CANCELLED: ToolCallCancelledMeta,
+    # NOTE: OBSERVATION is not globally registered here — existing OBSERVATION events
+    # (runner output, MCP interpret) have free-form metadata and would fail
+    # PipelineEmailDryRunMeta validation. Structural typing is enforced at callsites
+    # via explicit PipelineEmailDryRunMeta.model_validate() (ADR-043 D6).
 }
 
 # ADR-030 D2/D3: event types that resolve a TOOL_CALL_PENDING (position-anchored

@@ -100,7 +100,7 @@ ScheduleKind = Literal["interval", "cron"]
 
 @dataclass(frozen=True)
 class PipelineScheduleRecord:
-    """A row from the pipeline_schedules side table (ADR-042 D2)."""
+    """A row from the pipeline_schedules side table (ADR-042 D2 / ADR-043 D5)."""
 
     schedule_id: str
     pipeline_id: str
@@ -110,3 +110,7 @@ class PipelineScheduleRecord:
     next_fire: int  # epoch-ms; mutable runtime state, updated on every fire
     enabled: bool
     created_at: int
+    # Email opt-in 3-state: OFF (email_enabled=False) → DRY-RUN → LIVE (ADR-043 D5)
+    email_enabled: bool = False
+    email_mode: str = "dry_run"  # "dry_run" | "live"
+    email_recipient: str | None = None
