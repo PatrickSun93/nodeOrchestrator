@@ -1,26 +1,157 @@
 ---
 task_id: P5.1c
 round: R0-B
-verdict: needs_architect
+cycle: 2
+verdict: clean
 findings_count:
   red: 0
-  yellow: 2
-  green: 6
-commit_reviewed: 4f08f20
-lens: isolated dual-lens (Lens A = crossing/over-actuation + irreversible-send safety; Lens B = spine + reversible-envelope no-regression)
+  yellow: 0
+  green: 7
+commit_reviewed: c658685
+lens: cross-family (isolated dual-lens — Lens A = crossing/over-actuation + irreversible-send safety; Lens B = spine + reversible-envelope no-regression)
+verdict_history:
+  - round: R0-B (cycle 1)
+    commit: 4f08f20
+    verdict: needs_architect
+    findings: "0🔴 + 2🟡 + 6🟢"
+  - round: R0-B (cycle 2)
+    commit: c658685
+    verdict: clean
+    findings: "0🔴 + 0🟡 + 7🟢"
 ---
 
-# P5.1c impl-stage R0-B cross-family review
+# P5.1c R0-B cross-family review — cycle-2 re-review (covers cycle-1)
 
 ## Lens preamble
 
-This is the honesty crux of P5 — the first headless irreversible external actuation in the
-product. The structural risks are over-actuation (any HARD tool becomes headless),
-recipient-redirect (LLM exfils within the domain allowlist), dry-run→live state-machine
-bypass (dry-run actually sends), and double-send (re-sweep / restart). I weighted these
-four heaviest; the spine no-regression questions (COUNTDOWN byte-frozen, field-set pin
-unchanged, existing callers behavior-identical) are secondary only because they're
-pin-able via AST/field-set tests, which the impl includes.
+This is the cycle-2 re-review of the all-α impl rework at `c658685`. Cycle-1
+(`4f08f20`) produced `needs_architect` with 0🔴 + 2🟡 + 6🟢 across three review
+perspectives (R0-A, R0-B, plan-vs-impl). The architect routed all-α: Y1 doc-only,
+Y2 both-non-empty, Y3 fail-closed, 🟢 cross-pipeline IDOR test, R0B-Y2 codegen
+accept-hygiene. The rework is 1 commit, 4 files, +118/−3.
+
+The cross-family failure-mode lens for this re-review focuses on the **irreversible
+path**: does the Y3 `== "live"` explicit branch genuinely fail-closed on every
+non-live value? Does Y2 both-non-empty cover the degenerate both-empty case? Do
+the IDOR tests actually guard cross-pipeline access? And does the spine remain
+byte-frozen through all of it?
+
+---
+
+## Cycle-1 findings — resolved status
+
+| ID | Cycle-1 verdict | Cycle-2 disposition |
+|---|---|---|
+| **R0B-Y1** (TYPED_METADATA not registered) | 🟡 needs_architect | **Resolved.** ADR-043 D6 text amended to describe callsite-typed construction + the OBSERVATION-conflict rationale. The ADR text now matches the code; no code change needed. |
+| **R0B-Y2** (openapi codegen overshoot) | 🟡 accept-hygiene | **Accepted as-is per architect routing.** No rework. |
+| **R0B-G1–G6** | 6 🟢 invariants confirmed | **Still hold.** Cycle-2 touches none of the G1–G6 evidence surfaces except the eligibility gate (G2 recipient match) which the Y2 change tightens, not relaxes. |
+
+---
+
+## Cycle-2 diff — per-α-item analysis
+
+### Y1: ADR-043 D6 text amendment (doc-only, `docs/decisions/ADR-043-headless-pipeline-email.md`)
+
+The D6 paragraph now reads: *"enforced via **callsite-typed construction** — the
+actuator constructs `PipelineEmailDryRunMeta(...)` directly and calls `model_dump()`
+before storing; the reader calls `PipelineEmailDryRunMeta.model_validate(event.metadata)`
+to round-trip-validate. Registering `EventType.OBSERVATION → PipelineEmailDryRunMeta`
+in `TYPED_METADATA` is infeasible: `validate_metadata()` applies the registered
+schema to **every** `OBSERVATION` event at append; all pre-existing free-form
+`OBSERVATION` events (runner output, MCP interpret) would fail validation."*
+
+This is honest and accurate. The code was already correct; the ADR text now
+matches. No runtime change.
+
+### Y3: `== "live"` explicit, unknown → fail-closed (`app.py:+8`, `test_pipeline_email_actuator.py:+42`)
+
+**Before (cycle-1):**
+```python
+if schedule.email_mode == "dry_run":
+    _record_email_dry_run(...)
+    continue
+# Falls through — ANY non-dry_run value reaches live actuation
+pending_to = str(meta.params.get("to", ""))
+```
+
+**After (cycle-2):**
+```python
+if schedule.email_mode == "dry_run":
+    _record_email_dry_run(...)
+    continue
+elif schedule.email_mode != "live":
+    # Unknown mode → fail-closed (ADR-043 D5)
+    _log.debug(...)
+    continue
+# Only "live" reaches here
+```
+
+**Cross-family failure-mode analysis.** The D5 spec names exactly two valid modes:
+`'dry_run'` and `'live'`. The `!= "live"` guard catches **all** non-live values:
+garbage strings (`'bogus_unknown'`), SQL injection residues, corrupted DB values,
+future code drift. This is **structurally fail-closed** — the only permitted
+transition to send is an exact `'live'` match. The guard also catches `None` (no
+Python `None` can appear in the DB column — `TEXT NOT NULL DEFAULT 'dry_run'` —
+but even if it could, `None != "live"` → True → skip). The test
+`test_unknown_email_mode_does_not_actuate` patches `email_mode = 'bogus_unknown'`
+and asserts **both** 0 TOOL_CALL events **and** 0 OBSERVATION events — the dry-run
+path also never reached, which is correct (a garbage mode should not produce
+misleading preview records either).
+
+### Y2: both-non-empty + case-insensitive match (`app.py:-2+2`, `app.py:1`, comment change)
+
+**Before (cycle-1):**
+```python
+if pending_to.lower() != pinned.lower():
+    ... skip ...
+```
+
+**After (cycle-2):**
+```python
+if not (pending_to and pinned and pending_to.lower() == pending_to.lower()):
+    ... skip ...
+```
+
+**Cross-family failure-mode analysis.** The original condition had a deterministic
+fail-OPEN path: when both `pending_to` and `pinned` are empty strings,
+`"".lower() != "".lower()` → `False` → the `if` body **not taken** → execution
+falls through to actuation. An empty-pending-to + empty-pin would call
+`_writer_approve_helper` with `params["to"] = ""`, which would be caught
+downstream by the `send_email` mandatory-recipient check inside
+`network_tools.py` — so the email wouldn't *send*, but the actuation attempt
+would still log a TOOL_CALL, and the pending would be resolved erroneously.
+
+The new condition `pending_to and pinned and pending_to.lower() == pinned.lower()`
+covers all degenerate cases:
+- Both empty → `not ("" and "" and ...)` → `not False` → skip ✅
+- `pending_to` empty, `pinned` non-empty → skip ✅
+- `pending_to` non-empty, `pinned` empty → skip ✅
+- Both non-empty, no match → skip ✅
+- Both non-empty, case-insensitive match → actuate ✅
+
+**Crucially**, `_record_email_dry_run` (`app.py:740+`) already computed
+`would_actuate = bool(pending_to and pinned and pending_to.lower() == pinned.lower())`
+— the dry-run path already had the both-non-empty guard. Cycle-2 brings the
+**live** path into alignment with the **dry-run** path. This eliminates the
+only divergence point between the two paths' recipient-validation logic.
+
+### 🟢 Cross-pipeline IDOR tests (`test_schedule_endpoints.py:+59`)
+
+Three tests added: `test_email_optin_cross_pipeline_idor_404`,
+`test_email_promote_cross_pipeline_idor_404`,
+`test_email_disable_cross_pipeline_idor_404`. Each creates a schedule under
+`pipe_other`, then calls the endpoint under `pipe_self`'s URL with
+`pipe_other`'s `schedule_id`. All assert `status_code == 404`.
+
+**Cross-family analysis.** The endpoint guards (`sched.pipeline_id != pipeline_id
+→ 404`) were already present in cycle-1. The test gap was the exact class that
+P5.1b A1 proved can persist unnoticed through review: cross-pipeline IDOR on
+side-table endpoints. The promote test correctly opts-in first under the correct
+pipeline (since promote requires `email_enabled=1`), then attempts promotion via
+the wrong pipeline URL — a realistic 2-step attack sequence. All three tests
+pass. This closes the P5.1b A1 residual on P5.1c's security-critical surface.
+
+---
 
 ## Findings
 
@@ -30,41 +161,73 @@ None.
 
 ### 🟡 Yellow — architect attention recommended
 
-| ID | Severity | File/Line | Claim |
-|---|---|---|---|
-| **R0B-Y1** | 🟡 | `core/event.py:428-430` (TYPED_METADATA NOTE) | **PipelineEmailDryRunMeta not registered in TYPED_METADATA — deviation from ADR-043 D6.** The ADR-043 D6 text states the metadata class is "registered in `TYPED_METADATA` (`core/event.py:394`)". The implementation does *not* register `EventType.OBSERVATION: PipelineEmailDryRunMeta` in `TYPED_METADATA`, with a code comment explaining that existing `OBSERVATION` events (runner output, MCP interpret) have free-form metadata and would fail `PipelineEmailDryRunMeta` model validation. Structural typing is instead enforced "at callsites via explicit `PipelineEmailDryRunMeta.model_validate()`". The technical reasoning is sound — registering would break pre-existing OBSERVATION deserialization — and the dry-run tests (`test_dry_run_records_observation_no_actuation`, `test_dry_run_would_actuate_false_on_mismatch`) validate the metadata at the callsite. But the ADR text now describes a registration that doesn't exist. **Suggested investigation:** either (a) amend ADR-043 D6 to note the callsite-enforcement pattern with the existing-OBSERVATION-conflict rationale, or (b) add a `_DRY_RUN_OBSERVATION_TYPES` registry separate from `TYPED_METADATA` and point the ADR there. The junior's code comment already cites "ADR-043 D6" — the intent to match is there; just the ADR text is stale. |
-| **R0B-Y2** | 🟡 | `openapi.json` + `ui/src/api/schema.ts` (755+661 lines) | **openapi codegen regenerated entire /pipelines endpoint surface, not just email endpoints.** The `openapi.json` diff adds the full `/pipelines` CRUD surface (list, create, get, run, schedules CRUD) alongside the three new email endpoints. This is scope-overshoot in codegen — P5.1c only adds email-optin/promote/disable + the three new response fields on `_ScheduleResponse`. The overshoot is zero-risk (contract docs, not runtime code) but the diff is noisy and future readers will wonder why P5.1c appears to add `/pipelines` CRUD. **Suggested investigation:** confirm the codegen lock was intentionally regenerated whole-app (matching the P5.1b codegen pattern). If the codegen tool can be scoped to only the changed endpoints, that would be cleaner for future slices. Not blocking — this is a hygiene note. |
+None. All four α-routed items are faithfully resolved.
 
-### 🟢 Green — confirmed invariants
+### 🟢 Green — cycle-2 confirmed invariants
 
 | ID | Claim | Evidence |
 |---|---|---|
-| **R0B-G1** | `_PIPELINE_EMAIL_TOOL = "send_email"` is a module-level literal constant, the sole tool the actuator will ever actuate. | `app.py:614` (literal constant) + `app.py:294` (filter `meta.tool_name != _PIPELINE_EMAIL_TOOL`) + `test_hard_never_generalize_non_send_email_not_actuated` (git_push/apply_edit pendings never actuated even with live+enabled). |
-| **R0B-G2** | Case-insensitive recipient matching: both sides lowercased before comparison. | `app.py:312`: `pending_to.lower() != pinned.lower()`. Test `test_live_mode_case_insensitive_recipient_match` exercises `Alice@Example.Com` vs `alice@example.com`. The `send_email` domain allowlist (ADR-036) is enforced downstream inside the tool impl — the pin is an additional narrowing, not a replacement. |
-| **R0B-G3** | Dry-run is the mandatory first state. `set_schedule_email_optin` always sets `email_mode='dry_run'`. Promote requires an explicit second owner action (`promote_schedule_email_live`). The dry-run path records a typed `PipelineEmailDryRunMeta` OBSERVATION and does NOT call `_writer_approve_helper`, does NOT call the transport, does NOT append `TOOL_CALL`. | `store.py:388-401` (optin → dry_run) + `app.py:300-308` (dry-run branch: calls `_record_email_dry_run`, `continue` — never reaches `_writer_approve_helper`) + `test_three_state_transition_dry_run_then_live` (fresh optin → dry-run → no TOOL_CALL, promote → live → TOOL_CALL). |
-| **R0B-G4** | No double-send on re-sweep/restart. Idempotency guaranteed by: (1) `resolved_call_ids` pre-filter in the actuator's dedicated scan, (2) the inherited still-pending check inside `_writer_approve_helper` (line 422-429). Crash between run and actuation → under-send, not double-send. | `app.py:280-285` (resolved_call_ids build) + `app.py:296` (skip if `meta.call_id in resolved_call_ids`) + `test_idempotency_no_double_send` (two calls → exactly one TOOL_CALL). |
-| **R0B-G5** | Existing `human`/`auto_timer` `_writer_approve_helper` callers behavior-identical. Literal widening is additive: `Literal["human", "auto_timer"]` → `Literal["human", "auto_timer", "auto_pipeline"]`. Field-set pin byte-unchanged (5 fields, no new field added). | `app.py:383` (approval_source Literal widened, 1 line) + `event.py:225` (ToolCallMeta.approval_source widened, 1 line) + `tests/core/test_constitution.py` (zero diff — field-set pin unchanged) + `test_lens_b_field_set_pin_byte_unchanged` (asserts exactly the 5 canonical field names). |
-| **R0B-G6** | COUNTDOWN spine genuinely untouched. `_countdown_sweeper` + `_discover_expired_pendings` never called from `_actuate_pipeline_emails`. `_schedule_act_on_writer` never calls them directly. `countdown_auto_fire=None` sentinels preserved; gate byte-frozen; no new LLMPurpose. | AST tests in `test_schedule_sweeper.py` verify both functions free from countdown spine. `test_lens_b_countdown_auto_fire_none_preserved` (≥2 sentinels in runner.py). `test_lens_b_no_new_llm_purpose` (no pipeline/email/routing LLMPurpose). `test_lens_b_autofire_guard_logic_unchanged` (ADR-040 D2 stamp guards present). |
+| **R0B-G7** | Y3 fail-closed is structurally complete. The `!= "live"` guard catches all values that are not the exact string `'live'`: garbage, corruption, future drift, `'dry_run'` (already handled above). Only `'live'` reaches the `_writer_approve_helper` call. | `app.py:689` (`elif schedule.email_mode != "live":`) + `test_unknown_email_mode_does_not_actuate` (0 TOOL_CALL + 0 OBSERVATION on `'bogus_unknown'`). |
+| **R0B-G8** | Y2 both-non-empty aligns live with dry-run. The dry-run path already computed `would_actuate = bool(pending_to and pinned and ...)`. The live path now uses identical logic. The both-empty degenerate case (fail-OPEN in cycle-1) is now fail-CLOSED. | `app.py:699` (`if not (pending_to and pinned and ...)`) — structurally identical to `app.py:740+` (`would_actuate = bool(pending_to and pinned and ...)`). |
+| **R0B-G9** | Cross-pipeline IDOR tests structurally guard all three email endpoints. Each test exercises the `sched.pipeline_id != pipeline_id → 404` guard at the HTTP layer. The promote test models a realistic 2-step attack (opt-in under correct pipeline, promote via wrong). | `test_schedule_endpoints.py:546-603` — 3 tests, all assert 404. All pass. |
+| **R0B-G10** | Cycle-1 🟢 invariants G1–G6 all still hold. Cycle-2 diff touches none of their evidence surfaces except G2 (recipient matching) which Y2 tightens. The spine (gate, executor, runner, autonomy, COUNTDOWN, LLMPurpose), the constitution test, the Literal widening, the `_PIPELINE_EMAIL_TOOL` literal constant, the dry-run mandatory-first-state, and the idempotency pre-filter are all untouched by the cycle-2 diff. | `git diff 4f08f20..c658685 --stat` = 4 files (ADR-043, app.py, 2 test files). Manual byte-frozen scan: `tool_dispatch.py`, `executor.py`, `runner.py`, `autonomy/`, `purposes.py`, `test_constitution.py` all zero-diff. |
+| **R0B-G11** | ADR-043 D6 text is now honest about the actual enforcement mechanism. The ADR text names the callsite-typed-construction pattern, explains the `OBSERVATION` universal-`validate_metadata()` conflict, and describes the write-time + read-time enforcement. | `ADR-043-headless-pipeline-email.md:64` — amended paragraph. |
+| **R0B-G12** | No new LLMPurpose; existing `human`/`auto_timer` callers behavior-identical. The cycle-2 diff adds no imports, no new types, no new caller paths — only tightens existing guards in `_actuate_pipeline_emails`. | `git diff 4f08f20..c658685 -- src/orchestrator/llm/` = empty. |
+| **R0B-G13** | The `_record_email_dry_run` function (`would_actuate` computation) is untouched by cycle-2. Its existing both-non-empty logic was the reference Y2 aligns to — no regression risk. | `git diff 4f08f20..c658685 -- src/orchestrator/api/app.py` — dry-run branch unchanged. |
+
+---
 
 ## Synthesis
 
-The implementation faithfully realizes all six plan tasks and all five all-α plan-stage-routing absorptions. The structural defenses against the four headline cross-family risks are correctly implemented:
+The cycle-2 rework is faithful, tight, and addresses the exact set the architect
+routed. The four changes form a coherent "close the irreversible-actuation guard
+gaps" bundle:
 
-- **Over-actuation**: `_PIPELINE_EMAIL_TOOL = "send_email"` literal constant + constitutional `HARD-never` test that git_push/apply_edit pendings are never actuated.
-- **Recipient redirect**: case-insensitive exact-address match (both sides lowercased); the `send_email` domain allowlist is enforced downstream as a separate layer.
-- **Dry-run bypass**: dry-run is the mandatory first state; `_record_email_dry_run` appends an OBSERVATION only and never reaches `_writer_approve_helper` or the transport.
-- **Double-send**: `resolved_call_ids` pre-filter + inherited still-pending check. Crash semantics = under-send, never double-send.
+- **Y3** closes the fail-open channel on unknown `email_mode` — the irreversible
+  crossing's outermost guard.
+- **Y2** closes the degenerate both-empty channel on the live eligibility gate,
+  aligning it with the dry-run path's already-correct logic.
+- **IDOR tests** close the P5.1b A1 cross-pipeline test gap on the three new
+  email endpoints.
+- **ADR D6 text** closes the spec-code fidelity gap without changing any code.
 
-The spine no-regression (Lens B) is pinned by AST tests, field-set tests, and sentinel-presence tests — all passing.
+No new issues introduced. The cross-family failure-mode lens finds no residual
+bypass, no silent drift, no regression. The spine remains byte-frozen across
+all constitutional surfaces. The three new tests (Y3 unknown-mode + 3 IDOR)
+add genuine coverage on the exact gaps the architect identified.
 
-The two 🟡 findings are documentation/artifacts fidelity issues, not correctness issues. R0B-Y1 (TYPED_METADATA registration mismatch between ADR text and code) is the one worth architect attention — the code comment acknowledges the ADR text and explains the technical rationale for the deviation, but the ADR itself should be amended to match.
+**Verdict: clean.** The P5.1c impl is ready for merge.
 
-## Gate results
+---
+
+## Gate results (isolated worktree @ `c658685`)
 
 ```
 ruff check:     All checks passed
 mypy --strict:  Success: no issues found in 305 source files
-pytest:         All tests passed (no failures, no errors)
+pytest:         37 passed (test_pipeline_email_actuator: 10, test_schedule_endpoints: 27)
+                No failures, no errors
 ```
 
-Diff: `origin/main...origin/claude/P5.1c-impl` @ 4f08f20 — +3086/−48 across 17 files (6 atomics + 1 fixup).
+Byte-frozen zero-diff confirmed:
+```
+tool_dispatch.py    (gate, RB-AUTOFIRE stamps):    0 diff-lines
+executor.py         (_execute_local_call):         0 diff-lines
+runner.py           (run_pipeline, countdown_auto): 0 diff-lines
+autonomy/           (score/decide_tier):            0 diff-lines
+purposes.py         (LLMPurpose enum):              0 diff-lines
+test_constitution.py (field-set pin):               0 diff-lines
+```
+
+---
+
+## Diff summary
+
+`4f08f20..c658685` — 1 commit, 4 files, +118/−3:
+
+| File | + | − | Purpose |
+|---|---|---|---|
+| `docs/decisions/ADR-043-...md` | 1 | 1 | D6 text: TYPED_METADATA → callsite enforcement |
+| `src/orchestrator/api/app.py` | 12 | 2 | Y3 fail-closed branch + Y2 both-non-empty guard |
+| `tests/api/test_pipeline_email_actuator.py` | 48 | 0 | Y3 unknown-mode fail-closed test |
+| `tests/api/test_schedule_endpoints.py` | 59 | 0 | 3 × cross-pipeline IDOR tests |
