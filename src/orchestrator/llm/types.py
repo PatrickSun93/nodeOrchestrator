@@ -55,6 +55,9 @@ class ProviderType(StrEnum):
     in ``config_loader``. See ADR-002 for the P1 set.
     """
 
+    AGY_CLI = "agy_cli"
+    """Antigravity CLI (agy) using standard IO interface."""
+
     OPENAI_COMPATIBLE = "openai_compatible"
     """DeepSeek, Ollama, MLX local, OpenAI itself, anything speaking
     the OpenAI Chat Completions API."""
