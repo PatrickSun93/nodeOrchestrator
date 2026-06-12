@@ -14,9 +14,20 @@ No new LLMPurpose — the request's purpose is set by dispatch_turn.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+from typing import Any
 
-from orchestrator.llm.exceptions import LLMError
-from orchestrator.llm.router import ModelRegistry, ProviderRegistry, select_model_and_provider
+from orchestrator.llm.exceptions import (
+    LLMError,
+    NoSuitableModelError,
+    TransientProviderError,
+)
+from orchestrator.llm.router import (
+    ModelRegistry,
+    ProviderRegistry,
+    RouteCandidate,
+    select_viable_routes,
+)
 from orchestrator.llm.types import AgentLLMConfig, GlobalLLMOverride, LLMRequest, LLMResponse
 
 
@@ -60,15 +71,38 @@ class RealLLMRouter:
             loop.close()
 
     async def _async_call(self, request: LLMRequest, agent_config: AgentLLMConfig) -> LLMResponse:
-        route = await select_model_and_provider(
+        # D-mech-A (ADR-002 D4 call-time half): health-check the whole viable set
+        # once up-front, then walk the list on TransientProviderError.
+        routes = await select_viable_routes(
             agent_config,
             request,
             self._models,
             self._providers,
             self._override,
         )
-        return await route.provider.call(
-            request,
-            route.model,
-            model_id_requested=route.model_id_requested,
+
+        call_trace: list[dict[str, Any]] = []
+        for route in routes:
+            try:
+                return await route.provider.call(
+                    request,
+                    route.model,
+                    model_id_requested=route.model_id_requested,
+                )
+            except TransientProviderError as exc:
+                call_trace.append(
+                    dataclasses.asdict(
+                        RouteCandidate(
+                            model_id=route.model.id,
+                            provider_id=route.model.provider,
+                            accepted=False,
+                            reason=f"call-time transient: {exc}",
+                        )
+                    )
+                )
+            # PermanentProviderError propagates — no fallback (ADR-002 D4).
+
+        raise NoSuitableModelError(
+            "all viable providers raised TransientProviderError",
+            decision_trace=call_trace,
         )

@@ -285,3 +285,154 @@ async def select_model_and_provider(
         f"no suitable model in chain {effective_chain}",
         decision_trace=[dataclasses.asdict(c) for c in candidates],
     )
+
+
+async def select_viable_routes(
+    agent_config: AgentLLMConfig,
+    request: LLMRequest,
+    models: ModelRegistry,
+    providers: ProviderRegistry,
+    override: GlobalLLMOverride | None = None,
+) -> list[RouteResult]:
+    """Return ALL pre-call-viable routes for the agent's effective chain.
+
+    Applies the same per-candidate filters as ``select_model_and_provider``
+    (registry / capability / tools / health_check) but collects every
+    passing candidate rather than stopping at the first. Zero LLM calls
+    (health_check only) — the ``router.py:15`` invariant holds.
+
+    Used by the adapter's call-time transient fallback loop (D-mech-A,
+    ADR-002 D4 call-time half): the adapter tries each route's ``call()``
+    in order, falling through on ``TransientProviderError``.
+
+    Every ``RouteResult.model_id_requested`` is the chain head
+    (``agent_config.default_model``), matching the audit contract in
+    ``select_model_and_provider``.
+
+    Raises:
+        NoSuitableModelError: no viable candidate found (same exhaustion
+            shape as ``select_model_and_provider``).
+    """
+    from orchestrator.llm.override import apply_global_override
+
+    candidates: list[RouteCandidate] = []
+    chain: list[ModelId] = [
+        agent_config.default_model,
+        *agent_config.fallback_chain,
+    ]
+
+    effective_chain, drop_reasons, kept_unknown_cost = apply_global_override(
+        chain, override, models
+    )
+
+    for model_id, reason in drop_reasons.items():
+        candidates.append(
+            RouteCandidate(
+                model_id=model_id,
+                provider_id=None,
+                accepted=False,
+                reason=reason,
+            )
+        )
+
+    for model_id, reason in kept_unknown_cost.items():
+        candidates.append(
+            RouteCandidate(
+                model_id=model_id,
+                provider_id=None,
+                accepted=False,
+                reason=reason,
+            )
+        )
+
+    if not effective_chain:
+        raise NoSuitableModelError(
+            f"global override filtered all models from chain {chain}",
+            decision_trace=[dataclasses.asdict(c) for c in candidates],
+        )
+
+    viable: list[RouteResult] = []
+
+    for model_id in effective_chain:
+        profile = models.get(model_id)
+        if profile is None:
+            candidates.append(
+                RouteCandidate(
+                    model_id=model_id,
+                    provider_id=None,
+                    accepted=False,
+                    reason="model not in registry",
+                )
+            )
+            continue
+
+        missing = set(agent_config.required_capabilities) - set(profile.capabilities)
+        if missing:
+            candidates.append(
+                RouteCandidate(
+                    model_id=model_id,
+                    provider_id=profile.provider,
+                    accepted=False,
+                    reason=f"missing capability: {sorted(c.value for c in missing)}",
+                )
+            )
+            continue
+
+        provider = providers.get(profile.provider)
+        if provider is None:
+            candidates.append(
+                RouteCandidate(
+                    model_id=model_id,
+                    provider_id=profile.provider,
+                    accepted=False,
+                    reason="provider not in registry",
+                )
+            )
+            continue
+
+        if request.tools and not provider.can_use_orchestrator_tools():
+            candidates.append(
+                RouteCandidate(
+                    model_id=model_id,
+                    provider_id=profile.provider,
+                    accepted=False,
+                    reason="provider cannot use orchestrator tools",
+                )
+            )
+            continue
+
+        if not provider.health_check():
+            candidates.append(
+                RouteCandidate(
+                    model_id=model_id,
+                    provider_id=profile.provider,
+                    accepted=False,
+                    reason="provider health_check returned False",
+                )
+            )
+            continue
+
+        candidates.append(
+            RouteCandidate(
+                model_id=model_id,
+                provider_id=profile.provider,
+                accepted=True,
+                reason="matched",
+            )
+        )
+        viable.append(
+            RouteResult(
+                model=profile,
+                provider=provider,
+                model_id_requested=agent_config.default_model,
+                decision_trace=tuple(candidates),
+            )
+        )
+
+    if not viable:
+        raise NoSuitableModelError(
+            f"no suitable model in chain {effective_chain}",
+            decision_trace=[dataclasses.asdict(c) for c in candidates],
+        )
+
+    return viable
