@@ -11,8 +11,10 @@ Per-call lifecycle (started before docker run, stopped in the shielded finally):
 The allowlist is exactly one (hostname, pinned_ip, port) entry per call.
 CONNECT to any other host → 407/403 Forbidden.
 
-Both transports:
-- http(s): urllib/httpx in-container honors HTTPS_PROXY/HTTP_PROXY → CONNECT <host>:<port>
+Supported transports:
+- https: urllib/httpx in-container honors HTTPS_PROXY → CONNECT <host>:<port> (tunnelled).
+- plain http: NOT supported in-sandbox — urllib emits an absolute-form GET (no CONNECT)
+  → proxy returns 405 → fail-closed (no exfil; ADR-037 D4). https is the web_fetch path.
 - ssh git_push: ProxyCommand nc -X connect -x host.docker.internal:<port> %h %p
 
 The proxy dials the PINNED IP (not the hostname), preserving SSRF end-to-end pinning.

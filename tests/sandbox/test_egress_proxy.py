@@ -138,9 +138,7 @@ def test_rw8_proxy_refuses_redirect_host() -> None:
         time.sleep(0.05)
         # A server redirect would issue a new CONNECT to the redirect target
         response = _send_connect(proxy_port, "redirect.example.com", 443)
-        assert b"407" in response, (
-            f"Expected 407 for redirect-host CONNECT, got: {response!r}"
-        )
+        assert b"407" in response, f"Expected 407 for redirect-host CONNECT, got: {response!r}"
     finally:
         proxy.stop()
 
@@ -190,3 +188,53 @@ def test_rw8_proxy_stop_is_idempotent() -> None:
     proxy.start()
     proxy.stop()
     proxy.stop()  # second stop must not raise
+
+
+def _send_raw(proxy_port: int, request: str) -> bytes:
+    """Send a raw HTTP request to the proxy and return the response line."""
+    with socket.create_connection(("127.0.0.1", proxy_port), timeout=5.0) as client:
+        client.sendall(request.encode("latin-1"))
+        client.settimeout(3.0)
+        data = b""
+        while b"\r\n" not in data:
+            chunk = client.recv(256)
+            if not chunk:
+                break
+            data += chunk
+    return data
+
+
+# ---------------------------------------------------------------------------
+# F-residual pin (ADR-037 D5 inscription): plain-http → 405 fail-closed
+# ---------------------------------------------------------------------------
+
+
+def test_f_plain_http_fails_closed_405() -> None:
+    """F-residual pin: plain-http absolute-form GET → 405 (fail-closed, no exfil).
+
+    In-container urllib sends an absolute-form GET for plain http:// URLs (no CONNECT).
+    The CONNECT-only proxy returns 405; the fetch fails closed (TOOL_FAILED, no exfil).
+    https is unaffected — it uses CONNECT (see test_rw8_proxy_allows_pinned_host).
+
+    ADR-037 D4 / D5 inscription: this pin MUST FAIL if the proxy is ever loosened to
+    forward non-CONNECT methods (absolute-form GET → tunnel = fail-open-for-http).
+    That change requires an explicit ADR-037 D2 amendment + architect dispatch.
+    """
+    from orchestrator.sandbox.egress_proxy import EgressProxy
+
+    proxy = EgressProxy(
+        hostname="allowed.internal",
+        pinned_ip="127.0.0.1",
+        pinned_port=80,
+    )
+    proxy_port = proxy.start()
+    try:
+        time.sleep(0.05)
+        # Exactly what urllib emits for a plain http:// URL routed through HTTP_PROXY
+        raw_request = "GET http://allowed.internal/ HTTP/1.1\r\nHost: allowed.internal\r\n\r\n"
+        response = _send_raw(proxy_port, raw_request)
+        assert b"405" in response, (
+            f"Expected 405 for plain-http absolute-form GET (fail-closed), got: {response!r}"
+        )
+    finally:
+        proxy.stop()
