@@ -1,7 +1,7 @@
 task_id: P6.2
-state: awaiting_architect_decision
+state: closed
 cycle: 2
-last_transition_at: '2026-06-12T07:49:27.569450Z'
+last_transition_at: '2026-06-12T07:55:39.630766Z'
 cycle_started_at: '2026-06-12T06:25:38.479609Z'
 override_history:
 - timestamp: '2026-06-12T05:32:54.313894Z'
@@ -30,4 +30,13 @@ override_history:
     R0A-Y1 ruff format the C1 test file + recommit. Behavior-preserving, keep all
     D1/back-compat tests green. D1-2/D1-3 accepted-noted, O1 → task #108. No spine/ADR
     change. See architect-routing-on-impl.md.'
+- timestamp: '2026-06-12T07:55:39.630766Z'
+  actor: architect
+  from_state: awaiting_senior_revision
+  to_state: closed
+  reason: 'P6.2 merged (PR #72). C1 empty-args→{} + D1 call-time transient fallback
+    (ADR-002 D4 conformance + Implemented note). 2 cycles all-clean: cyc1 α-bundle,
+    cyc2 factor+ruff-format with R0-A accept-as-shipped (delegation→eager on production-dead
+    fn, benign). Spine zero-diff, no new LLMPurpose. Gates green. Routed under delegated
+    bug-fix-backlog authority.'
 requires_cross_family_review: true
