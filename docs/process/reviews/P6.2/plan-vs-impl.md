@@ -1,175 +1,159 @@
 ---
 task_id: P6.2
 round: plan-vs-impl
+cycle: 2
 reviewer: senior
-verdict: needs_architect          # Y1: ruff-format gate leg fails on the C1 test file (plan §4 "full gate green" not met) — trivial/mechanical, C1+D1 logic faithful & fail-on-revert-verified
+verdict: clean                    # cycle-2 α-rework faithful: D1-1 factor is behavior-preserving (delegation preserves all 3 exit paths byte-identically), Y1 ruff-format resolved, full gate green. C1+D1 logic unchanged from cycle-1's faithful baseline.
 findings_count:
   blocking: 0
-  yellow: 1
-  green: 2
-reviewed_commit: 5838ce3
+  yellow: 0
+  green: 1
+reviewed_commit: 2a1d28a
 reviewed_branch: origin/claude/P6.2-impl
+cycle2_delta: 5838ce3..2a1d28a    # the α-rework commit only
 plan: docs/process/senior-plans/P6.2.md
+routing: docs/process/reviews/P6.2/architect-routing-on-impl.md
 surface: product
 lens: plan-vs-deliverable faithfulness (senior's non-overlapping audit surface)
+supersedes: cycle-1 (verdict needs_architect, Y1) — this file covers both cycles
 ---
 
-# P6.2 — senior plan-vs-impl review
+# P6.2 — senior plan-vs-impl review (cycle 2, α-rework re-review)
 
 ## Lens + scope
 
-This is the **senior plan-vs-impl** lens: does the impl faithfully realize *the plan
-I wrote* (`docs/process/senior-plans/P6.2.md`) — every acceptance criterion met, every
-out-of-scope boundary respected, no plan-implied invariant silently drifted, no
-plan-外 expansion. It is **non-overlapping** with the external reviewers' deliverable-vs-spec
-lens. I formed this assessment independently before reading any other review artifact;
-I did **not** incorporate R0-B's findings (its lens is runtime-integration + failure-mode,
-a different surface — see §Ordering note).
+Senior **plan-vs-impl** lens: does the impl faithfully realize the plan I wrote
+(`docs/process/senior-plans/P6.2.md`)? This cycle-2 re-review covers the **α-rework
+delta only** (`5838ce3..2a1d28a`, the single commit `2a1d28a`), against the architect's
+routing (`architect-routing-on-impl.md`): **R0B-D1-1** (factor the duplicated filter
+logic) + **R0A-Y1** (`ruff format` the C1 test file). The cycle-1 C1+D1 logic baseline
+(`bf7c9c9`, `5838ce3`) was already found **faithful** and fail-on-revert-verified — that
+assessment stands unchanged and is recorded in §"Cycle-1 baseline" below; this cycle only
+adjudicates whether the rework is **behavior-preserving** and whether it broke anything.
 
-Reviewed: `origin/claude/P6.2-impl @ 5838ce3`, two atomic commits
-(`bf7c9c9` C1, `5838ce3` D1) against `origin/main`. Diff touches **exactly** the six
-files the plan named (`openai_compatible.py`, `router.py`, `llm_adapter.py`, `ADR-002`,
-`tests/llm/test_openai_compatible_provider.py`, new `tests/api/test_llm_adapter.py`) —
-**zero plan-外 expansion**, no stray `.workflow/` self-advance commit on the impl branch.
-
-**Gate** (fresh `--all-extras` worktree on 5838ce3): `ruff check` clean, `mypy`
-`Success: no issues found in 310 source files`, full `pytest exit=0` (zero failures).
-**But `ruff format --check` FAILS** on `tests/llm/test_openai_compatible_provider.py`
-(verified with the repo's `line-length=100` config) — see **Y1**. The plan's §4 forcing
-function requires the *full* gate green (`docs/contributing.md:195`: ruff includes
-**format**), so the slice does **not** currently pass its own forcing function. C1+D1
-logic is faithful and fail-on-revert-verified (below); the miss is purely the format leg.
+**Cycle-2 delta touches exactly two files** — `src/orchestrator/llm/router.py` (the factor)
+and `tests/llm/test_openai_compatible_provider.py` (the reformat). **Zero plan-外 expansion**;
+`purposes.py` untouched (no new `LLMPurpose` — grepped the delta); no spine change; no ADR
+change; no stray `.workflow/` self-advance commit on the impl branch.
 
 ---
 
-## C1 — empty/blank tool_call arguments → `{}` (`bf7c9c9`)
+## R0B-D1-1 — factor the duplicated per-candidate filter logic (`2a1d28a`)
 
-| Plan AC | Impl | Verdict |
-|---|---|---|
-| **1.** `strip()`-guard; `""` / `"   "` → `{}` | `openai_compatible.py:274-279` — `if isinstance(args_raw, str): arguments = json.loads(args_raw) if args_raw.strip() else {}` else `args_raw or {}` | ✅ faithful |
-| **2.** malformed `"{bad"` still `PermanentProviderError` | `except (KeyError, json.JSONDecodeError, ValidationError)` at `:287` **untouched**; `json.loads("{bad")` still raises | ✅ |
-| **3.** **missing** `arguments` key still Permanent (do **not** widen) | `args_raw = tc["function"]["arguments"]` access untouched → `KeyError` → caught at `:287` → Permanent; `None`/absent → `args_raw or {}` is the **pre-existing** falsy branch, not widened | ✅ scope boundary respected |
-| **4.** fail-on-revert test (`""`, `"   "`, `"{bad"`) | `TestToolCallArgumentsNormalization` — three cases present | ✅ |
+The junior chose the **delegate** factoring the plan explicitly sanctioned (D1.2: "or have
+`select_model_and_provider` delegate to `select_viable_routes(...)[0]`"). The ~155-line
+duplicated body of `select_model_and_provider` is deleted; the function is now a two-line
+delegation:
 
-**Fail-on-revert independently exercised**: reverting the guard to the single-line pre-fix
-form makes `test_empty_string_arguments_normalizes_to_empty_dict` and
-`test_blank_string_arguments_normalizes_to_empty_dict` **fail** (`json.loads("")` →
-`PermanentProviderError: malformed tool_call`). Genuine revert-coupling confirmed.
+```python
+routes = await select_viable_routes(agent_config, request, models, providers, override)
+return routes[0]
+```
 
-**Out-of-scope honored**: no change to `types.py` / `ToolCall`, the `:285` except clause,
-or the `.call()` HTTP path. Architect-ratified **C-lean** (`None ≠ empty-string`) preserved
-exactly.
+`select_viable_routes` (the cycle-1 code, **unchanged** this cycle) is now the single home of
+the registry → capability → tools → health_check → accept filter chain.
+
+**Behavior-preservation proof** — the delegation preserves `select_model_and_provider`'s
+observable contract on **all three exit paths**, byte-identically:
+
+| Exit path | Old `select_model_and_provider` | New (delegate to `select_viable_routes[0]`) | Faithful? |
+|---|---|---|---|
+| **Success** | returns `RouteResult(decision_trace=tuple(candidates))` **at the first match** — returns immediately, so the trace stops at the matched candidate | `select_viable_routes` snapshots `tuple(candidates)` into `viable[0]` **at the first match** (before walking the rest of the chain); `tuple(...)` freezes the running list at that instant, so later appends don't mutate `viable[0].decision_trace`. `routes[0]` is exactly that first-match snapshot. | ✅ byte-identical (same model, provider, `model_id_requested`=chain head, same truncated trace) |
+| **Exhaustion** (all rejected) | `raise NoSuitableModelError(f"no suitable model in chain {effective_chain}", decision_trace=…)` | `select_viable_routes` raises the **same** message + same trace shape; propagates through `await` — never reaches `routes[0]` | ✅ identical |
+| **Override filtered all** | `raise NoSuitableModelError(f"global override filtered all models from chain {chain}", …)` | `select_viable_routes` raises the **same** message + trace; propagates | ✅ identical |
+
+**No `routes[0]` IndexError risk**: `select_viable_routes` has an `if not viable: raise
+NoSuitableModelError(...)` guard, so it **never returns an empty list** — it either returns
+≥1 route or raises. The delegation can only reach `routes[0]` when `viable` is non-empty. ✅
+
+**D-mech-A semantics intact** (my §5 design call):
+- **Router still pure** — `select_viable_routes` makes **zero** `provider.call()` (health_check
+  only); the factor moved no `.call()` into the router. `router.py:15` invariant holds; the
+  constitution suites (`test_constitution_override_path_makes_no_llm_call` + the
+  `select_model_and_provider`-absent structural tests across `tests/{llm,mcp,plugins,tools}`)
+  pass unchanged.
+- **Adapter loop untouched** this cycle (`llm_adapter.py` not in the delta) — the call-time
+  fallback iteration, exhaustion → `NoSuitableModelError`, and `requested(head) != used(fallback)`
+  audit invariant are exactly as ratified in cycle-1.
+- **`async def` preserved** — `select_model_and_provider` is still `async`, signature unchanged;
+  its 30+ `test_router.py` callers + constitution refs untouched.
+
+**Back-compat empirically confirmed**: `tests/llm/test_router.py` + `test_e2e_fallback.py`
+(the ~30 callers exercising the exact first-viable `RouteResult` + `decision_trace` + exhaustion
+contract) pass **unchanged** on the reworked code. The contract-preservation argument above is
+thus both structural (the trace-snapshot reasoning) and empirical (the caller suite).
+
+This resolves the cycle-1 🟢-1 latent-divergence note: the filter logic now lives in **one**
+place, so a future filter change can no longer silently diverge between the two functions.
 
 ---
 
-## D1 — call-time transient fallback (`5838ce3`)
+## R0A-Y1 — `ruff format` the C1 test file (`2a1d28a`)
 
-Mechanism is **D-mech-A** as the plan settled (§5): router exposes the ordered viable
-list; adapter iterates. Faithful on every point.
+The three `_make_provider(lambda r: httpx.Response(200, json=_tool_call_response(...)))` calls
+in `TestToolCallArgumentsNormalization` are collapsed from three-line wrapped form onto one
+line each (they fit under the lockfile-pinned ruff 0.15.12 `line-length=100`). **Format-only,
+zero behavior change** — assertions and test bodies untouched. This resolves cycle-1 **Y1**.
 
-| Plan AC | Impl | Verdict |
-|---|---|---|
-| **1.** router stays pure (zero `.call()`, health_check only) | `select_viable_routes` (`router.py:290-438`) makes **no** `provider.call()` — only `health_check()`; `.call()` loop lives in the **adapter** | ✅ `router.py:15` invariant held; constitution tests pass |
-| **2.** `select_model_and_provider` observable contract preserved exactly | **byte-unchanged** (zero diff). Junior chose the standalone-duplication factoring (plan-sanctioned: "either factoring is acceptable") rather than delegate. Strongest possible preservation — its ~30 `test_router.py` callers + constitution refs untouched | ✅ |
-| **3.** adapter loop: transient→next, permanent→propagate, success→return, `model_id_requested=route.model_id_requested` | `llm_adapter.py:85-104` — `for route in routes:` `return await route.provider.call(...)` then `except TransientProviderError: <append trace, continue>`; only Transient caught (Permanent propagates) | ✅ |
-| **4.** all-transient → `NoSuitableModelError` + per-route trace `{model_id, provider_id, accepted: False, reason: "call-time transient: …"}` (ratified option **(b)**) | `llm_adapter.py:105-108` raises `NoSuitableModelError(decision_trace=call_trace)`; each entry `dataclasses.asdict(RouteCandidate(...reason=f"call-time transient: {exc}"))` | ✅ shape mirrors `RouteCandidate.asdict` |
-| **5.** audit invariant `requested(head) != used(fallback)` | by construction — every `RouteResult.model_id_requested = agent_config.default_model` (chain head); test asserts `model_id_requested == PRIMARY_ID`, `model_id_used == FALLBACK_ID`, `!=` | ✅ |
-| **6.** fail-on-revert test in `tests/api/test_llm_adapter.py`; provider double via local fake (no provider-error in prod code) | three sub-cases present (`test_transient_primary_falls_to_fallback`, `test_permanent_primary_propagates_no_fallback`, `test_all_transient_raises_no_suitable_model_error`); double is local `_ErrorOnCallProvider` — **no** error-injection added to production providers | ✅ |
-| **7.** ADR-002 D4 "Implemented" note, dated, same weight as agy-cli note; `plan_has_adr=false`, no Accept gate | `ADR-002.md:207-215` — `### 2026-06-12 (P6.2 / D1) — Implemented (call-time transient fallback)`; records (i) call-time half implemented via D-mech-A + (ii) safe-because side-effect-free content-gen (no double-actuation, ADR-003) | ✅ matches agy-cli precedent style/weight |
+Verified in a fresh `--all-extras` worktree on `2a1d28a`: `ruff format --check` is now **clean**
+on both touched files (`2 files already formatted`).
 
-**`select_viable_routes` faithfulness check** (the load-bearing new code): its per-candidate
-filter block (registry → capability → tools → health_check → accept) is **line-for-line
-identical** to `select_model_and_provider` (`router.py:210-282`), differing only in that it
-appends each pass to `viable` and continues instead of returning the first. The **first**
-element of its return therefore carries the byte-identical `decision_trace` that
-`select_model_and_provider` would return — the contract-preservation argument (plan §5 /
-AC D1.2) holds by structural identity, and is additionally proven by `select_model_and_provider`
-being literally untouched.
+---
 
-**Fail-on-revert independently exercised**: reverting the adapter loop to a single
-`routes[0].provider.call(...)` makes `test_transient_primary_falls_to_fallback` **fail**
-(primary's transient propagates instead of the fallback answering) and
-`test_all_transient_raises_no_suitable_model_error` **fail** (single call re-raises
-`TransientProviderError` instead of `NoSuitableModelError`). `test_permanent_*` still passes
-under revert — correct, Permanent propagates in both forms. Genuine revert-coupling.
+## Gate (fresh `--all-extras` worktree on `2a1d28a`)
 
-**Forcing functions honored**: no new `LLMPurpose` (diff on `purposes.py` is empty —
-verified); constitution suite (`tests/{llm,mcp,plugins,tools}/test_constitution.py`),
-`test_router.py`, and `test_e2e_fallback.py` (the health_check half) all pass unchanged.
+| Leg | Result |
+|---|---|
+| `ruff format --check` (touched files) | ✅ clean (Y1 resolved) |
+| `ruff check src tests` | ✅ `All checks passed!` |
+| `mypy src tests` | ✅ `Success: no issues found in 310 source files` |
+| `pytest` (full suite) | ✅ exit 0 |
+| targeted: router / e2e_fallback / llm_adapter / openai_compatible / constitution ×4 | ✅ 105 passed |
 
-**Out-of-scope honored**: no same-provider retry/backoff; no `.call()` loop inside the
-router (D-mech-B/C rejected); no change to the 429/5xx/timeout → `TransientProviderError`
-mapping; no enrichment of the router's pre-call trace beyond the exhaustion raise.
+The plan §4 forcing function ("full gate green: ruff + mypy + pytest") is now **met** — the
+single leg that failed at cycle-1 (`ruff format`) is green.
 
 ---
 
 ## Findings
 
-One 🟡 (gate-green forcing-function miss), no blocking. Plus two 🟢 informational.
+No blocking, no yellow. One 🟢 informational (carried from cycle-1, now partially retired):
 
-- **🟡-Y1 (plan §4 "full gate green" not met — `ruff format`).** `ruff format --check`
-  reformats `tests/llm/test_openai_compatible_provider.py`: the three new
-  `_make_provider(lambda r: httpx.Response(200, json=_tool_call_response(...)))` lines in
-  `TestToolCallArgumentsNormalization` are wrapped across three lines but fit on one at the
-  repo's `line-length=100`, so `ruff format` collapses them. I confirmed this with the repo's
-  ruff config (not default-88). The junior evidently ran `ruff check` (passes) but not
-  `ruff format` before commit. The plan's §4 forcing function — "Full gate green: ruff +
-  mypy + pytest" — and `docs/contributing.md:195` ("`ruff check` **and `ruff format`** must
-  pass") make this a genuine gate-green miss → **`needs_architect`**. **Trivial / mechanical,
-  zero logic or coverage impact**; remediation is `ruff format` + recommit on the impl branch.
-  (This is the same defect R0-A independently flagged as its Y1; I verified it under my own
-  plan §4 forcing-function lens.)
+- **🟢-2 (informational, unchanged).** With the adapter on `select_viable_routes`,
+  `select_model_and_provider` has **no `src/` caller** — but it is **not dead code**: it is the
+  single-route public contract exercised by ~30 `test_router.py` callers + constitution refs,
+  deliberately preserved (plan §5 back-compat). After the factor it is now a thin delegating
+  wrapper over `select_viable_routes`, which is the strongest possible expression of that
+  back-compat intent. Noted only so a future reader doesn't mistake the wrapper for redundancy.
 
-Two 🟢 informational notes (both **plan-sanctioned**, surfaced for visibility only —
-neither is a drift against the plan):
-
-- **🟢-1 (DRY / latent-divergence).** `select_viable_routes` **duplicates** ~50 lines of
-  the per-candidate filter block from `select_model_and_provider` rather than the two
-  sharing a private helper. The plan **explicitly authorized** this ("Junior may factor …
-  *or* … delegate … Either factoring is acceptable; the constraint is the unchanged
-  observable contract, not the internal shape") — so this is **within scope, not a
-  finding against the impl**. The only latent cost: a future change to the candidate-filter
-  logic must be mirrored in both functions or they silently diverge. Worth a sentence in
-  the meta/retro as a future-refactor candidate; **does not gate this slice**.
-- **🟢-2 (informational).** With the adapter switched to `select_viable_routes`,
-  `select_model_and_provider` now has **no `src/` caller** — it remains as the single-route
-  public contract exercised by its ~30 `test_router.py` callers + constitution refs. This is
-  the plan's deliberate contract-preservation choice (plan §5 back-compat constraint), **not**
-  dead code. Noted only so a future reader doesn't mistake it for unused.
+(Cycle-1 🟢-1 DRY/latent-divergence is **retired** — the duplication it flagged is gone.)
 
 ---
 
-## Verdict: `needs_architect`
+## Cycle-1 baseline (unchanged, recorded for the audit trail)
 
-**C1 + D1 logic is faithful to the plan** — every acceptance criterion met, every
-out-of-scope boundary respected, both fail-on-revert tests genuinely revert-coupled (I
-re-ran the reverts myself), no plan-外 expansion, no plan-implied logic drift. `ruff check`
-+ `mypy` + `pytest` all green. The **only** gap is **Y1**: `ruff format` was not run, so the
-slice fails the plan's own §4 "full gate green" forcing function on the format leg
-(one C1 test file, mechanical). That single miss is what moves this off `clean` →
-`needs_architect`. Trivial to remediate (`ruff format` + recommit). The two 🟢 notes are
-plan-sanctioned and informational.
+C1 + D1 **logic** was found faithful at cycle-1 and remains so (no logic touched this cycle):
+- **C1** — empty/blank tool-args string → `{}`; malformed `"{bad"` + missing-key still
+  `PermanentProviderError` (scope boundary held); fail-on-revert independently re-run.
+- **D1** — D-mech-A (router exposes ordered viable routes; adapter iterates); transient→next,
+  permanent→propagate, all-transient→`NoSuitableModelError`+trace (option **(b)**);
+  `requested(head) != used(fallback)` audit invariant by construction; ADR-002 D4 "Implemented"
+  note matching the agy-cli precedent weight (`plan_has_adr=false`, no Accept gate);
+  fail-on-revert independently re-run. No same-provider retry, no `.call()` in the router.
 
-> **Verdict correction note (RC-10).** This file was first committed (`90e9a12`) as
-> `verdict: clean` — at that point I had run only `ruff check`, not `ruff format`, and so
-> over-claimed "full gate green." On verifying the format leg I found Y1 and corrected the
-> verdict to `needs_architect`. The logic-faithfulness conclusion is unchanged; only the
-> gate-green claim and verdict are corrected. Flagging the over-claim transparently rather
-> than silently editing.
+The accepted-as-noted items (R0B-D1-2 eager health_check; R0B-D1-3 trace-discarded-on-fallback)
+and the separate follow-on (R0A-O1 51-file format drift → task #108) are the architect's routing
+dispositions and are **not** re-litigated here.
 
-### Ordering / concurrency note (surfaced)
+---
 
-Three review artifacts now sit on local `main` against the same `5838ce3`, committed
-near-simultaneously by independent sessions, with `origin/main` still at `2029d4d`
-(**none pushed**):
+## Verdict: `clean`
 
-- `2029d4d` — **R0-B** (cross-family, runtime-integration lens): `needs_architect`, 3🟡
-- `90e9a12` — **this plan-vs-impl** (senior, plan-faithfulness lens): `needs_architect`, 1🟡 (Y1)
-- `275aea2` — **R0-A** (architect-partner, deliverable-vs-spec lens): `needs_architect`, Y1 + O1
-
-The post-commit hook has auto-advanced state to **`awaiting_architect_decision`** (all three
-verdicts non-clean). I preserved cross-lens independence by **not** absorbing R0-A/R0-B
-findings into this review (I confirmed Y1 under my own §4 forcing-function lens, not by
-copying theirs). **I am not pushing**: the push would carry the concurrent R0-A commit
-(not mine), and routing the three `needs_architect` sets is the architect's call now that
-state is `awaiting_architect_decision`. Surfacing to the architect for the routing pass.
+The cycle-2 α-rework **faithfully** executes the architect's routing. The D1-1 factor is
+**behavior-preserving** — the delegation preserves `select_model_and_provider`'s observable
+contract byte-identically on all three exit paths (proven both structurally via the
+`tuple(candidates)` first-match snapshot and empirically via the unchanged caller suite), with
+no IndexError risk, no `LLMPurpose`, and the D-mech-A router-purity + adapter semantics intact.
+The Y1 ruff-format is resolved; **full gate is green**. No plan-外 expansion. The single cycle-1
+gap (Y1) that moved the verdict off `clean` is closed, and the cycle-1 DRY note is retired by the
+factor. **P6.2 is ready to merge.**
