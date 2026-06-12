@@ -10,6 +10,9 @@
 #                        (uses Max subscription quota; see ADR-003 for
 #                        capability constraints — cannot accept
 #                        orchestrator tool definitions)
+#   agy_cli            — Google/Gemini models via the Antigravity (agy) CLI
+#                        subprocess; cannot accept orchestrator tool definitions
+#                        (same structural constraint as claude_code_cli)
 #   mock               — test-only, deterministic responses
 
 providers:
@@ -25,6 +28,22 @@ providers:
       # ANTHROPIC_BASE_URL in the subprocess.  MUST be in
       # trusted_base_urls (fail-closed allowlist checked at startup).
       # Omit both fields to use the default Anthropic endpoint.
+      # base_url: "https://my-trusted-proxy.internal/v1"
+      # trusted_base_urls:
+      #   - "https://my-trusted-proxy.internal/v1"
+
+  # Google/Gemini models routed through the Antigravity CLI.
+  # Requires `pip install agy` (or equivalent) and a logged-in Google account.
+  # Note: agy honors AGY_BASE_URL for alt-backend routing; the allowlist
+  # below enforces the same fail-closed pattern as claude_code_cli.
+  google_via_agy:
+    type: agy_cli
+    params:
+      cli_path: agy             # absolute path or PATH-resolved
+      timeout_s: 600
+      # Alt-backend support: base_url redirects AGY_BASE_URL in the
+      # subprocess.  MUST be in trusted_base_urls (fail-closed allowlist).
+      # Omit both fields to use the default Google/Gemini endpoint.
       # base_url: "https://my-trusted-proxy.internal/v1"
       # trusted_base_urls:
       #   - "https://my-trusted-proxy.internal/v1"

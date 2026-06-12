@@ -203,3 +203,11 @@ P2.7-S2 (ADR-023 D1–D3) introduces a deployment-wide cost/quality override tha
 The 4th layer is a **deterministic code transform**, not a new judgment surface (ADR-023 D2): a pure function `apply_global_override(chain, override, models) -> chain` filters/reorders the candidate `[default_model, *fallback_chain]` over **static `ModelProfile` attributes** (cost, capability count) *before* the router (`select_model_and_provider`) walks it. It **composes with — never bypasses** — Decision 4's fallback semantics: the transformed chain is still subject to the per-candidate required-capability / provider-exists / tools-support / health filters. If the override empties the chain, the router raises `NoSuitableModelError` (Decision 5 fail-loud), never a silent unfiltered fallback.
 
 This amendment is **additive**: every existing config (no `llm_override.yaml`) loads and routes exactly as before; the new `override` parameter on `select_model_and_provider` defaults to `None`. Effort-on-model (Decision 2), `fallback_chain` excludes `default_model` (Decision 3), and fail-loud startup validation (Decision 5) are **unchanged**. Constitutional guarantee (ADR-023 D3): the override path makes **no** `LLMProvider.call` (structural test) and adds **no** routing/judgment `LLMPurpose` — routing stays code (Principle 5; `llm-layer.md:11-14`).
+
+### 2026-06-11 (agy-cli-provider) — Implemented
+
+**Amendment to Decision 5 — register `agy_cli` as a new provider type.**
+
+`ProviderType.AGY_CLI` is added to the enumerated provider set, following the same "new type = new module + `PROVIDER_TYPE_REGISTRY` entry" contract as `CLAUDE_CODE_CLI` and `OPENAI_COMPATIBLE`. The new `AgyCliProvider` wraps the Antigravity (`agy`) CLI subprocess to route Google/Gemini model calls.
+
+Structural stance: `can_use_orchestrator_tools()` returns `False` and `call()` rejects tool-bearing requests with `ToolsNotSupportedError`, mirroring the ADR-003 constraint for `claude_code_cli`. No new `LLMPurpose` is introduced. The provider is a pure additive content-gen surface; constitutional spine and routing logic are unchanged.

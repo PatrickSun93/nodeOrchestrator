@@ -60,7 +60,11 @@ def parse_agy_cli_output(
 
     content = data.get("content", "")
     if isinstance(content, list):
-        text_parts = [str(b.get("text", "")) for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        text_parts = [
+            str(b.get("text", ""))
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        ]
         content = "\n".join(text_parts)
     elif not isinstance(content, str):
         content = str(content)

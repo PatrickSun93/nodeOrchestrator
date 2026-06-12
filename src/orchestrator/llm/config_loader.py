@@ -38,8 +38,8 @@ from pydantic import ValidationError
 from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.llm.exceptions import ConfigError
 from orchestrator.llm.protocol import LLMProvider
-from orchestrator.llm.providers.claude_code_cli import ClaudeCodeCliProvider
 from orchestrator.llm.providers.agy_cli import AgyCliProvider
+from orchestrator.llm.providers.claude_code_cli import ClaudeCodeCliProvider
 from orchestrator.llm.providers.mock import MockProvider
 from orchestrator.llm.providers.openai_compatible import OpenAICompatibleProvider
 from orchestrator.llm.router import ModelRegistry, ProviderRegistry

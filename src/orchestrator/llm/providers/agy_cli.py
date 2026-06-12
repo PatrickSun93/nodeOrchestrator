@@ -2,6 +2,17 @@
 
 Similar to the Claude Code CLI provider, this invokes a local CLI tool
 and parses the JSON output into an LLMResponse.
+
+Alt-backend support: the optional ``base_url`` field redirects
+AGY_BASE_URL in the child subprocess — allowing the CLI to talk to a
+trusted proxy or staging endpoint.  Security contract:
+
+- ``base_url`` MUST be in ``trusted_base_urls`` (fail-closed allowlist,
+  checked at construction time in ``__post_init__``).  An untrusted URL
+  raises ``ConfigError`` immediately.
+- The child subprocess env is built explicitly via ``_build_child_env()``,
+  which always strips any AGY_BASE_URL inherited from the parent process
+  before optionally injecting the allowlisted ``base_url`` value.
 """
 
 from __future__ import annotations
@@ -21,7 +32,6 @@ from orchestrator.llm.exceptions import (
 )
 from orchestrator.llm.parsers.agy_cli_output import parse_agy_cli_output
 from orchestrator.llm.types import (
-    Capability,
     LLMRequest,
     LLMResponse,
     ModelId,
@@ -70,6 +80,8 @@ class AgyCliProvider:
         return env
 
     def can_use_orchestrator_tools(self) -> bool:
+        # Structural property of the CLI; not a per-instance choice.
+        # Do not override.
         return False
 
     def health_check(self) -> bool:
@@ -99,7 +111,7 @@ class AgyCliProvider:
         if request.tools:
             raise ToolsNotSupportedError(
                 f"agy_cli provider rejects tool-bearing requests "
-                f"; request had {len(request.tools)} tool(s)"
+                f"(request had {len(request.tools)} tool(s))"
             )
 
         args: list[str] = [
@@ -111,44 +123,52 @@ class AgyCliProvider:
 
         if request.temperature is not None:
             args.extend(["--temperature", str(request.temperature)])
-        elif model.default_temperature is not None:
-            args.extend(["--temperature", str(model.default_temperature)])
 
-        system_text = "\n\n".join(request.system)
-        user_text = "\n\n".join(msg.content for msg in request.messages if msg.role == "user")
-        assistant_text = "\n\n".join(msg.content for msg in request.messages if msg.role == "assistant")
-
-        # Basic flattened stdin formulation
-        stdin_content = ""
+        system_text = request.system or ""
+        prompt_parts: list[str] = []
         if system_text:
-            stdin_content += f"System: {system_text}\n\n"
-        stdin_content += user_text
+            prompt_parts.append(f"[System]\n{system_text}")
+        for msg in request.messages:
+            prompt_parts.append(f"[{msg.role.title()}]\n{msg.content}")
+        stdin_data = "\n\n".join(prompt_parts).encode("utf-8")
 
         t0 = time.monotonic()
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *args,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 env=self._build_child_env(),
-            )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(input=stdin_content.encode("utf-8")),
-                timeout=self.timeout_s,
             )
         except FileNotFoundError as exc:
             raise ProviderUnhealthyError(
                 f"agy binary not found at {self.cli_path!r}"
             ) from exc
-        except asyncio.TimeoutError as exc:
+        except OSError as exc:
+            raise ProviderUnhealthyError(f"agy CLI launch failed: {exc}") from exc
+
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(input=stdin_data),
+                timeout=self.timeout_s,
+            )
+        except (TimeoutError, asyncio.CancelledError) as exc:
+            try:
+                process.kill()
+                await process.wait()
+            except (ProcessLookupError, OSError):
+                pass
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             raise TransientProviderError(
                 f"agy_cli timed out after {self.timeout_s}s"
             ) from exc
 
+        latency_ms = int((time.monotonic() - t0) * 1000)
         stdout_str = stdout_bytes.decode("utf-8", errors="replace")
         stderr_str = stderr_bytes.decode("utf-8", errors="replace")
-        latency_ms = int((time.monotonic() - t0) * 1000)
 
         if process.returncode != 0:
             err_lower = stderr_str.lower()
@@ -162,9 +182,9 @@ class AgyCliProvider:
 
         return parse_agy_cli_output(
             raw_stdout=stdout_str,
-            request_id=request.id,
+            request_id=request.request_id,
             model_id_requested=model_id_requested,
-            model_id_used=model.provider_model_id,
+            model_id_used=model.id,
             provider_id=self.provider_id,
             latency_ms=latency_ms,
         )

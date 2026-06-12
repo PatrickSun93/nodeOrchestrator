@@ -432,9 +432,9 @@ class TestExampleConfigs:
 
     def test_load_example_providers(self) -> None:
         registry = load_providers(EXAMPLES_DIR / "llm_providers.yaml.example")
-        # 5 providers in the example: anthropic_via_claude_code,
-        # deepseek, ollama_local, mlx_local, mock.
-        assert len(registry.all()) == 5
+        # 6 providers in the example: anthropic_via_claude_code,
+        # google_via_agy, deepseek, ollama_local, mlx_local, mock.
+        assert len(registry.all()) == 6
 
     def test_load_example_models(self) -> None:
         providers = load_providers(EXAMPLES_DIR / "llm_providers.yaml.example")
