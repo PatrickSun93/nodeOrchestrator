@@ -221,25 +221,19 @@ class TestToolCallArgumentsNormalization:
     """C1 (P6.2): empty/blank arguments string → {} — fail-on-revert guard."""
 
     async def test_empty_string_arguments_normalizes_to_empty_dict(self) -> None:
-        provider = _make_provider(
-            lambda r: httpx.Response(200, json=_tool_call_response(""))
-        )
+        provider = _make_provider(lambda r: httpx.Response(200, json=_tool_call_response("")))
         resp = await _call(provider, _request(), _model())
         assert len(resp.tool_calls) == 1
         assert resp.tool_calls[0].arguments == {}
 
     async def test_blank_string_arguments_normalizes_to_empty_dict(self) -> None:
-        provider = _make_provider(
-            lambda r: httpx.Response(200, json=_tool_call_response("   "))
-        )
+        provider = _make_provider(lambda r: httpx.Response(200, json=_tool_call_response("   ")))
         resp = await _call(provider, _request(), _model())
         assert len(resp.tool_calls) == 1
         assert resp.tool_calls[0].arguments == {}
 
     async def test_malformed_json_arguments_still_raises_permanent(self) -> None:
-        provider = _make_provider(
-            lambda r: httpx.Response(200, json=_tool_call_response("{bad"))
-        )
+        provider = _make_provider(lambda r: httpx.Response(200, json=_tool_call_response("{bad")))
         with pytest.raises(PermanentProviderError, match="malformed tool_call"):
             await _call(provider, _request(), _model())
 
