@@ -271,7 +271,12 @@ def _parse_chat_completion(
     for tc in message.get("tool_calls") or []:
         try:
             args_raw = tc["function"]["arguments"]
-            arguments = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
+            # Empty/blank string means "no parameters" (OpenAI-compat no-arg convention).
+            # Only run json.loads on a non-blank string; empty/blank str → {}; non-str falsy → {}.
+            if isinstance(args_raw, str):
+                arguments = json.loads(args_raw) if args_raw.strip() else {}
+            else:
+                arguments = args_raw or {}
             tool_calls.append(
                 ToolCall(
                     id=tc["id"],
