@@ -2,187 +2,151 @@
 artifact: R0-A review
 subject: agy-cli (Antigravity CLI) LLM provider — externally authored
 branch: origin/claude/agy-cli-provider
-commit: 626c6a2
+commit: 4628781
+base: 626c6a2 (round-1 reviewed commit)
+round: 2 (re-review; supersedes round-1 blocking)
 reviewer_role: architect-partner (manual dispatch, non-standard slice)
-verdict: blocking
+verdict: clean
 date: 2026-06-11
 gates:
-  ruff: fail        # 6 errors
-  mypy: fail        # 5 errors (files=src,tests, 307 files checked)
-  pytest: pass      # 2460 passed — existing suite unaffected; agy has zero tests
+  ruff: pass        # All checks passed!
+  mypy: pass        # files=src,tests — Success, no issues in 309 source files
+  pytest: pass      # 2510 passed (2460 baseline + 50 new agy: parser 21 + provider 29)
+supersedes: round-1 R0-A @ 626c6a2 (verdict blocking)
 summary: >
-  Constitutional/spine impact is CLEAN and the subprocess-security pattern is
-  faithfully ported from claude_code_cli. But the provider fails 2 of 3 static
-  gates and carries three first-invocation-fatal runtime bugs, with zero tests.
-  Not mergeable as-is. No routing/scope/constitutional/new-ADR decision is
-  implicated — every finding is a within-surface defect with a mechanical fix.
+  Every round-1 blocking defect is fixed and independently re-verified
+  against the resolved types: B1 default_temperature removed, B2/B3 field
+  + type corrected, B4 system str|None guarded, B5 ruff clean, B6 two test
+  files added (50 tests, asyncio_mode=auto so they truly run), Y1 multi-turn
+  stdin preserved, Y2 subprocess lifecycle (kill-on-timeout + CancelledError
+  re-raise + OSError-on-launch) ported faithfully from the reference. All
+  three gates run green in an isolated worktree. Spine remains clean — no
+  spine file in the diff, zero LLMPurpose reference in agy source, purposes.py
+  untouched. No routing / scope / constitutional / new-ADR decision implicated.
+  Mergeable.
 ---
 
-# R0-A — agy-cli LLM provider (external) @ 626c6a2
+# R0-A (round 2) — agy-cli LLM provider (external) @ 4628781
 
-**Scope reviewed:** 5 files, +291 / −0 vs `origin/main`.
-`types.py` (`ProviderType.AGY_CLI`), `providers/agy_cli.py` (new `AgyCliProvider`),
-`parsers/agy_cli_output.py` (new parser), `config_loader.py` + `providers/__init__.py`
-(registration).
+**Scope re-reviewed:** the fix commit `4628781` on top of the round-1
+external commit `626c6a2`. Fix diff = `agy_cli.py` + `agy_cli_output.py`
+parser + `config/llm_providers.yaml.example` + ADR-002 "Implemented" note +
+`config_loader.py` import-sort + `test_config_loader.py` count bump + two new
+test files. Full branch vs `origin/main`: +1007 / −3, 10 files.
 
-**Method:** read-only on shared tree (`git show` / `git diff origin/main...`);
-gates run in an isolated detached worktree @ 626c6a2 with `uv sync --all-extras`.
+**Method:** read-only on the shared tree (`git show` / `git diff
+626c6a2..` for the fix, `origin/main...` for the full change); gates run in
+an isolated detached worktree @ `4628781` with `uv sync --all-extras`.
+Reference baseline throughout: `claude_code_cli` provider + its two test files.
 
-**Verdict: `blocking`.** Spine clean; security pattern good; but gates red + three
-fatal runtime bugs + no tests. Bounce to author for must-fixes, then re-review.
-
----
-
-## Gate results (empirical)
-
-| Gate | Result | Detail |
-|---|---|---|
-| **ruff** | ❌ FAIL | 6 errors: `I001` (config_loader import unsorted — `agy_cli` must precede `claude_code_cli`), `F401` (`Capability` imported-unused), `F841` (`assistant_text` assigned-unused), `E501` ×2 (agy_cli_output.py:63, agy_cli.py:119), `UP041` (`asyncio.TimeoutError`→`TimeoutError`). 3 auto-fixable. |
-| **mypy** (`files=src,tests`, 307 files) | ❌ FAIL | 5 errors, all `agy_cli.py`: `default_temperature` attr ×2 (L114-115), `system` join arg-type (L117), `request.id` attr (L165), `model_id_used` arg-type (L167). |
-| **pytest** | ✅ PASS | 2460 passed. Existing suite unaffected by the registration import — but **only because nothing exercises agy** (zero agy tests). The runtime bugs below are entirely latent. |
-
----
-
-## Findings by review focus
-
-### Focus 1 — Constitutional / spine: ✅ CLEAN
-
-Zero spine impact, confirmed by reading all 5 files:
-
-- Does **not** touch the autonomy gate, `_execute_local_call`, the COUNTDOWN spine,
-  or `run_pipeline`. Pure content-gen provider.
-- **No new `LLMPurpose`** — neither provider nor parser references `LLMPurpose`;
-  routing is untouched. (No α/β/γ re-routing surface introduced.)
-- `ProviderType.AGY_CLI` is an **additive** member of the ADR-002 provider set,
-  enumerated exactly like `CLAUDE_CODE_CLI` / `OPENAI_COMPATIBLE` / `MOCK`. The
-  `PROVIDER_TYPE_REGISTRY` entry follows the documented "new type = new module +
-  registry entry" contract.
-- `can_use_orchestrator_tools()` returns `False` and `call()` rejects tool-bearing
-  requests with `ToolsNotSupportedError` → cannot become a tool-execution / autonomy
-  surface. Correct, mirrors ADR-003 precedent.
-- **No ADR required** (additive content-gen provider within established ADR-002/003
-  pattern). Author correctly added none.
-
-### Focus 2 — Provider-pattern consistency vs `claude_code_cli`
-
-The interface *shape* is correct: dataclass `provider_id` field, `can_use_orchestrator_tools`,
-sync `health_check` (faithfully mirrors the reference, including the PATH/abs-path guard),
-async `call()` — structurally satisfies the `LLMProvider` protocol. But the request→argv
-translation references three fields that **do not exist on the resolved types**:
-
-- 🔴 **B1 — `model.default_temperature` (agy_cli.py:114-115).** `ModelProfile` has no
-  `default_temperature` field (it has `default_effort`). On the common path
-  (`request.temperature is None`) this raises `AttributeError`. mypy: `attr-defined` ×2.
-
-- 🔴 **B2 — `request.id` (agy_cli.py:165).** `LLMRequest` exposes `request_id`, not `id`.
-  Raises `AttributeError` on **every** call. Reference uses `request.request_id`. mypy:
-  `attr-defined`.
-
-- 🔴 **B3 — `model_id_used=model.provider_model_id` (agy_cli.py:167).** Semantically wrong
-  *and* a type error: `model_id_used` must be the internal `ModelId` (`model.id`), not the
-  provider wire id (`provider_model_id: str`). Reference passes `model.id`. mypy: `arg-type`
-  (`str` vs `ModelId`).
-
-- 🟡 **Y2 — subprocess lifecycle gaps vs reference.** `call()` on timeout raises
-  `TransientProviderError` **without** `proc.kill()` / `await proc.wait()` → orphaned child
-  leak. It also (a) does not handle `asyncio.CancelledError` (reference kills child +
-  re-raises), and (b) does not catch `OSError` from `create_subprocess_exec` → an
-  out-of-band `OSError` can escape, violating the protocol contract ("only `ProviderError`
-  subclasses should escape").
-
-- 🟢 **G1 — no effort plumbing.** Reference maps `effort`→`--effort` for `EFFORT`-capable
-  models; agy silently drops `request.effort_level`. Plausibly intentional for Gemini —
-  but confirm intent (this is also why `Capability` ended up imported-unused).
-
-- 🟢 **G2 — `time.monotonic` vs reference `time.perf_counter`** for latency. Both fine; noted
-  only as a needless divergence.
-
-### Focus 3 — Subprocess security: ✅ GOOD (strongest part of the change)
-
-The security-critical pattern is faithfully ported from the `claude_code_cli` Y2-alpha
-MUST-FIX:
-
-- **No shell-injection surface.** `asyncio.create_subprocess_exec(*args)` with a `list` argv
-  (no `shell=True`, no string interpolation). `model_id` / `temperature` are discrete argv
-  items; prompt text goes over the stdin pipe, never argv.
-- **`base_url` fail-closed allowlist** in `__post_init__`: a non-`None` `base_url` not in
-  `trusted_base_urls` raises `ConfigError` at construction, before any subprocess. Correct.
-- **`_build_child_env()` strips inherited `AGY_BASE_URL`** before optionally injecting the
-  allowlisted value → a hostile parent-env value cannot bypass the allowlist. Mirrors the
-  `ANTHROPIC_BASE_URL` contract exactly.
-- `health_check` runs `agy --version` with the sanitized child env. Consistent.
-- stderr transient-marker list is identical to the reference → reasonable classification.
-
-(Caveat outside code scope: that `agy` actually honors `AGY_BASE_URL` is a binary-contract
-assumption, not verifiable here. Worth a one-line note in the eventual config example.)
-
-### Focus 4 — Parser robustness: ✅ mostly fail-safe
-
-Content path is genuinely defensive: malformed JSON → `PermanentProviderError`; non-dict
-top-level → `PermanentProviderError`; missing `content` → `""`; list-of-blocks handled,
-non-str coerced; missing/non-dict `usage` → zeros with `or 0` null-guards; non-str / unknown
-`finish_reason` → `"stop"`. Two notes:
-
-- 🟡 **Y3 — tool_call `arguments` shape assumption.** `tc["function"]["arguments"] or {}` is
-  handed to `ToolCall.arguments: dict[str, Any]`. OpenAI's actual wire format encodes
-  tool-call arguments as a **JSON-encoded string**, not an object — that would raise
-  `ValidationError` → `PermanentProviderError`. Low-impact today (tools are rejected upstream,
-  so this branch is dead/untested), but it would mis-handle the real shape if ever reached.
-- 🟢 **G/E501** at agy_cli_output.py:63 (content-block comprehension) — style only, but
-  gate-breaking.
-
-### Focus 5 — Test gap: 🔴 must-fix
-
-- 🔴 **B6 — zero tests.** Parity bar: `claude_code_cli` ships `test_claude_code_cli_provider.py`
-  **and** `test_claude_code_output_parser.py`. agy ships neither. A new subprocess provider
-  with no tests is a hard must-fix. Required coverage:
-  - **provider:** happy path (mocked subprocess); tool-bearing → `ToolsNotSupportedError`;
-    timeout → `TransientProviderError` (+ assert child killed); non-zero exit transient vs
-    permanent classification; missing binary → `ProviderUnhealthyError`; `health_check`
-    true/false; `base_url` not in allowlist → `ConfigError`; `AGY_BASE_URL` env stripping.
-  - **parser:** happy path; malformed JSON; non-dict; missing/garbage `usage`; `content` as
-    list vs str; unknown `finish_reason`; malformed `tool_call`.
-- **Throughline:** a *single* happy-path provider test would have caught B1/B2 on the first
-  assertion (the call raises `AttributeError` before returning). The absence of tests is
-  precisely why three fatal bugs shipped.
-
-### Focus 6 — Config / docs
-
-- 🟡 **Y4 — `config/llm_providers.yaml.example` not updated.** That file documents each
-  provider type under a "Provider types:" header and gives a copy-paste block per provider;
-  `agy_cli` is absent → a user cannot discover or configure it (the provider is functional
-  only if they already know to write `type: agy_cli`). The `providers/__init__.py` "P1 set"
-  docstring *was* updated (good) — the user-facing example was not. Add an `agy_cli` block
-  (with the `base_url` / `trusted_base_urls` allowlist note) for parity with the
-  `claude_code_cli` entry.
-- No ADR / ADR-002 amendment required (additive, non-spine). Correct as-is.
-
-### Nits
-
-- 🟢 **G3** — `ToolsNotSupportedError` message has a stray `" ; "` (space-semicolon): `"…requests
-  ; request had …"`.
+**Verdict: `clean`.** Bounces from round-1 `blocking`. All eight tracked
+defects (B1–B6, Y1, Y2) verified fixed; gates empirically green; spine
+re-confirmed untouched.
 
 ---
 
-## Must-fix checklist (for the author, before re-review)
+## Gate results (empirical — isolated worktree @ 4628781)
 
-1. **B1** `model.default_temperature` → use `request.temperature` only, or add the field /
-   drop the `elif` (ModelProfile has no temperature default).
-2. **B2** `request.id` → `request.request_id`.
-3. **B3** `model_id_used=model.provider_model_id` → `model.id`.
-4. **B4** `"\n\n".join(request.system)` → handle `str | None` as a scalar (guard `if request.system`),
-   matching the reference. Current code crashes when `system is None` (the default) and
-   character-corrupts a non-empty system string.
-5. **B5** ruff clean: fix I001 (move `agy_cli` import above `claude_code_cli`), remove unused
-   `Capability` import, resolve the `assistant_text` dead variable (see Y1), wrap the two E501
-   lines, `asyncio.TimeoutError`→`TimeoutError`.
-6. **B6** add provider + parser tests (coverage list above).
-7. **Y1** decide multi-turn stdin: currently only system + user messages reach stdin;
-   assistant turns are dropped (the `assistant_text` F841 is the fingerprint of this
-   half-wired logic). Reference preserves all messages with role labels — match it, or
-   document why agy collapses history.
-8. **Y2** add kill-on-timeout + `CancelledError` + `OSError`-on-launch handling.
-9. **Y3 / Y4 / G1 / G3** as noted (lower priority).
+| Gate | Round 1 | Round 2 | Detail |
+|---|---|---|---|
+| **ruff** | ❌ 6 errors | ✅ **pass** | `All checks passed!` — I001 / F401 / F841 / E501×2 / UP041 all gone. |
+| **mypy** (`files=src,tests`) | ❌ 5 errors | ✅ **pass** | `Success: no issues found in 309 source files` (+2 = new test files). |
+| **pytest** | ✅ 2460 (agy = 0) | ✅ **pass** | **2510 passed** (exit 0). +50 agy tests: parser 21 + provider 29. |
 
-Re-run `ruff check` + `uv run mypy` + `uv run pytest` to green before re-dispatch. B1/B2/B4
-each crash the first real invocation, so a happy-path test is the fastest proof of fix.
+`asyncio_mode = "auto"` (`pyproject.toml:47`) confirmed — the bare `async def`
+provider tests genuinely execute (not silently skipped); the agy-only run shows
+50/50 green.
+
+---
+
+## Round-1 blocking items — verification
+
+| # | Round-1 finding | Status | Evidence @ 4628781 |
+|---|---|---|---|
+| **B1** | `model.default_temperature` (attr doesn't exist; `AttributeError` on common path) | ✅ fixed | The `elif model.default_temperature …` branch is **deleted**; `--temperature` now flows only from `request.temperature is not None`. Guarded by `test_no_temperature_when_not_set`. |
+| **B2** | `request.id` → `AttributeError` every call | ✅ fixed | `request_id=request.request_id` (agy_cli.py call into parser). Implicitly exercised by every happy-path test (an LLMResponse cannot return otherwise). |
+| **B3** | `model_id_used=model.provider_model_id` (wrong field + `str`→`ModelId` type error) | ✅ fixed | `model_id_used=model.id`. Guarded by `test_model_id_used_is_model_id` (asserts `ModelId("agy_gemini_flash")`, not the wire id). |
+| **B4** | `"\n\n".join(request.system)` — crashes on `None`, char-splices a `str` | ✅ fixed | `system_text = request.system or ""` + `if system_text:` guard, emitting `[System]\n{…}` exactly like the reference. Guarded by `test_system_none_handled` + `test_system_str_sent_as_block` (latter explicitly asserts no character-splitting). |
+| **B5** | ruff red (I001, `Capability` F401, `assistant_text` F841, E501×2, UP041) | ✅ fixed | `Capability` import dropped; import order corrected (`agy_cli` before `claude_code_cli`); `assistant_text` gone (folded into B-Y1 fix); parser comprehension wrapped; `except (TimeoutError, asyncio.CancelledError)`. ruff green. |
+| **B6** | zero tests | ✅ fixed | `test_agy_cli_provider.py` (29) + `test_agy_cli_output_parser.py` (21). Coverage detail below. |
+| **Y1** | multi-turn stdin — assistant turns dropped (the `assistant_text` F841 fingerprint) | ✅ fixed | `for msg in request.messages: prompt_parts.append(f"[{msg.role.title()}]\n{msg.content}")` — all roles preserved with labels, matching the reference. Guarded by `test_all_messages_in_stdin` (user + assistant + user). |
+| **Y2** | subprocess lifecycle — no kill-on-timeout, no `CancelledError`, no `OSError`-on-launch | ✅ fixed | Now a **line-faithful port** of the reference: `except (TimeoutError, asyncio.CancelledError)` → `process.kill(); await process.wait()` (swallowing `ProcessLookupError`/`OSError`), re-raise on cancellation else `TransientProviderError`; spawn wrapped with `except OSError → ProviderUnhealthyError`. Guarded by `test_timeout_kills_subprocess`, `test_cancellation_kills_subprocess_and_propagates`, `test_kill_failure_does_not_mask_timeout`, `test_oserror_raises_unhealthy`. |
+
+G3 (round-1 nit: stray `" ; "` in the `ToolsNotSupportedError` message) is also
+fixed → `"(request had N tool(s))"`.
+
+---
+
+## New test coverage (B6) — assessment vs the dispatch checklist
+
+Architect's requested coverage was: error classification, `health_check`,
+timeout, system None/str, parser malformed input. All present:
+
+- **Error classification** — `FileNotFoundError`/`OSError` → `ProviderUnhealthyError`;
+  non-zero exit with rate-limit / `503` marker → `TransientProviderError`; non-zero
+  without marker → `PermanentProviderError`. ✅
+- **`health_check`** — unknown binary → False; `--version` rc 0 → True; rc≠0 → False;
+  `subprocess.TimeoutExpired` → False. ✅
+- **timeout** — `TransientProviderError` raised **and** child killed; kill-failure
+  doesn't mask the timeout; cancellation kills + re-propagates `CancelledError`. ✅
+- **system None / str** — both branches asserted, including the no-character-split guard. ✅
+- **parser malformed input** — non-JSON, top-level array, top-level string, malformed
+  `tool_call` (empty name → `ValidationError`→`PermanentProviderError`); plus content-as-list
+  flattening, non-text-block skip, non-str coercion, missing content/usage defaults,
+  every `_STOP_REASON_MAP` branch + unknown→`stop` + non-str→`stop`. ✅
+
+Also covers the security boundary the round-1 review praised: `base_url`
+allowlist (`ConfigError` on untrusted / empty allowlist) and `AGY_BASE_URL`
+parent-env stripping (unit + through-`call()` env assertion). The tests double as
+explicit regression guards for B1/B3/B4/Y1/Y2 — the single happy-path assertion
+that round-1 said "would have caught B1/B2" is now present and green.
+
+---
+
+## Spine / constitutional — re-confirmed CLEAN
+
+- **No spine file in the diff.** `git diff --name-only origin/main...4628781` filtered
+  for `purposes.py | autonomy/gate | _execute_local_call | countdown | run_pipeline | core/`
+  → **none**. The autonomy gate, `_execute_local_call`, the COUNTDOWN spine and
+  `run_pipeline` are byte-untouched.
+- **No new `LLMPurpose`.** agy source (provider + parser) contains zero `LLMPurpose`
+  references; `purposes.py` diff is empty. (The test file imports the pre-existing
+  `LLMPurpose.AGENT_RESPONSE` only to build a request fixture — not a new surface.)
+- **Routing untouched.** `can_use_orchestrator_tools() → False` (now carries a
+  "structural property … do not override" comment matching the ADR-003 precedent) and
+  `call()` rejects tool-bearing requests with `ToolsNotSupportedError`. agy cannot become
+  a tool-execution / autonomy surface; no α/β/γ re-routing introduced.
+- **ADR-002** received an additive "2026-06-11 (agy-cli-provider) — Implemented" note
+  registering `ProviderType.AGY_CLI` under the existing "new type = new module + registry
+  entry" contract and inscribing the no-tools structural stance. Additive, non-spine.
+
+---
+
+## Remaining non-blocking observations (dispositioned, not gating)
+
+- **Y3 (parser tool-call `arguments` shape)** — the parser still hands
+  `function.arguments` straight to `ToolCall.arguments: dict`. Real OpenAI wire format
+  encodes it as a JSON **string**, which would `ValidationError`→`PermanentProviderError`.
+  This branch is **dead** in normal operation (tools are rejected upstream;
+  `can_use_orchestrator_tools()→False`) and is now *safe* (the construction is wrapped in
+  `try/except ValidationError`). Acceptable to ship as-is; if agy ever grows tool support
+  this branch needs a JSON-string decode. Non-blocking.
+- **G1 (no effort plumbing)** — agy drops `request.effort_level` (no `--effort`), unlike the
+  reference's `Capability.EFFORT` mapping. Plausibly correct for Gemini; the dropped
+  `Capability` import (B5) is consistent with this stance. Non-blocking.
+- **G2 (`time.monotonic` vs reference `time.perf_counter`)** — both fine for latency.
+  Cosmetic divergence only.
+
+These were all ≤🟡 in round 1 and none block merge; flagged here only for the record.
+
+---
+
+## Bottom line
+
+`4628781` resolves the full round-1 must-fix checklist with empirical gate
+evidence and a test suite at parity with `claude_code_cli`. Spine and routing
+are clean; the change is a pure additive content-gen provider within the
+established ADR-002/003 pattern, correctly carrying an ADR-002 amendment note
+and a config-example entry. **Verdict: clean — mergeable.** No architect
+decision is implicated (no routing/scope/constitutional/new-ADR surface); the
+only open items are the three non-blocking observations above, none gating.
