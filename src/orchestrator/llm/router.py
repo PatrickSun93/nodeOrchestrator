@@ -116,54 +116,49 @@ async def select_model_and_provider(
 ) -> RouteResult:
     """Walk the agent's effective fallback chain; pick the first viable model.
 
-    The effective chain is ``[default_model, *fallback_chain]``.
-    ``fallback_chain`` does NOT include ``default_model`` — the router
-    prepends it. See ADR-002 for why we don't store the default twice.
+    Delegates to :func:`select_viable_routes` and returns the first result.
+    ``model_id_requested`` is the chain head (``agent_config.default_model``);
+    a fallback fires when it differs from ``model.id``.  The ``decision_trace``
+    on the returned result covers every candidate up to and including the match.
 
-    Algorithm::
-
-        candidates = []
-        chain = [agent_config.default_model, *agent_config.fallback_chain]
-        for model_id in chain:
-            profile = models.get(model_id)
-            if profile is None:
-                candidates.append(reject "model not in registry")
-                continue
-            missing = required_capabilities - profile.capabilities
-            if missing:
-                candidates.append(reject f"missing capability {missing}")
-                continue
-            provider = providers.get(profile.provider)
-            if provider is None:
-                candidates.append(reject "provider not in registry")
-                continue
-            if request.tools and not provider.can_use_orchestrator_tools():
-                candidates.append(reject "tools not supported")
-                continue
-            if not provider.health_check():
-                candidates.append(reject "unhealthy")
-                continue
-            candidates.append(accept "matched")
-            return RouteResult(
-                model=profile,
-                provider=provider,
-                model_id_requested=agent_config.default_model,
-                decision_trace=tuple(candidates),
-            )
-        raise NoSuitableModelError(decision_trace=candidates)
-
-    ``async def`` even though no awaitable is currently invoked here:
-    P1.4 will add concurrent routing for multi-agent turns, and
-    changing the function signature later means refactoring every
-    caller. Async is the right shape from day one.
+    ``async def`` because callers must already await routing; P1.4 adds
+    concurrent routing for multi-agent turns.
 
     Raises:
-        NoSuitableModelError: every model was rejected. The
+        NoSuitableModelError: every model was rejected.  The
             ``decision_trace`` attached to the exception explains
             each rejection in order.
     """
-    # Import here to avoid circular import at module level
-    # (override.py imports ModelRegistry from this module).
+    routes = await select_viable_routes(agent_config, request, models, providers, override)
+    return routes[0]
+
+
+async def select_viable_routes(
+    agent_config: AgentLLMConfig,
+    request: LLMRequest,
+    models: ModelRegistry,
+    providers: ProviderRegistry,
+    override: GlobalLLMOverride | None = None,
+) -> list[RouteResult]:
+    """Return ALL pre-call-viable routes for the agent's effective chain.
+
+    Applies the same per-candidate filters as ``select_model_and_provider``
+    (registry / capability / tools / health_check) but collects every
+    passing candidate rather than stopping at the first. Zero LLM calls
+    (health_check only) — the ``router.py:15`` invariant holds.
+
+    Used by the adapter's call-time transient fallback loop (D-mech-A,
+    ADR-002 D4 call-time half): the adapter tries each route's ``call()``
+    in order, falling through on ``TransientProviderError``.
+
+    Every ``RouteResult.model_id_requested`` is the chain head
+    (``agent_config.default_model``), matching the audit contract in
+    ``select_model_and_provider``.
+
+    Raises:
+        NoSuitableModelError: no viable candidate found (same exhaustion
+            shape as ``select_model_and_provider``).
+    """
     from orchestrator.llm.override import apply_global_override
 
     candidates: list[RouteCandidate] = []
@@ -172,12 +167,10 @@ async def select_model_and_provider(
         *agent_config.fallback_chain,
     ]
 
-    # Apply global override (Layer-4) before the router walks the chain.
     effective_chain, drop_reasons, kept_unknown_cost = apply_global_override(
         chain, override, models
     )
 
-    # Emit pre-filter trace entries for models dropped by the override.
     for model_id, reason in drop_reasons.items():
         candidates.append(
             RouteCandidate(
@@ -188,8 +181,6 @@ async def select_model_and_provider(
             )
         )
 
-    # Emit visibility entries for models kept despite unknown cost under a ceiling
-    # (ADR-023 D2: softness is never silent; ceiling check was bypassed for these).
     for model_id, reason in kept_unknown_cost.items():
         candidates.append(
             RouteCandidate(
@@ -200,12 +191,13 @@ async def select_model_and_provider(
             )
         )
 
-    # If the override filtered everything, fail loudly (ADR-002 Decision 5).
     if not effective_chain:
         raise NoSuitableModelError(
             f"global override filtered all models from chain {chain}",
             decision_trace=[dataclasses.asdict(c) for c in candidates],
         )
+
+    viable: list[RouteResult] = []
 
     for model_id in effective_chain:
         profile = models.get(model_id)
@@ -274,14 +266,19 @@ async def select_model_and_provider(
                 reason="matched",
             )
         )
-        return RouteResult(
-            model=profile,
-            provider=provider,
-            model_id_requested=agent_config.default_model,
-            decision_trace=tuple(candidates),
+        viable.append(
+            RouteResult(
+                model=profile,
+                provider=provider,
+                model_id_requested=agent_config.default_model,
+                decision_trace=tuple(candidates),
+            )
         )
 
-    raise NoSuitableModelError(
-        f"no suitable model in chain {effective_chain}",
-        decision_trace=[dataclasses.asdict(c) for c in candidates],
-    )
+    if not viable:
+        raise NoSuitableModelError(
+            f"no suitable model in chain {effective_chain}",
+            decision_trace=[dataclasses.asdict(c) for c in candidates],
+        )
+
+    return viable

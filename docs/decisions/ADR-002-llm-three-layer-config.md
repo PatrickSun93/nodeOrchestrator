@@ -204,6 +204,14 @@ The 4th layer is a **deterministic code transform**, not a new judgment surface 
 
 This amendment is **additive**: every existing config (no `llm_override.yaml`) loads and routes exactly as before; the new `override` parameter on `select_model_and_provider` defaults to `None`. Effort-on-model (Decision 2), `fallback_chain` excludes `default_model` (Decision 3), and fail-loud startup validation (Decision 5) are **unchanged**. Constitutional guarantee (ADR-023 D3): the override path makes **no** `LLMProvider.call` (structural test) and adds **no** routing/judgment `LLMPurpose` — routing stays code (Principle 5; `llm-layer.md:11-14`).
 
+### 2026-06-12 (P6.2 / D1) — Implemented (call-time transient fallback)
+
+**Amendment to Decision 4 — call-time `TransientProviderError` half now implemented.**
+
+`RealLLMRouter._async_call` (`api/llm_adapter.py`) now walks the pre-call-viable route list on `TransientProviderError` from `provider.call()`, falling through to the next provider and raising `NoSuitableModelError` + trace only when all viable providers are exhausted. `PermanentProviderError` propagates unchanged (no fallback). Implementation uses D-mech-A: `select_viable_routes` (new function in `router.py`) health-checks the whole chain once up-front and returns the ordered viable list; the adapter iterates, making zero routing decisions. Router purity (`router.py:15` — zero LLM calls) is preserved.
+
+Safe because `LLMProvider.call()` is side-effect-free content-gen (OpenAI-compat POSTs to `/chat/completions`, which returns tool-call *proposals* only; `claude_code_cli` + `agy_cli` set `can_use_orchestrator_tools()=False` — ADR-003). A `TransientProviderError` means no `LLMResponse` was produced → no tool actuation → no double-actuation risk. Tool execution is downstream of the LLM response, never inside `call()`.
+
 ### 2026-06-11 (agy-cli-provider) — Implemented
 
 **Amendment to Decision 5 — register `agy_cli` as a new provider type.**

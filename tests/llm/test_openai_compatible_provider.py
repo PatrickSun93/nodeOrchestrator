@@ -194,6 +194,50 @@ class TestToolCalls:
         assert resp.tool_calls[0].arguments == {"q": "X"}
 
 
+def _tool_call_response(arguments: str) -> dict[str, Any]:
+    """Build a mock HTTP response containing one tool_call with the given arguments string."""
+    return {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_c1",
+                            "type": "function",
+                            "function": {"name": "no_op", "arguments": arguments},
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+
+
+class TestToolCallArgumentsNormalization:
+    """C1 (P6.2): empty/blank arguments string → {} — fail-on-revert guard."""
+
+    async def test_empty_string_arguments_normalizes_to_empty_dict(self) -> None:
+        provider = _make_provider(lambda r: httpx.Response(200, json=_tool_call_response("")))
+        resp = await _call(provider, _request(), _model())
+        assert len(resp.tool_calls) == 1
+        assert resp.tool_calls[0].arguments == {}
+
+    async def test_blank_string_arguments_normalizes_to_empty_dict(self) -> None:
+        provider = _make_provider(lambda r: httpx.Response(200, json=_tool_call_response("   ")))
+        resp = await _call(provider, _request(), _model())
+        assert len(resp.tool_calls) == 1
+        assert resp.tool_calls[0].arguments == {}
+
+    async def test_malformed_json_arguments_still_raises_permanent(self) -> None:
+        provider = _make_provider(lambda r: httpx.Response(200, json=_tool_call_response("{bad")))
+        with pytest.raises(PermanentProviderError, match="malformed tool_call"):
+            await _call(provider, _request(), _model())
+
+
 class TestAuth:
     async def test_api_key_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MY_KEY", "sk-abc")
