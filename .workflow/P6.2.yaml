@@ -1,8 +1,8 @@
 task_id: P6.2
-state: awaiting_architect_decision
-cycle: 1
-last_transition_at: '2026-06-12T06:17:42.269386Z'
-cycle_started_at: '2026-06-12T05:11:24.826244Z'
+state: awaiting_junior_impl
+cycle: 2
+last_transition_at: '2026-06-12T06:25:38.479609Z'
+cycle_started_at: '2026-06-12T06:25:38.479609Z'
 override_history:
 - timestamp: '2026-06-12T05:32:54.313894Z'
   actor: architect
@@ -14,4 +14,20 @@ override_history:
     committed without frontmatter first → plan_has_adr=None → accept-gate path). No
     ADR to accept; correcting to junior_impl. (Recurring no-ADR-slice gotcha, cf.
     P6.1.)'
+- timestamp: '2026-06-12T06:25:34.999764Z'
+  actor: architect
+  from_state: awaiting_senior_revision
+  to_state: awaiting_architect_decision
+  reason: R0-A + R0-B needs_architect (D1-1 duplication / Y1 ruff-format / D1-2/D1-3
+    accept-noted / O1 separate follow-on); plan-vs-impl clean. Routing α-bundle in
+    architect-routing-on-impl.md. Taking the impl-rework override path.
+- timestamp: '2026-06-12T06:25:38.479609Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 α rework: R0B-D1-1 factor the ~140-line duplicated filter logic
+    into a shared _evaluate_candidates helper (both select_model_and_provider + select_viable_routes);
+    R0A-Y1 ruff format the C1 test file + recommit. Behavior-preserving, keep all
+    D1/back-compat tests green. D1-2/D1-3 accepted-noted, O1 → task #108. No spine/ADR
+    change. See architect-routing-on-impl.md.'
 requires_cross_family_review: true
