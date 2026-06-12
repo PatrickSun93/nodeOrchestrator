@@ -2,10 +2,10 @@
 task_id: P6.2
 round: plan-vs-impl
 reviewer: senior
-verdict: clean
+verdict: needs_architect          # Y1: ruff-format gate leg fails on the C1 test file (plan §4 "full gate green" not met) — trivial/mechanical, C1+D1 logic faithful & fail-on-revert-verified
 findings_count:
   blocking: 0
-  yellow: 0
+  yellow: 1
   green: 2
 reviewed_commit: 5838ce3
 reviewed_branch: origin/claude/P6.2-impl
@@ -32,8 +32,13 @@ files the plan named (`openai_compatible.py`, `router.py`, `llm_adapter.py`, `AD
 `tests/llm/test_openai_compatible_provider.py`, new `tests/api/test_llm_adapter.py`) —
 **zero plan-外 expansion**, no stray `.workflow/` self-advance commit on the impl branch.
 
-**Gate verified green** (fresh `--all-extras` worktree on 5838ce3): ruff clean, mypy
-`Success: no issues found in 310 source files`, full pytest `exit=0` (zero failures).
+**Gate** (fresh `--all-extras` worktree on 5838ce3): `ruff check` clean, `mypy`
+`Success: no issues found in 310 source files`, full `pytest exit=0` (zero failures).
+**But `ruff format --check` FAILS** on `tests/llm/test_openai_compatible_provider.py`
+(verified with the repo's `line-length=100` config) — see **Y1**. The plan's §4 forcing
+function requires the *full* gate green (`docs/contributing.md:195`: ruff includes
+**format**), so the slice does **not** currently pass its own forcing function. C1+D1
+logic is faithful and fail-on-revert-verified (below); the miss is purely the format leg.
 
 ---
 
@@ -100,8 +105,23 @@ mapping; no enrichment of the router's pre-call trace beyond the exhaustion rais
 
 ## Findings
 
-No blocking, no yellow. Two 🟢 informational notes (both **plan-sanctioned**, surfaced
-for R0 / architect visibility only — neither is a drift against the plan):
+One 🟡 (gate-green forcing-function miss), no blocking. Plus two 🟢 informational.
+
+- **🟡-Y1 (plan §4 "full gate green" not met — `ruff format`).** `ruff format --check`
+  reformats `tests/llm/test_openai_compatible_provider.py`: the three new
+  `_make_provider(lambda r: httpx.Response(200, json=_tool_call_response(...)))` lines in
+  `TestToolCallArgumentsNormalization` are wrapped across three lines but fit on one at the
+  repo's `line-length=100`, so `ruff format` collapses them. I confirmed this with the repo's
+  ruff config (not default-88). The junior evidently ran `ruff check` (passes) but not
+  `ruff format` before commit. The plan's §4 forcing function — "Full gate green: ruff +
+  mypy + pytest" — and `docs/contributing.md:195` ("`ruff check` **and `ruff format`** must
+  pass") make this a genuine gate-green miss → **`needs_architect`**. **Trivial / mechanical,
+  zero logic or coverage impact**; remediation is `ruff format` + recommit on the impl branch.
+  (This is the same defect R0-A independently flagged as its Y1; I verified it under my own
+  plan §4 forcing-function lens.)
+
+Two 🟢 informational notes (both **plan-sanctioned**, surfaced for visibility only —
+neither is a drift against the plan):
 
 - **🟢-1 (DRY / latent-divergence).** `select_viable_routes` **duplicates** ~50 lines of
   the per-candidate filter block from `select_model_and_provider` rather than the two
@@ -119,23 +139,37 @@ for R0 / architect visibility only — neither is a drift against the plan):
 
 ---
 
-## Verdict: `clean`
+## Verdict: `needs_architect`
 
-Both atoms faithfully realize the plan — every C1 + D1 acceptance criterion met, every
+**C1 + D1 logic is faithful to the plan** — every acceptance criterion met, every
 out-of-scope boundary respected, both fail-on-revert tests genuinely revert-coupled (I
-re-ran the reverts), no plan-外 expansion, no plan-implied invariant drift, full gate green.
-The two 🟢 notes are plan-sanctioned and informational.
+re-ran the reverts myself), no plan-外 expansion, no plan-implied logic drift. `ruff check`
++ `mypy` + `pytest` all green. The **only** gap is **Y1**: `ruff format` was not run, so the
+slice fails the plan's own §4 "full gate green" forcing function on the format leg
+(one C1 test file, mechanical). That single miss is what moves this off `clean` →
+`needs_architect`. Trivial to remediate (`ruff format` + recommit). The two 🟢 notes are
+plan-sanctioned and informational.
 
-**This `clean` is scoped to the plan-faithfulness lens only.** It makes no claim about the
-runtime-integration / failure-mode surface that R0-B covers independently — see below.
+> **Verdict correction note (RC-10).** This file was first committed (`90e9a12`) as
+> `verdict: clean` — at that point I had run only `ruff check`, not `ruff format`, and so
+> over-claimed "full gate green." On verifying the format leg I found Y1 and corrected the
+> verdict to `needs_architect`. The logic-faithfulness conclusion is unchanged; only the
+> gate-green claim and verdict are corrected. Flagging the over-claim transparently rather
+> than silently editing.
 
-### Ordering note (surfaced, not blocking)
+### Ordering / concurrency note (surfaced)
 
-`R0-B.md` (verdict `needs_architect`, 0🔴/3🟡/6🟢) is already committed on `main`
-(`2029d4d`) reviewing the same `5838ce3`, i.e. it landed **ahead of / in parallel with**
-this plan-vs-impl pass while the state remained `awaiting_senior_plan_vs_impl`. This reads
-as architect-orchestrated parallel dispatch of the cross-family lens (the two lenses are
-independent — `dual-lens-r0b.md`), and R0-B is committed to `main`, matching this dispatch's
-"push to main" instruction. I preserved independence by **not** absorbing R0-B's findings
-into this lens. Flagging the ordering only so the architect's routing pass accounts for both
-artifacts against `5838ce3`; routing R0-B's 3🟡 is the architect's call, not mine.
+Three review artifacts now sit on local `main` against the same `5838ce3`, committed
+near-simultaneously by independent sessions, with `origin/main` still at `2029d4d`
+(**none pushed**):
+
+- `2029d4d` — **R0-B** (cross-family, runtime-integration lens): `needs_architect`, 3🟡
+- `90e9a12` — **this plan-vs-impl** (senior, plan-faithfulness lens): `needs_architect`, 1🟡 (Y1)
+- `275aea2` — **R0-A** (architect-partner, deliverable-vs-spec lens): `needs_architect`, Y1 + O1
+
+The post-commit hook has auto-advanced state to **`awaiting_architect_decision`** (all three
+verdicts non-clean). I preserved cross-lens independence by **not** absorbing R0-A/R0-B
+findings into this review (I confirmed Y1 under my own §4 forcing-function lens, not by
+copying theirs). **I am not pushing**: the push would carry the concurrent R0-A commit
+(not mine), and routing the three `needs_architect` sets is the architect's call now that
+state is `awaiting_architect_decision`. Surfacing to the architect for the routing pass.
