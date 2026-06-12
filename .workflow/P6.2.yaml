@@ -1,7 +1,17 @@
 task_id: P6.2
-state: awaiting_senior_plan
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-12T05:25:19.168518Z'
+last_transition_at: '2026-06-12T05:32:54.313894Z'
 cycle_started_at: '2026-06-12T05:11:24.826244Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-12T05:32:54.313894Z'
+  actor: architect
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: 'No-ADR slice (W-002-2b): plan frontmatter has plan_has_adr=False (no ''adr''
+    key) → correct post-plan state is awaiting_junior_impl, not awaiting_architect_accept.
+    The post-commit hook transiently advanced senior_plan→architect_accept (plan likely
+    committed without frontmatter first → plan_has_adr=None → accept-gate path). No
+    ADR to accept; correcting to junior_impl. (Recurring no-ADR-slice gotcha, cf.
+    P6.1.)'
 requires_cross_family_review: true
