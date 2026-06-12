@@ -116,7 +116,8 @@ def record_preference(
     """Upsert a preference by (user_id, key, scope). Requires non-empty user_id.
 
     Exactly one row per (user_id, key, scope); a re-declaration updates the value
-    in place (latest-wins). Writes type=PREFERENCE, evidence={"declared_by": user_id}.
+    in place (latest-wins); created_at is preserved (only value/evidence mutate).
+    Writes type=PREFERENCE, evidence={"declared_by": user_id}.
     An LLM-inferred preference with no declaring user is un-representable
     (ADR-020 D2, Principle 11).
     """
@@ -129,6 +130,7 @@ def record_preference(
 
     # Read-modify-write: scan preferences with matching scope, filter in Python (no JSON1).
     existing_id: EntityId | None = None
+    existing_created_at: TimestampMs | None = None
     rows = conn.execute(
         "SELECT * FROM entity WHERE type = ? AND scope = ?",
         (EntityType.PREFERENCE.value, scope.value),
@@ -138,13 +140,15 @@ def record_preference(
         ev = json.loads(row["evidence"])
         if attrs.get("key") == key and ev.get("declared_by") == user_id:
             existing_id = EntityId(row["id"])
+            existing_created_at = TimestampMs(row["created_at"])
             break
 
-    if existing_id is not None:
+    if existing_id is not None and existing_created_at is not None:
         with conn:
+            # created_at is immutable across upserts — only value/evidence mutate (ADR-020 D2)
             conn.execute(
-                "UPDATE entity SET attributes = ?, evidence = ?, created_at = ? WHERE id = ?",
-                (json.dumps(new_attrs), json.dumps(new_evidence), ts, existing_id),
+                "UPDATE entity SET attributes = ?, evidence = ? WHERE id = ?",
+                (json.dumps(new_attrs), json.dumps(new_evidence), existing_id),
             )
         return Entity(
             id=existing_id,
@@ -152,7 +156,7 @@ def record_preference(
             attributes=new_attrs,
             scope=scope,
             evidence=new_evidence,
-            created_at=ts,
+            created_at=existing_created_at,
         )
 
     eid = generate_entity_id()

@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import io
 import zipfile
+from collections.abc import Generator
 from pathlib import Path
 
 import httpx
@@ -288,3 +289,88 @@ def test_ft7_atomic_staging_cleanup_on_failure(tmp_path: Path) -> None:
         else []
     )
     assert leftover_temps == [], f"leftover temp dirs: {leftover_temps}"
+
+
+# ---------------------------------------------------------------------------
+# ft9: oversized bundle — cap enforced DURING stream (bounded consumption)
+# ---------------------------------------------------------------------------
+
+
+def test_ft9_oversized_bundle_capped_during_stream_bounded(tmp_path: Path) -> None:
+    """A body >> cap is aborted DURING the stream — consumption bounded, not the full N (OOM fix).
+
+    Discriminating (fail-on-revert): revert to response.content (buffer-all) → httpx pulls
+    the entire generator → pulled["bytes"] == total_n → both bounded asserts fail.
+    """
+    from orchestrator.plugins.fetch import _MAX_BUNDLE_BYTES
+
+    chunk = 1024 * 1024  # 1 MB chunks
+    total_n = _MAX_BUNDLE_BYTES + 20 * chunk  # N >> cap
+    pulled: dict[str, int] = {"bytes": 0}
+
+    def _gen() -> Generator[bytes, None, None]:
+        produced = 0
+        while produced < total_n:
+            n = min(chunk, total_n - produced)
+            produced += n
+            pulled["bytes"] += n
+            yield b"x" * n
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_gen())
+
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    fetched_dir = tmp_path / "fetched"
+    with pytest.raises(FetchError, match="too large"):
+        fetch_plugin_bundle(
+            source_url="https://example.com/huge.zip",
+            expected_digest="sha256:" + "a" * 64,
+            plugin_id="huge",
+            fetched_plugins_dir=fetched_dir,
+            http_client=client,
+        )
+
+    # bounded: stopped within one chunk of the cap, did NOT pull the whole N
+    assert pulled["bytes"] <= _MAX_BUNDLE_BYTES + chunk
+    assert pulled["bytes"] < total_n
+    assert not (fetched_dir / "huge").exists()  # fetched_plugins_dir untouched (ft7 parallel)
+
+
+# ---------------------------------------------------------------------------
+# ft10: valid multi-chunk bundle — incremental hash gives correct digest
+# ---------------------------------------------------------------------------
+
+
+def test_ft10_valid_multichunk_streamed_stages(tmp_path: Path) -> None:
+    """Multi-chunk streaming still computes the correct sha256 and stages successfully.
+
+    Proves incremental hashing over a chunked response gives the same final
+    digest as a single-shot hash of the complete bytes.
+    """
+    bundle = _minimal_plugin_zip()
+    digest = _sha256(bundle)
+
+    chunk_size = 16  # very small chunks to exercise multi-chunk incremental hashing
+
+    def _chunked_handler(request: httpx.Request) -> httpx.Response:
+        def _chunks() -> Generator[bytes, None, None]:
+            offset = 0
+            while offset < len(bundle):
+                yield bundle[offset : offset + chunk_size]
+                offset += chunk_size
+
+        return httpx.Response(200, content=_chunks())
+
+    client = httpx.Client(transport=httpx.MockTransport(_chunked_handler))
+    fetched_dir = tmp_path / "fetched"
+
+    result = fetch_plugin_bundle(
+        source_url="https://example.com/multichunk.zip",
+        expected_digest=digest,
+        plugin_id="multichunk",
+        fetched_plugins_dir=fetched_dir,
+        http_client=client,
+    )
+
+    assert result == fetched_dir / "multichunk"
+    assert (result / "plugin.yaml").exists()

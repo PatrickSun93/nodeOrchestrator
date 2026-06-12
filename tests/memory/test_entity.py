@@ -239,6 +239,26 @@ class TestRecordPreference:
         assert prefs[0].attributes["value"] == "verbose"
         assert prefs[0].evidence["declared_by"] == "peidong"
 
+    def test_upsert_preserves_created_at(self) -> None:
+        """Upsert update preserves the original created_at (ADR-020 D2).
+
+        Discriminating: reverts SET … created_at = ts (the bug) → created_at becomes
+        t2 → both == 1000 asserts fail.
+        """
+        conn = _make_conn()
+        e1 = record_preference(
+            "response_style", "concise", user_id="peidong", conn=conn, now=TimestampMs(1000)
+        )
+        e2 = record_preference(
+            "response_style", "verbose", user_id="peidong", conn=conn, now=TimestampMs(2000)
+        )
+        prefs = list_preferences(user_id="peidong", conn=conn)
+        assert len(prefs) == 1  # still one row (upsert, not append)
+        assert prefs[0].attributes["value"] == "verbose"  # latest-wins value
+        assert prefs[0].created_at == 1000  # persisted row keeps t1, NOT t2
+        assert e1.created_at == 1000  # sanity: first call reports t1
+        assert e2.created_at == 1000  # second call's returned Entity also reports t1
+
     def test_different_users_different_rows(self) -> None:
         conn = _make_conn()
         record_preference("response_style", "concise", user_id="peidong", conn=conn)
