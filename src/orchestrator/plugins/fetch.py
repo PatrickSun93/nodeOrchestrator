@@ -32,8 +32,11 @@ import httpx
 
 _log = logging.getLogger("orchestrator.plugins.fetch")
 
-# Maximum bundle size accepted (50 MB) — oversized bundles refused before extraction.
+# Maximum bundle size accepted (50 MB) — enforced during stream, not post-hoc.
 _MAX_BUNDLE_BYTES: int = 50 * 1024 * 1024
+
+# Explicit timeout for the default (non-caller-supplied) httpx client.
+_FETCH_TIMEOUT_S: float = 30.0
 
 
 class FetchError(Exception):
@@ -55,8 +58,37 @@ def _parse_digest(digest_spec: str) -> tuple[str, str]:
     return alg, hex_val.lower()
 
 
-def _compute_sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def _stream_to_file(source_url: str, http_client: httpx.Client | None, dest_path: Path) -> str:
+    """Stream the body into dest_path, enforcing the size cap DURING the stream and
+    computing sha256 incrementally over the complete bytes. Returns the sha256 hex."""
+    hasher = hashlib.sha256()
+    total = 0
+
+    def _consume(response: httpx.Response) -> None:
+        nonlocal total
+        response.raise_for_status()
+        with open(dest_path, "wb") as f:
+            for chunk in response.iter_bytes():
+                total += len(chunk)
+                if total > _MAX_BUNDLE_BYTES:
+                    raise FetchError(
+                        f"bundle too large: > {_MAX_BUNDLE_BYTES} limit (capped during stream)"
+                    )
+                hasher.update(chunk)
+                f.write(chunk)
+
+    if http_client is not None:
+        with http_client.stream("GET", source_url) as response:
+            _consume(response)
+    else:
+        # Caller-supplied clients respect their own timeout; only default path sets one.
+        with (
+            httpx.Client(verify=True, timeout=_FETCH_TIMEOUT_S) as client,
+            client.stream("GET", source_url) as response,
+        ):
+            _consume(response)
+
+    return hasher.hexdigest()
 
 
 def _safe_member_path(member_path: str, staging_dir: Path) -> Path:
@@ -161,24 +193,22 @@ def fetch_plugin_bundle(
         )
         tmp_bundle = Path(tmp_bundle_str)
         try:
-            bundle_bytes = _download(source_url, http_client)
+            actual_digest = _stream_to_file(source_url, http_client, tmp_bundle)
+        except FetchError:
+            raise  # size-cap / status errors propagate verbatim
         except Exception as exc:
             raise FetchError(f"download failed from {source_url!r}: {exc}") from exc
 
-        tmp_bundle.write_bytes(bundle_bytes)
-
         # Step 3: Verify digest BEFORE any extraction (the ordering IS the security property)
-        if len(bundle_bytes) > _MAX_BUNDLE_BYTES:
-            raise FetchError(
-                f"bundle too large: {len(bundle_bytes)} bytes > {_MAX_BUNDLE_BYTES} limit"
-            )
-        actual_digest = _compute_sha256(bundle_bytes)
         _, expected_hex = _parse_digest(expected_digest)
         if actual_digest != expected_hex:
             raise FetchError(
                 f"digest mismatch for {source_url!r}: "
                 f"expected sha256:{expected_hex}, got sha256:{actual_digest}"
             )
+
+        # DP-3(a): verified + bounded ≤ _MAX_BUNDLE_BYTES → safe read-back for extraction
+        bundle_bytes = tmp_bundle.read_bytes()
 
         # Step 4: Extract to temp staging dir (traversal-guarded, AFTER digest passes)
         tmp_staging = Path(
@@ -217,20 +247,3 @@ def fetch_plugin_bundle(
         # Always clean up temp bundle (even on success; staging dir was renamed)
         if tmp_bundle is not None and tmp_bundle.exists():
             tmp_bundle.unlink(missing_ok=True)
-
-
-def _download(source_url: str, http_client: httpx.Client | None) -> bytes:
-    """Download from source_url, returning response bytes.
-
-    Uses caller-supplied httpx.Client or creates a minimal one with verify=True.
-    """
-    if http_client is not None:
-        response = http_client.get(source_url)
-        response.raise_for_status()
-        return response.content
-
-    # Default: host-built client with verify=True (TLS required, ADR-032 D2 parallel)
-    with httpx.Client(verify=True) as client:
-        response = client.get(source_url)
-        response.raise_for_status()
-        return response.content
