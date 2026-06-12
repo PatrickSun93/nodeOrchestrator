@@ -6,6 +6,7 @@ P1 set:
   Completions-shaped.
 - ``claude_code_cli`` — Anthropic models routed via the ``claude`` CLI
   subprocess (Max subscription quota).
+- ``agy_cli`` — Gemini models routed via the ``agy`` CLI subprocess.
 - ``mock`` — test-only deterministic provider.
 
 A new provider type means a new module here plus a registry entry in

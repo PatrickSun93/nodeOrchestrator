@@ -38,6 +38,7 @@ from pydantic import ValidationError
 from orchestrator.autonomy.scoring import ToolMeta
 from orchestrator.llm.exceptions import ConfigError
 from orchestrator.llm.protocol import LLMProvider
+from orchestrator.llm.providers.agy_cli import AgyCliProvider
 from orchestrator.llm.providers.claude_code_cli import ClaudeCodeCliProvider
 from orchestrator.llm.providers.mock import MockProvider
 from orchestrator.llm.providers.openai_compatible import OpenAICompatibleProvider
@@ -57,6 +58,7 @@ PROVIDER_TYPE_REGISTRY: dict[ProviderType, type[Any]] = {
     ProviderType.OPENAI_COMPATIBLE: OpenAICompatibleProvider,
     ProviderType.CLAUDE_CODE_CLI: ClaudeCodeCliProvider,
     ProviderType.MOCK: MockProvider,
+    ProviderType.AGY_CLI: AgyCliProvider,
 }
 """Maps each ``ProviderType`` to its concrete class. Adding a new
 provider type requires extending this map plus a new module under
