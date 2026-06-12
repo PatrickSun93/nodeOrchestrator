@@ -167,6 +167,8 @@ The `STATE_TRANSITION` event E maximizing `(E.timestamp, E.id)` ascending lex am
 
 Lex tie-break is consistent with ADR-015 D4 (same `(timestamp, event_id)` ordering convention). Per `StateTransitionMeta` at `core/event.py:259`, the `new_state` + `prior_state` fields are read via typed access (not dict access) for the `StateTransitionRef` construction.
 
+**[P6.1 A-i note]** The derived `(timestamp, id)` lex order stands as the inscribed decision; the store's separate `(timestamp, rowid)` insertion-order is unchanged (see `event_store.py:69-73`); rowid-ordering precondition re-reviewed at P6.1 — still holds; rowid-on-Event migration remains a future amendment, not opened here.
+
 ### 2.6 `decision_count` predicate
 
 `decision_count = |{e ∈ events : e.type ∈ {DECISION, DECISION_PIVOT, REJECTION, RETRACTION}}|`.

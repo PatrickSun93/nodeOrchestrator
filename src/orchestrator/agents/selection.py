@@ -162,7 +162,10 @@ def _render_snapshot_excerpt(snapshot: list[Event]) -> str | None:
     Trust framing (ADR-033 D6 R2-N1 / ADR-034 D3-iv / ADR-035 D3-iii): raw MCP TOOL_RESULT
     events (untrusted external bytes), subprocess TOOL_RESULT events (local-but-untrusted),
     and network TOOL_RESULT events (open-web, most-untrusted: attacker-authorable) are NOT
-    rendered. In-process local-tool TOOL_RESULT events (trusted, our own code) are rendered.
+    rendered. Untrusted-tool TOOL_FAILED events are excluded on the same basis (P6.1 B1):
+    the same external_result_ids correlation applies; trusted-local TOOL_FAILED events are
+    still rendered (guards against over-broad blanket exclusion, per ADR-033 D2 turn-loop
+    failure signal). In-process local-tool TOOL_RESULT/TOOL_FAILED (trusted) are rendered.
     ADR-033 D2/D6 / ADR-011 amendment / ADR-034 D3-iv / ADR-035 D3-iii.
     """
     external_result_ids = _external_output_tool_result_call_ids(snapshot)
@@ -170,7 +173,7 @@ def _render_snapshot_excerpt(snapshot: list[Event]) -> str | None:
         e for e in snapshot
         if e.type in _EXCERPT_EVENT_TYPES
         and not (
-            e.type == EventType.TOOL_RESULT
+            e.type in {EventType.TOOL_RESULT, EventType.TOOL_FAILED}
             and str(e.metadata.get("call_id", "")) in external_result_ids
         )
     ]
