@@ -25,6 +25,7 @@ import pytest
 from orchestrator.mcp.subprocess_trust import _SAFE_ENV_KEYS, scoped_env
 from orchestrator.tools.local import LocalToolError
 from orchestrator.tools.subprocess_tools import (
+    _GIT_ALLOW_PROTOCOL,
     _SUBPROCESS_TIMEOUTS,
     _dispatch,
     _SubprocessToolFn,
@@ -41,11 +42,15 @@ def _git_init(tmp_path: Path) -> None:
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=tmp_path, check=True, capture_output=True,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=tmp_path, check=True, capture_output=True,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -153,7 +158,9 @@ def test_git_log_max_count_clamped(tmp_path: Path) -> None:
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "init"],
-        cwd=tmp_path, check=True, capture_output=True,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
     )
     # Over-cap: 9999 → clamped to 100 (should not raise)
     result = _invoke("git_log", tmp_path, {"max_count": 9999})
@@ -212,7 +219,9 @@ def test_git_blame_happy_path(tmp_path: Path) -> None:
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "init"],
-        cwd=tmp_path, check=True, capture_output=True,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
     )
     result = _invoke("git_blame", tmp_path, {"path": "a.py"})
     assert "exit_code=0" in result.content
@@ -225,7 +234,9 @@ def test_git_log_happy_path(tmp_path: Path) -> None:
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "feat: B3"],
-        cwd=tmp_path, check=True, capture_output=True,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
     )
     result = _invoke("git_log", tmp_path, {})
     assert "exit_code=0" in result.content
@@ -260,9 +271,7 @@ def test_spawn_failure_raises_local_tool_error(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_timeout_raises_local_tool_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_timeout_raises_local_tool_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Timeout from run_scoped_command → LocalToolError with subprocess_timeout in message.
 
     Symmetric twin of test_spawn_failure_raises_local_tool_error.
@@ -350,13 +359,17 @@ def test_git_push_happy_path_local_remote(tmp_path: Path) -> None:
     _subprocess.run(
         ["git", "config", "user.name", "Test"], check=True, cwd=str(src), capture_output=True
     )
+    _subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        check=True,
+        cwd=str(src),
+        capture_output=True,
+    )
     (src / "f.txt").write_text("hello")
     _subprocess.run(["git", "add", "."], check=True, cwd=str(src), capture_output=True)
-    _subprocess.run(
-        ["git", "commit", "-m", "init"], check=True, cwd=str(src), capture_output=True
-    )
+    _subprocess.run(["git", "commit", "-m", "init"], check=True, cwd=str(src), capture_output=True)
 
-    result = _invoke("git_push", src, {"remote": str(bare), "branch": "main"})
+    result = _invoke("git_push", src, {"remote": "origin", "branch": "main"})
     assert "exit_code=" in result.content
 
 
@@ -391,6 +404,11 @@ def test_git_push_ssh_auth_sock_overlaid_when_present(
         truncated = False
 
     def _fake_run(*args: Any, **kwargs: Any) -> FakeResult:
+        argv = list(args[0]) if args else []
+        if argv == ["git", "remote"]:
+            r = FakeResult()
+            r.output = "origin\n"
+            return r
         return FakeResult()
 
     monkeypatch.setattr(st_mod, "run_scoped_command", _fake_run)
@@ -427,6 +445,11 @@ def test_git_push_ssh_auth_sock_absent_no_key(
         truncated = False
 
     def _fake_run(*args: Any, **kwargs: Any) -> FakeResult:
+        argv = list(args[0]) if args else []
+        if argv == ["git", "remote"]:
+            r = FakeResult()
+            r.output = "origin\n"
+            return r
         return FakeResult()
 
     monkeypatch.setattr(st_mod, "run_scoped_command", _fake_run)
@@ -477,4 +500,110 @@ def test_git_push_result_excluded_from_excerpt(tmp_path: Path) -> None:
     excerpt = _render_snapshot_excerpt(snapshot)
     assert excerpt is None or injection not in excerpt, (
         f"git_push TOOL_RESULT appeared in snapshot_excerpt: {excerpt!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P6.5-G1: transport allowlist + configured-remote restriction tests
+# ---------------------------------------------------------------------------
+
+
+def test_git_push_ext_transport_remote_rejected(tmp_path: Path) -> None:
+    """ext:: remote is rejected as not a configured remote name (LocalToolError, no PWNED)."""
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+    src = tmp_path / "src"
+    src.mkdir()
+    _git_init(src)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        cwd=src,
+        check=True,
+        capture_output=True,
+    )
+    (src / "f.txt").write_text("hello")
+    subprocess.run(["git", "add", "."], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=src, check=True, capture_output=True)
+
+    pwned = tmp_path / "PWNED"
+    with pytest.raises(LocalToolError, match="not a configured remote"):
+        _invoke("git_push", src, {"remote": f"ext::sh -c 'touch {pwned}'", "branch": "main"})
+    assert not pwned.exists(), "PWNED file must not be created"
+
+
+def test_git_push_inline_url_remote_rejected(tmp_path: Path) -> None:
+    """Inline https:// URL is rejected as not a configured remote name (LocalToolError)."""
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+    src = tmp_path / "src"
+    src.mkdir()
+    _git_init(src)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        cwd=src,
+        check=True,
+        capture_output=True,
+    )
+    with pytest.raises(LocalToolError, match="not a configured remote"):
+        _invoke("git_push", src, {"remote": "https://evil/r", "branch": "main"})
+
+
+def test_git_push_ext_protocol_blocked_by_allowlist(tmp_path: Path) -> None:
+    """A configured remote with ext:: URL is blocked by GIT_ALLOW_PROTOCOL (defense-in-depth)."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _git_init(src)
+    (src / "f.txt").write_text("hello")
+    subprocess.run(["git", "add", "."], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=src, check=True, capture_output=True)
+    pwned = tmp_path / "PWNED"
+    subprocess.run(
+        ["git", "remote", "add", "evil", f"ext::sh -c 'touch {pwned}'"],
+        cwd=src,
+        check=True,
+        capture_output=True,
+    )
+    # Remote name passes the configured-remote check; GIT_ALLOW_PROTOCOL blocks ext:: transport.
+    result = _invoke("git_push", src, {"remote": "evil", "branch": "main"})
+    assert not pwned.exists(), "PWNED file must not be created (ext:: transport denied)"
+    assert "exit_code=" in result.content
+
+
+def test_git_push_allow_protocol_in_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """GIT_ALLOW_PROTOCOL is present in subprocess env for git_push."""
+    import orchestrator.tools.subprocess_tools as st_mod
+
+    captured_env: dict[str, str] = {}
+
+    def _fake_scoped_env(
+        extra_env: dict[str, str] | None = None, api_key_env: str | None = None
+    ) -> dict[str, str]:
+        env = {k: "x" for k in _SAFE_ENV_KEYS}
+        if extra_env:
+            env.update(extra_env)
+        captured_env.update(env)
+        return env
+
+    monkeypatch.setattr(st_mod, "scoped_env", _fake_scoped_env)
+
+    class FakeResult:
+        exit_code = 0
+        output = "pushed"
+        truncated = False
+
+    def _fake_run(*args: Any, **kwargs: Any) -> FakeResult:
+        argv = list(args[0]) if args else []
+        if argv == ["git", "remote"]:
+            r = FakeResult()
+            r.output = "origin\n"
+            return r
+        return FakeResult()
+
+    monkeypatch.setattr(st_mod, "run_scoped_command", _fake_run)
+
+    _invoke("git_push", tmp_path, {"remote": "origin", "branch": "main"})
+    assert captured_env.get("GIT_ALLOW_PROTOCOL") == _GIT_ALLOW_PROTOCOL, (
+        "GIT_ALLOW_PROTOCOL was not passed to subprocess env"
     )
