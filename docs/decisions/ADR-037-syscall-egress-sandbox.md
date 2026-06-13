@@ -82,6 +82,8 @@ P4.3 leaves these, inscribed honestly (P4-roadmap §10; the ADR-029 D4 / ADR-031
 - **Degraded-posture residual.** When D4's loud opt-in is active, the `RB-FS/NET` surface is re-exposed by operator choice — the named, loud fallback path.
 - **Per-call setup latency.** The new finite term in the D5 single-writer budget; measured + bounded, not eliminated.
 - **Cross-platform tails.** `openat2(RESOLVE_NO_SYMLINKS)` (R7 fix) is **Linux-only**; on macOS/Windows R7 degrades to a per-component dir-fd `O_NOFOLLOW` walk (best-effort) or the current final-component residual. And the subprocess **container image must carry a toolchain-complete environment** (python + pytest + ruff + the workspace deps) for `run_tests`/`run_lint` to work — an **operator-config burden** (the image is operator-provided; an incomplete image fails the tool, fail-closed).
+- **F — Plain-`http://` in-sandbox fetch unsupported (fail-closed).** The host-side proxy is CONNECT-only (`egress_proxy.py:140-141`); in-container `urllib` sends an absolute-form GET for `http://` (no CONNECT) → proxy returns `405` → the fetch fails closed (loud `TOOL_FAILED`, no exfil). `https://` is unaffected (CONNECT path). Consistent with D4's fail-closed default — a minor functional limitation, not a security hole. (Inscribed P6.4; pinned by `test_f_plain_http_fails_closed_405`.)
+- **E — Per-call bridge created without `--internal` (`spawn.py:226-230`) — bounded residual.** The CONNECT proxy (A1-1), not the bridge firewall, is the egress enforcement; the un-`--internal`'d bridge is bounded by DNS-disabled (`--dns 0.0.0.0`) + `--cap-drop=ALL` + `nobody` + operator-controlled image. `--internal` is withheld because it can break `host.docker.internal`→proxy reachability (the egress hop itself). (Inscribed P6.4.)
 
 ---
 
@@ -100,6 +102,16 @@ P4.3 leaves these, inscribed honestly (P4-roadmap §10; the ADR-029 D4 / ADR-031
 **A1-5 — D5 inscription correction.** P4.3-13 over-claimed R1/R4/R8 RETIRED; corrected to describe the rework-delivered surface (R1 = injected plugin container; R4 = proxy-pinned egress; R8 = proxy allowlist). R3/R5/R6/R7/R9 annotations stand. The honest-residual discipline (D5 ⭐) requires the inscriptions match the enforced surface.
 
 **A1-6 — absorbed 🟡:** latency gate measures host-side setup/teardown overhead (not total wall-time incl. workload); `send_email` logs a per-call DEGRADED `WARNING` (transparency; R9 still NOT-retired, D5); R5 wording corrected to "fixed 8-slot pool" (the abandonable-thread is the deferred tail).
+
+---
+
+## Amendment 2 — P6.4 (D5 egress-residual inscription, 2026-06-12)
+
+**Status:** descriptive doc-pin — `plan_has_adr=false`, no Accept gate (same weight as A1-5).
+
+P6.4 is a **descriptive doc-pin** that inscribes the E and F egress residuals into the D5 honest-residual ledger. Both were graded **non-blocking** in the P4.3 impl-stage dual-lens (PR #58, merge `cb57019`) and persist byte-identical in `main` — **no behaviour change, no semantic change**. The one real gap closed by P6.4: P4.3's own honest-residual-inscription thesis (D5 ⭐) requires the ledger to carry the enforced surface, but E and F were never inscribed.
+
+The two new D5 bullets above are the canonical inscription. This note is the audit trail (when / why / by which slice). Changes shipped in P6.4: two D5 bullets (this amendment note) + the `egress_proxy.py:14-16` docstring corrected to state plain-http unsupported/405-fail-closed + regression test `test_f_plain_http_fails_closed_405` pinning F's fail-closed behaviour.
 
 ---
 
