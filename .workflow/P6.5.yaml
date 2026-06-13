@@ -1,7 +1,7 @@
 task_id: P6.5
-state: awaiting_senior_plan
+state: awaiting_architect_accept
 cycle: 1
-last_transition_at: '2026-06-13T19:47:57.703682Z'
+last_transition_at: '2026-06-13T19:53:45.287454Z'
 cycle_started_at: '2026-06-13T19:32:58.006767Z'
 override_history: []
 requires_cross_family_review: true
