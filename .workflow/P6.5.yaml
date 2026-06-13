@@ -1,7 +1,13 @@
 task_id: P6.5
-state: awaiting_architect_accept
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-13T19:53:45.287454Z'
+last_transition_at: '2026-06-13T19:55:16.974481Z'
 cycle_started_at: '2026-06-13T19:32:58.006767Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-13T19:55:16.974481Z'
+  actor: architect
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: 'No-ADR slice: plan_has_adr=False → junior_impl; hook transiently advanced
+    to architect_accept (no-ADR-slice gotcha, cf. P6.1/P6.2/P6.4). No ADR to accept.'
 requires_cross_family_review: true
