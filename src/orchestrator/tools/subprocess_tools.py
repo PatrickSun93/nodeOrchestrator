@@ -51,6 +51,9 @@ _SUBPROCESS_TIMEOUTS: dict[str, float] = {
 # No api_key_env passed -> no secret value injected (scoped_env secret-injection off).
 _GIT_PUSH_ENV_PASSTHROUGH: frozenset[str] = frozenset({"SSH_AUTH_SOCK"})
 
+# Blocks ext::/fd:: RCE; file: safe after named-remote restriction enforced below (P6.5-G1).
+_GIT_ALLOW_PROTOCOL: str = "https:ssh:git:file"
+
 # Destructive git flags banned from git_push argv (ADR-036 D3-iii; rev 1 = most irreversible).
 _GIT_PUSH_BANNED_FLAGS: frozenset[str] = frozenset(
     {"--force", "--force-with-lease", "-f", "--mirror", "--delete"}
@@ -88,9 +91,7 @@ class _SubprocessToolFn:
 # ---------------------------------------------------------------------------
 
 
-def _check_disallowed(
-    params: dict[str, Any], allowed: frozenset[str], tool_name: str
-) -> None:
+def _check_disallowed(params: dict[str, Any], allowed: frozenset[str], tool_name: str) -> None:
     """Raise LocalToolError if any param key is outside the allowlist."""
     disallowed = set(params.keys()) - allowed
     if disallowed:
@@ -187,9 +188,7 @@ def _sandbox_dispatch(
                 call_id=tool_name,
             )
         except (EgressDenied, LocalToolError) as exc:
-            raise LocalToolError(
-                f"sandbox_egress_denied: {tool_name}: {exc}"
-            ) from exc
+            raise LocalToolError(f"sandbox_egress_denied: {tool_name}: {exc}") from exc
     else:
         egress_spec = build_deny_default_spec()
 
@@ -240,8 +239,12 @@ def _make_run_tests(
             argv.append(str(abs_path))
         if posture_resolver is not None:
             return _sandbox_dispatch(
-                "run_tests", argv, resolved_root, _SUBPROCESS_TIMEOUTS["run_tests"],
-                posture_resolver, image,
+                "run_tests",
+                argv,
+                resolved_root,
+                _SUBPROCESS_TIMEOUTS["run_tests"],
+                posture_resolver,
+                image,
             )
         return _dispatch("run_tests", argv, resolved_root, _SUBPROCESS_TIMEOUTS["run_tests"])
 
@@ -263,8 +266,12 @@ def _make_run_lint(
         argv: list[str] = ["ruff", "check", "--", str(abs_path)]
         if posture_resolver is not None:
             return _sandbox_dispatch(
-                "run_lint", argv, resolved_root, _SUBPROCESS_TIMEOUTS["run_lint"],
-                posture_resolver, image,
+                "run_lint",
+                argv,
+                resolved_root,
+                _SUBPROCESS_TIMEOUTS["run_lint"],
+                posture_resolver,
+                image,
             )
         return _dispatch("run_lint", argv, resolved_root, _SUBPROCESS_TIMEOUTS["run_lint"])
 
@@ -288,8 +295,12 @@ def _make_git_blame(
         argv: list[str] = ["git", "blame", "--", str(abs_path)]
         if posture_resolver is not None:
             return _sandbox_dispatch(
-                "git_blame", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_blame"],
-                posture_resolver, image,
+                "git_blame",
+                argv,
+                resolved_root,
+                _SUBPROCESS_TIMEOUTS["git_blame"],
+                posture_resolver,
+                image,
             )
         return _dispatch("git_blame", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_blame"])
 
@@ -313,9 +324,7 @@ def _make_git_log(
             try:
                 count = int(raw_count)
             except (TypeError, ValueError) as exc:
-                raise LocalToolError(
-                    f"git_log: max_count must be an integer: {exc}"
-                ) from exc
+                raise LocalToolError(f"git_log: max_count must be an integer: {exc}") from exc
             count = max(_GIT_LOG_MAX_COUNT_MIN, min(_GIT_LOG_MAX_COUNT_MAX, count))
         else:
             count = _GIT_LOG_DEFAULT_COUNT
@@ -326,8 +335,12 @@ def _make_git_log(
             argv.append(str(abs_path))
         if posture_resolver is not None:
             return _sandbox_dispatch(
-                "git_log", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_log"],
-                posture_resolver, image,
+                "git_log",
+                argv,
+                resolved_root,
+                _SUBPROCESS_TIMEOUTS["git_log"],
+                posture_resolver,
+                image,
             )
         return _dispatch("git_log", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_log"])
 
@@ -351,8 +364,12 @@ def _make_git_diff(
             argv.append(str(abs_path))
         if posture_resolver is not None:
             return _sandbox_dispatch(
-                "git_diff", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_diff"],
-                posture_resolver, image,
+                "git_diff",
+                argv,
+                resolved_root,
+                _SUBPROCESS_TIMEOUTS["git_diff"],
+                posture_resolver,
+                image,
             )
         return _dispatch("git_diff", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_diff"])
 
@@ -387,7 +404,7 @@ def _make_git_push(
         # Resolve current branch if not specified.
         if branch_raw is None:
             # Read current HEAD branch from git (scoped_env, no network).
-            head_env = scoped_env()
+            head_env = scoped_env(extra_env={"GIT_ALLOW_PROTOCOL": _GIT_ALLOW_PROTOCOL})
             try:
                 head_result = run_scoped_command(
                     ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -413,13 +430,38 @@ def _make_git_push(
                 f"git_push: branch {branch!r} looks like a flag (starts with '-'); "
                 "rejected to prevent argv injection"
             )
+        if branch.startswith(":") or branch.startswith("+"):
+            raise LocalToolError(
+                f"git_push: branch {branch!r} uses a refspec prefix "
+                "(: deletion / + force-push); only plain branch names are accepted"
+            )
 
         # Validate no banned destructive flags appear in remote/branch (defense-in-depth).
         for val, label in [(remote, "remote"), (branch, "branch")]:
             if val in _GIT_PUSH_BANNED_FLAGS:
-                raise LocalToolError(
-                    f"git_push: {label} {val!r} is a banned destructive flag"
-                )
+                raise LocalToolError(f"git_push: {label} {val!r} is a banned destructive flag")
+
+        # Restrict remote to a configured remote name (P6.5-G1: no inline-URL remotes).
+        try:
+            remote_list_result = run_scoped_command(
+                ["git", "remote"],
+                cwd=resolved_root,
+                env=scoped_env(extra_env={"GIT_ALLOW_PROTOCOL": _GIT_ALLOW_PROTOCOL}),
+                timeout_s=5.0,
+                max_bytes=4096,
+            )
+            configured_remotes = (
+                set(remote_list_result.output.strip().splitlines())
+                if remote_list_result.exit_code == 0
+                else set()
+            )
+        except (SubprocessTimeoutError, OSError):
+            configured_remotes = set()
+        if remote not in configured_remotes:
+            raise LocalToolError(
+                f"git_push: remote {remote!r} is not a configured remote; "
+                "only configured remote names are accepted (no inline URLs or ext:: paths)"
+            )
 
         # Fixed argv — no shell, no interpolation (t9 + t12 guard).
         argv: list[str] = ["git", "push", remote, branch]
@@ -428,14 +470,20 @@ def _make_git_push(
         extra_env: dict[str, str] = {
             k: os.environ[k] for k in _GIT_PUSH_ENV_PASSTHROUGH if k in os.environ
         }
+        extra_env["GIT_ALLOW_PROTOCOL"] = _GIT_ALLOW_PROTOCOL
 
         if posture_resolver is not None:
             # Sandbox path: pinned-IP egress for git_push (ADR-037 D2; P4.3-6).
             # The egress hostname is resolved from the remote name via git.
             egress_hostname, egress_port = _resolve_git_remote_host(remote, resolved_root)
             return _sandbox_dispatch(
-                "git_push", argv, resolved_root, _SUBPROCESS_TIMEOUTS["git_push"],
-                posture_resolver, image, extra_env=extra_env,
+                "git_push",
+                argv,
+                resolved_root,
+                _SUBPROCESS_TIMEOUTS["git_push"],
+                posture_resolver,
+                image,
+                extra_env=extra_env,
                 needs_egress=egress_hostname is not None,
                 egress_hostname=egress_hostname,
                 egress_port=egress_port,
@@ -457,7 +505,7 @@ def _resolve_git_remote_host(remote: str, cwd: Path) -> tuple[str | None, int]:
         result = run_scoped_command(
             ["git", "remote", "get-url", remote],
             cwd=cwd,
-            env=scoped_env(),
+            env=scoped_env(extra_env={"GIT_ALLOW_PROTOCOL": _GIT_ALLOW_PROTOCOL}),
             timeout_s=5.0,
             max_bytes=512,
         )
