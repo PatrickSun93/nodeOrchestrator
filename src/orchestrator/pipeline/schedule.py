@@ -35,7 +35,7 @@ N2 — drift note:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 _SUPPORTED_KINDS = frozenset({"interval", "cron"})
 
@@ -48,13 +48,13 @@ _CRON_SEARCH_HORIZON_MIN: int = 4 * 366 * 24 * 60  # 2_108_160
 class _CronFields:
     """Parsed cron expression: five frozen sets of allowed values + restriction flags."""
 
-    minutes: frozenset[int]   # 0-59
-    hours: frozenset[int]     # 0-23
-    doms: frozenset[int]      # 1-31
-    months: frozenset[int]    # 1-12
-    dows: frozenset[int]      # 0-6 (0=Sun)
-    dom_restricted: bool      # True when DOM field is NOT literal "*"
-    dow_restricted: bool      # True when DOW field is NOT literal "*"
+    minutes: frozenset[int]  # 0-59
+    hours: frozenset[int]  # 0-23
+    doms: frozenset[int]  # 1-31
+    months: frozenset[int]  # 1-12
+    dows: frozenset[int]  # 0-6 (0=Sun)
+    dom_restricted: bool  # True when DOM field is NOT literal "*"
+    dow_restricted: bool  # True when DOW field is NOT literal "*"
 
 
 def _expand_field(raw: str, lo: int, hi: int) -> frozenset[int]:
@@ -79,8 +79,8 @@ def _expand_field(raw: str, lo: int, hi: int) -> frozenset[int]:
             base_part, step_part = term.split("/", 1)
             try:
                 step = int(step_part)
-            except ValueError:
-                raise ValueError(f"non-integer step in cron term {term!r}")
+            except ValueError as exc:
+                raise ValueError(f"non-integer step in cron term {term!r}") from exc
             if step < 1:
                 raise ValueError(f"step must be >= 1, got {step} in {term!r}")
 
@@ -91,12 +91,10 @@ def _expand_field(raw: str, lo: int, hi: int) -> frozenset[int]:
             else:
                 try:
                     start = int(base_part)
-                except ValueError:
-                    raise ValueError(f"non-integer value in cron term {term!r}")
+                except ValueError as exc:
+                    raise ValueError(f"non-integer value in cron term {term!r}") from exc
                 if not (lo <= start <= hi):
-                    raise ValueError(
-                        f"value {start} out of range [{lo},{hi}] in {term!r}"
-                    )
+                    raise ValueError(f"value {start} out of range [{lo},{hi}] in {term!r}")
                 end = hi
 
             result.update(range(start, end + 1, step))
@@ -111,8 +109,8 @@ def _expand_field(raw: str, lo: int, hi: int) -> frozenset[int]:
         else:
             try:
                 v = int(term)
-            except ValueError:
-                raise ValueError(f"non-integer value in cron term {term!r}")
+            except ValueError as exc:
+                raise ValueError(f"non-integer value in cron term {term!r}") from exc
             if not (lo <= v <= hi):
                 raise ValueError(f"value {v} out of range [{lo},{hi}] in {term!r}")
             result.add(v)
@@ -127,8 +125,8 @@ def _parse_range(raw: str, lo: int, hi: int) -> tuple[int, int]:
         raise ValueError(f"invalid range {raw!r}")
     try:
         a, b = int(parts[0]), int(parts[1])
-    except ValueError:
-        raise ValueError(f"non-integer in range {raw!r}")
+    except ValueError as exc:
+        raise ValueError(f"non-integer in range {raw!r}") from exc
     if not (lo <= a <= hi):
         raise ValueError(f"range start {a} out of [{lo},{hi}] in {raw!r}")
     if not (lo <= b <= hi):
@@ -148,9 +146,7 @@ def _parse_cron(expr: str) -> _CronFields:
 
     fields = expr.split()
     if len(fields) != 5:
-        raise ValueError(
-            f"cron expr must have exactly 5 fields, got {len(fields)}: {expr!r}"
-        )
+        raise ValueError(f"cron expr must have exactly 5 fields, got {len(fields)}: {expr!r}")
 
     min_raw, hr_raw, dom_raw, mon_raw, dow_raw = fields
 
@@ -189,8 +185,8 @@ def _expand_field_dow(raw: str, lo: int, hi: int) -> frozenset[int]:
             base_part, step_part = term.split("/", 1)
             try:
                 step = int(step_part)
-            except ValueError:
-                raise ValueError(f"non-integer step in cron term {term!r}")
+            except ValueError as exc:
+                raise ValueError(f"non-integer step in cron term {term!r}") from exc
             if step < 1:
                 raise ValueError(f"step must be >= 1, got {step} in {term!r}")
 
@@ -201,12 +197,10 @@ def _expand_field_dow(raw: str, lo: int, hi: int) -> frozenset[int]:
             else:
                 try:
                     start = int(base_part)
-                except ValueError:
-                    raise ValueError(f"non-integer value in cron term {term!r}")
+                except ValueError as exc:
+                    raise ValueError(f"non-integer value in cron term {term!r}") from exc
                 if not (lo <= start <= hi):
-                    raise ValueError(
-                        f"value {start} out of range [{lo},{hi}] in {term!r}"
-                    )
+                    raise ValueError(f"value {start} out of range [{lo},{hi}] in {term!r}")
                 end = hi
 
             result.update(range(start, end + 1, step))
@@ -221,8 +215,8 @@ def _expand_field_dow(raw: str, lo: int, hi: int) -> frozenset[int]:
         else:
             try:
                 v = int(term)
-            except ValueError:
-                raise ValueError(f"non-integer value in cron term {term!r}")
+            except ValueError as exc:
+                raise ValueError(f"non-integer value in cron term {term!r}") from exc
             if not (lo <= v <= hi):
                 raise ValueError(f"value {v} out of range [{lo},{hi}] in {term!r}")
             result.add(v)
@@ -307,7 +301,7 @@ def _compute_cron_next_fire(expr: str, after_ms: int) -> int:
     fields = _parse_cron(expr)
 
     # Start at the first whole minute strictly greater than after_ms
-    after_dt = datetime.fromtimestamp(after_ms / 1000, tz=timezone.utc)
+    after_dt = datetime.fromtimestamp(after_ms / 1000, tz=UTC)
     # Floor to current minute, then advance by one minute to be strictly after
     candidate = after_dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
 
@@ -323,5 +317,5 @@ def _compute_cron_next_fire(expr: str, after_ms: int) -> int:
 
     raise ValueError(
         f"cron expr {expr!r} has no match within {_CRON_SEARCH_HORIZON_MIN} minutes "
-        f"(~{_CRON_SEARCH_HORIZON_MIN // (60*24*365)} years); expr may be unsatisfiable"
+        f"(~{_CRON_SEARCH_HORIZON_MIN // (60 * 24 * 365)} years); expr may be unsatisfiable"
     )

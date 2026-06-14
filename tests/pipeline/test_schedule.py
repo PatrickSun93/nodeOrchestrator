@@ -24,8 +24,7 @@ All tests pass ``after_ms`` explicitly — wall clock never read.
 
 from __future__ import annotations
 
-import calendar
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -38,13 +37,13 @@ from orchestrator.pipeline.schedule import compute_next_fire, validate_schedule_
 
 def _ms(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> int:
     """Return UTC epoch-ms for a given calendar minute (second=0)."""
-    dt = datetime(year, month, day, hour, minute, 0, tzinfo=timezone.utc)
+    dt = datetime(year, month, day, hour, minute, 0, tzinfo=UTC)
     return int(dt.timestamp() * 1000)
 
 
 def _dt(ms: int) -> datetime:
     """Convert epoch-ms back to a UTC datetime for assertions."""
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+    return datetime.fromtimestamp(ms / 1000, tz=UTC)
 
 
 # ---------------------------------------------------------------------------
