@@ -1,0 +1,16 @@
+task_id: P6.6
+state: awaiting_junior_impl
+cycle: 1
+last_transition_at: '2026-06-14T19:38:16.887581Z'
+cycle_started_at: '2026-06-14T19:38:13.387680Z'
+override_history:
+- timestamp: '2026-06-14T19:38:16.887581Z'
+  actor: architect
+  from_state: awaiting_brief
+  to_state: awaiting_junior_impl
+  reason: 'Dev-harness-light hygiene slice (backlog #108, from P6.5 R0-A O1): a pure
+    mechanical ''ruff format .'' over the 51 pre-existing files dirty under the lockfile-pinned
+    ruff 0.15.12 (ruff bumped without a repo-wide reformat, same spirit as the #95
+    prettier follow-on). No brief/plan/ADR — zero logic change, self-evident scope;
+    single-lens light review (formatting-only + gates green), like P4.7-FE / #95.'
+requires_cross_family_review: false
