@@ -349,7 +349,7 @@ def test_git_push_happy_path_local_remote(tmp_path: Path) -> None:
 
     src = tmp_path / "src"
     src.mkdir()
-    _subprocess.run(["git", "init", str(src)], check=True, capture_output=True)
+    _subprocess.run(["git", "init", "-b", "main", str(src)], check=True, capture_output=True)
     _subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
         check=True,
@@ -370,7 +370,9 @@ def test_git_push_happy_path_local_remote(tmp_path: Path) -> None:
     _subprocess.run(["git", "commit", "-m", "init"], check=True, cwd=str(src), capture_output=True)
 
     result = _invoke("git_push", src, {"remote": "origin", "branch": "main"})
-    assert "exit_code=" in result.content
+    assert "exit_code=0" in result.content, (
+        f"push must succeed (exit_code=0), got: {result.content!r}"
+    )
 
 
 def test_git_push_ssh_auth_sock_overlaid_when_present(
@@ -568,7 +570,9 @@ def test_git_push_ext_protocol_blocked_by_allowlist(tmp_path: Path) -> None:
     # Remote name passes the configured-remote check; GIT_ALLOW_PROTOCOL blocks ext:: transport.
     result = _invoke("git_push", src, {"remote": "evil", "branch": "main"})
     assert not pwned.exists(), "PWNED file must not be created (ext:: transport denied)"
-    assert "exit_code=" in result.content
+    assert "not allowed" in result.content, (
+        "GIT_ALLOW_PROTOCOL must produce 'not allowed' denial (fails on revert of allowlist)"
+    )
 
 
 def test_git_push_allow_protocol_in_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -607,3 +611,64 @@ def test_git_push_allow_protocol_in_env(tmp_path: Path, monkeypatch: pytest.Monk
     assert captured_env.get("GIT_ALLOW_PROTOCOL") == _GIT_ALLOW_PROTOCOL, (
         "GIT_ALLOW_PROTOCOL was not passed to subprocess env"
     )
+
+
+# ---------------------------------------------------------------------------
+# P6.5 cycle-2: refspec bypass rejection (R0-B R1/R2) + allowlist regression (R0-A Y1)
+# ---------------------------------------------------------------------------
+
+
+def test_git_push_transport_allowlist_set() -> None:
+    """_GIT_ALLOW_PROTOCOL includes file (local pushes) and excludes ext (RCE vector)."""
+    allowed = set(_GIT_ALLOW_PROTOCOL.split(":"))
+    assert "https" in allowed
+    assert "ssh" in allowed
+    assert "git" in allowed
+    assert "file" in allowed, "file transport must be in allowlist (local-remote pushes need it)"
+    assert "ext" not in allowed, "ext transport must NOT be in allowlist (RCE vector)"
+
+
+def test_git_push_refspec_delete_rejected(tmp_path: Path) -> None:
+    """branch=':main' is a deletion refspec — rejected before argv build; remote ref intact."""
+    import subprocess as _subprocess
+
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    _subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+
+    src = tmp_path / "src"
+    src.mkdir()
+    _subprocess.run(["git", "init", "-b", "main", str(src)], check=True, capture_output=True)
+    for cmd in (
+        ["git", "config", "user.email", "test@test.com"],
+        ["git", "config", "user.name", "Test"],
+    ):
+        _subprocess.run(cmd, cwd=str(src), check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        cwd=str(src),
+        check=True,
+        capture_output=True,
+    )
+    (src / "f.txt").write_text("hello")
+    _subprocess.run(["git", "add", "."], cwd=str(src), check=True, capture_output=True)
+    _subprocess.run(["git", "commit", "-m", "init"], cwd=str(src), check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "push", "origin", "main"], cwd=str(src), check=True, capture_output=True
+    )
+
+    with pytest.raises(LocalToolError, match="only plain branch names are accepted"):
+        _invoke("git_push", src, {"remote": "origin", "branch": ":main"})
+
+    ls = _subprocess.run(
+        ["git", "ls-remote", str(bare), "refs/heads/main"],
+        capture_output=True,
+        text=True,
+    )
+    assert ls.stdout.strip(), "remote main ref must still exist after rejected deletion refspec"
+
+
+def test_git_push_refspec_force_push_rejected(tmp_path: Path) -> None:
+    """branch='+main:main' is a force-push refspec — rejected before argv build."""
+    with pytest.raises(LocalToolError, match="only plain branch names are accepted"):
+        _invoke("git_push", tmp_path, {"remote": "origin", "branch": "+main:main"})

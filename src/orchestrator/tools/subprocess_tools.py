@@ -430,6 +430,11 @@ def _make_git_push(
                 f"git_push: branch {branch!r} looks like a flag (starts with '-'); "
                 "rejected to prevent argv injection"
             )
+        if branch.startswith(":") or branch.startswith("+"):
+            raise LocalToolError(
+                f"git_push: branch {branch!r} uses a refspec prefix "
+                "(: deletion / + force-push); only plain branch names are accepted"
+            )
 
         # Validate no banned destructive flags appear in remote/branch (defense-in-depth).
         for val, label in [(remote, "remote"), (branch, "branch")]:
