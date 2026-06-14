@@ -1,7 +1,7 @@
 task_id: P6.5
-state: awaiting_architect_decision
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-13T20:51:13.190711Z'
+last_transition_at: '2026-06-14T18:57:16.773960Z'
 cycle_started_at: '2026-06-13T19:32:58.006767Z'
 override_history:
 - timestamp: '2026-06-13T19:55:16.974481Z'
@@ -10,4 +10,12 @@ override_history:
   to_state: awaiting_junior_impl
   reason: 'No-ADR slice: plan_has_adr=False → junior_impl; hook transiently advanced
     to architect_accept (no-ADR-slice gotcha, cf. P6.1/P6.2/P6.4). No ADR to accept.'
+- timestamp: '2026-06-14T18:57:16.773960Z'
+  actor: architect
+  from_state: awaiting_senior_revision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 α rework: R0-B 🔴 refspec bypass (reject branch :/+) + R0-A Y1/Y2
+    test-honesty + Y3 wording. All routine git_push input-validation hardening / test
+    fixes, no spine/ADR-contract change. Y3 config-poisoning follow-on → task #109.
+    See architect-routing-on-impl.md.'
 requires_cross_family_review: true
