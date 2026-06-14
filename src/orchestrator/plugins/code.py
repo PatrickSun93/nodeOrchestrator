@@ -132,8 +132,10 @@ class _PostureBFn:
                 # SANDBOXED: run harness inside a container.
                 harness_params, cname = self._build_sandboxed_harness_params(runtime, scoped)
                 return await self._run_mcp_session(
-                    harness_params, tool_args,
-                    runtime=runtime, container_name=cname,
+                    harness_params,
+                    tool_args,
+                    runtime=runtime,
+                    container_name=cname,
                 )
 
         harness_params = StdioServerParameters(
@@ -160,9 +162,7 @@ class _PostureBFn:
         from orchestrator.sandbox.profile import SandboxProfile, build_container_args
 
         sandbox_root = self._sandbox_root or _HARNESS_PATH.parent
-        image = getattr(
-            getattr(self._posture_resolver, "_config", None), "image", "sandbox:latest"
-        )
+        image = getattr(getattr(self._posture_resolver, "_config", None), "image", "sandbox:latest")
         container_name = f"plugin-{self._plugin_id}-{str(uuid.uuid4())[:8]}"
 
         profile = SandboxProfile(
@@ -183,12 +183,13 @@ class _PostureBFn:
             container_args = ["run", "-i", *container_args[1:]]
 
         # Add --network none (deny-default) explicitly.
-        img_idx = next(
-            (i for i, a in enumerate(container_args) if a == image), None
-        )
+        img_idx = next((i for i, a in enumerate(container_args) if a == image), None)
         if img_idx is not None:
             container_args = [
-                *container_args[:img_idx], "--network", "none", *container_args[img_idx:]
+                *container_args[:img_idx],
+                "--network",
+                "none",
+                *container_args[img_idx:],
             ]
 
         cli: str = getattr(runtime, "cli", "docker")
@@ -225,14 +226,10 @@ class _PostureBFn:
                 result = await session.call_tool("invoke", dict(tool_args))
                 if result.isError:
                     error_parts = [
-                        c.text if isinstance(c, _TextContent) else repr(c)
-                        for c in result.content
+                        c.text if isinstance(c, _TextContent) else repr(c) for c in result.content
                     ]
                     raise RuntimeError(f"plugin callable raised: {'; '.join(error_parts)}")
-                parts = [
-                    c.text if isinstance(c, _TextContent) else repr(c)
-                    for c in result.content
-                ]
+                parts = [c.text if isinstance(c, _TextContent) else repr(c) for c in result.content]
                 return LocalToolOutput(content="\n".join(parts))
         finally:
             if runtime is not None and container_name is not None:
@@ -326,7 +323,10 @@ def load_plugin_code(
     """
     if provenance == "fetched":
         return _load_posture_b_fns(
-            plugin_dir, plugin_id, tool_impls, plugin_subprocess_env or {},
+            plugin_dir,
+            plugin_id,
+            tool_impls,
+            plugin_subprocess_env or {},
             posture_resolver=posture_resolver,
             sandbox_root=sandbox_root,
         )

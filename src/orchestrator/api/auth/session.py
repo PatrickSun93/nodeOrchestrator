@@ -155,8 +155,7 @@ def create_token(conn: sqlite3.Connection, user_id: str) -> str:
     token_hash = _sha256_hex(raw_token)
     now_ms = int(time.time() * 1000)
     conn.execute(
-        "INSERT INTO user_tokens (token_hash, user_id, created_at, revoked)"
-        " VALUES (?, ?, ?, 0)",
+        "INSERT INTO user_tokens (token_hash, user_id, created_at, revoked) VALUES (?, ?, ?, 0)",
         (token_hash, user_id, now_ms),
     )
     conn.commit()

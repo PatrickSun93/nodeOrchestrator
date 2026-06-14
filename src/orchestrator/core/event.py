@@ -452,9 +452,7 @@ PENDING_RESOLUTION_TYPES: frozenset[EventType] = frozenset(
 
 # ADR-039 D1: generalised to include user:<id> (P4.5-4).
 # bare "user" stays valid (backward-compat for stored events + system default).
-_AUTHOR_PATTERN = re.compile(
-    r"^(user|user:[a-zA-Z0-9_-]+|system|agent:[a-zA-Z0-9_-]+)$"
-)
+_AUTHOR_PATTERN = re.compile(r"^(user|user:[a-zA-Z0-9_-]+|system|agent:[a-zA-Z0-9_-]+)$")
 
 
 def is_valid_author(author: str) -> bool:

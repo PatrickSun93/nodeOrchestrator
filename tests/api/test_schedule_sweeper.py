@@ -262,9 +262,7 @@ def test_act_disabled_pipeline_advances_next_fire_no_run(ctx: AppContext) -> Non
     ctx.llm_router = cast(LLMRouterProtocol, router)
 
     pipe_id = _make_pipeline(ctx)
-    ctx.writer_store.conn.execute(
-        "UPDATE pipelines SET enabled=0 WHERE pipeline_id=?", (pipe_id,)
-    )
+    ctx.writer_store.conn.execute("UPDATE pipelines SET enabled=0 WHERE pipeline_id=?", (pipe_id,))
     ctx.writer_store.conn.commit()
 
     old_next_fire = _NOW - 1
@@ -293,9 +291,7 @@ def test_act_missing_pipeline_advances_next_fire_no_run(ctx: AppContext) -> None
     sid = _make_schedule(ctx, pipe_id, next_fire=old_next_fire)
 
     # Delete the pipeline to create an orphan schedule.
-    ctx.writer_store.conn.execute(
-        "DELETE FROM pipelines WHERE pipeline_id=?", (pipe_id,)
-    )
+    ctx.writer_store.conn.execute("DELETE FROM pipelines WHERE pipeline_id=?", (pipe_id,))
     ctx.writer_store.conn.commit()
 
     _schedule_act_on_writer(ctx, sid, _NOW)
@@ -430,7 +426,9 @@ def test_act_create_run_fails_after_successful_run_does_not_raise(
     # next_fire should still be advanced (claim step succeeded before run).
     sched = get_schedule(ctx.writer_store.conn, sid)
     assert sched is not None
-    assert sched.next_fire > _NOW - 1, "next_fire must be advanced even when create_pipeline_run fails"  # noqa: E501
+    assert sched.next_fire > _NOW - 1, (
+        "next_fire must be advanced even when create_pipeline_run fails"
+    )
 
     # Split-try guard: the inner try/except emits a WARNING acknowledging that
     # run_pipeline succeeded even though create_pipeline_run failed ("run ... succeeded").
@@ -484,9 +482,7 @@ def test_schedule_sweeper_does_not_call_countdown_spine() -> None:
         "_writer_approve_helper",
     }
     for sym in forbidden_calls:
-        assert sym not in called_names, (
-            f"_schedule_sweeper must not call {sym!r} (ADR-042 D1)"
-        )
+        assert sym not in called_names, f"_schedule_sweeper must not call {sym!r} (ADR-042 D1)"
 
 
 def test_schedule_act_on_writer_does_not_call_countdown_spine() -> None:

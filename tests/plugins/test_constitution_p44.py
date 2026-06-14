@@ -277,9 +277,7 @@ def test_g5_disabled_plugin_with_mcp_server_no_session(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    registry: PluginRegistry = {
-        "mcp_plugin": RegistryEntry(plugin_id="mcp_plugin", enabled=False)
-    }
+    registry: PluginRegistry = {"mcp_plugin": RegistryEntry(plugin_id="mcp_plugin", enabled=False)}
 
     # Patch _load_plugin to assert it's never called for the disabled plugin
     from orchestrator.plugins import loader as _loader_mod
@@ -358,13 +356,17 @@ def test_g7_version_mismatch_refused(tmp_path: Path) -> None:
 
     act_path = tmp_path / "activations.yaml"
     act_path.write_text(
-        yaml.dump({
-            "activations": [{
-                "plugin_id": "fetched_ver",
-                "source_url": "https://example.com/fv.zip",
-                "digest": "sha256:fv",
-            }]
-        }),
+        yaml.dump(
+            {
+                "activations": [
+                    {
+                        "plugin_id": "fetched_ver",
+                        "source_url": "https://example.com/fv.zip",
+                        "digest": "sha256:fv",
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -401,13 +403,17 @@ def test_g7_version_absent_loads_fail_safe(tmp_path: Path) -> None:
 
     act_path = tmp_path / "activations.yaml"
     act_path.write_text(
-        yaml.dump({
-            "activations": [{
-                "plugin_id": "fetched_ver",
-                "source_url": "https://example.com/fv.zip",
-                "digest": "sha256:fv",
-            }]
-        }),
+        yaml.dump(
+            {
+                "activations": [
+                    {
+                        "plugin_id": "fetched_ver",
+                        "source_url": "https://example.com/fv.zip",
+                        "digest": "sha256:fv",
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -485,9 +491,7 @@ def test_g10_execute_local_call_not_called_or_imported_in_plugins() -> None:
 
     # Match call sites (_execute_local_call() or _execute_local_call(...)) or import lines.
     # Excludes docstrings and comments (which may reference the name for documentation).
-    call_or_import = re.compile(
-        r"_execute_local_call\s*\(|import\s+_execute_local_call"
-    )
+    call_or_import = re.compile(r"_execute_local_call\s*\(|import\s+_execute_local_call")
     found: list[str] = []
     for py_path in _PLUGINS_PKG.rglob("*.py"):
         if "__pycache__" in py_path.parts:
@@ -501,8 +505,7 @@ def test_g10_execute_local_call_not_called_or_imported_in_plugins() -> None:
                 break
     assert not found, (
         "g10 guard: _execute_local_call called/imported in plugins/ — "
-        "executor must remain name-agnostic:\n"
-        + "\n".join(f"  {p}" for p in found)
+        "executor must remain name-agnostic:\n" + "\n".join(f"  {p}" for p in found)
     )
 
 

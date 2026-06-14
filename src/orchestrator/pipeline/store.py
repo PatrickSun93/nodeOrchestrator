@@ -316,8 +316,17 @@ def list_schedules_for_pipeline(
             email_recipient=em_recip,
         )
         for (
-            sid, pid, owner, kind, expr, next_fire, enabled, created_at,
-            em_en, em_mode, em_recip
+            sid,
+            pid,
+            owner,
+            kind,
+            expr,
+            next_fire,
+            enabled,
+            created_at,
+            em_en,
+            em_mode,
+            em_recip,
         ) in rows
     ]
 
@@ -352,8 +361,17 @@ def list_due_schedules(
             email_recipient=em_recip,
         )
         for (
-            sid, pid, owner, kind, expr, next_fire, enabled, created_at,
-            em_en, em_mode, em_recip
+            sid,
+            pid,
+            owner,
+            kind,
+            expr,
+            next_fire,
+            enabled,
+            created_at,
+            em_en,
+            em_mode,
+            em_recip,
         ) in rows
     ]
 

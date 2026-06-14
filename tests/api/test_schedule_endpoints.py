@@ -145,9 +145,7 @@ _VALID_BODY = {"kind": "interval", "expr": "60"}
 # ---------------------------------------------------------------------------
 
 
-def test_create_schedule_owner_happy_path(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_create_schedule_owner_happy_path(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
         resp = c.post(f"/pipelines/{pipe_id}/schedules", json=_VALID_BODY)
@@ -161,35 +159,27 @@ def test_create_schedule_owner_happy_path(
     assert data["enabled"] is True
 
 
-def test_create_schedule_non_owner_403(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_create_schedule_non_owner_403(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     pipe_id = _make_pipeline(sched_ctx, owner=_USER_A)
     with _client(sched_app, sched_ctx, _USER_B) as c:
         resp = c.post(f"/pipelines/{pipe_id}/schedules", json=_VALID_BODY)
     assert resp.status_code == 403
 
 
-def test_create_schedule_missing_pipeline_404(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_create_schedule_missing_pipeline_404(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     with _client(sched_app, sched_ctx, _USER_A) as c:
         resp = c.post("/pipelines/nonexistent/schedules", json=_VALID_BODY)
     assert resp.status_code == 404
 
 
-def test_create_schedule_malformed_expr_422(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_create_schedule_malformed_expr_422(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
         resp = c.post(f"/pipelines/{pipe_id}/schedules", json={"kind": "interval", "expr": "abc"})
     assert resp.status_code == 422
 
 
-def test_create_schedule_cron_422_deferred(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_create_schedule_cron_422_deferred(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """kind=cron is deferred (Y1 routing) — must return 422."""
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
@@ -206,9 +196,7 @@ def test_create_schedule_cron_422_deferred(
 # ---------------------------------------------------------------------------
 
 
-def test_list_schedules_owner_happy_path(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_list_schedules_owner_happy_path(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
         c.post(f"/pipelines/{pipe_id}/schedules", json=_VALID_BODY)
@@ -219,9 +207,7 @@ def test_list_schedules_owner_happy_path(
     assert schedules[0]["owner_user_id"] == _USER_A
 
 
-def test_list_schedules_non_owner_403(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_list_schedules_non_owner_403(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     pipe_id = _make_pipeline(sched_ctx, owner=_USER_A)
     with _client(sched_app, sched_ctx, _USER_B) as c:
         resp = c.get(f"/pipelines/{pipe_id}/schedules")
@@ -233,9 +219,7 @@ def test_list_schedules_non_owner_403(
 # ---------------------------------------------------------------------------
 
 
-def test_list_schedules_missing_pipeline_404(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_list_schedules_missing_pipeline_404(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """GET /pipelines/{id}/schedules on missing pipeline returns 404 (verb consistency)."""
     with _client(sched_app, sched_ctx, _USER_A) as c:
         resp = c.get("/pipelines/nonexistent_pipe/schedules")
@@ -247,9 +231,7 @@ def test_list_schedules_missing_pipeline_404(
 # ---------------------------------------------------------------------------
 
 
-def test_delete_schedule_owner_happy_path(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_delete_schedule_owner_happy_path(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
         create_resp = c.post(f"/pipelines/{pipe_id}/schedules", json=_VALID_BODY)
@@ -258,9 +240,7 @@ def test_delete_schedule_owner_happy_path(
     assert del_resp.status_code == 204
 
 
-def test_delete_schedule_non_owner_403(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_delete_schedule_non_owner_403(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     pipe_id = _make_pipeline(sched_ctx, owner=_USER_A)
     with _client(sched_app, sched_ctx, _USER_A) as c:
         sid = c.post(f"/pipelines/{pipe_id}/schedules", json=_VALID_BODY).json()["schedule_id"]
@@ -269,9 +249,7 @@ def test_delete_schedule_non_owner_403(
     assert resp.status_code == 403
 
 
-def test_delete_schedule_cross_pipeline_idor_404(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_delete_schedule_cross_pipeline_idor_404(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """A1/PVI-1: DELETE with S_other's id under P_self's URL must return 404 (IDOR guard)."""
     pipe_self = _make_pipeline(sched_ctx, owner=_USER_A)
     pipe_other = _make_pipeline(sched_ctx, owner=_USER_A)
@@ -289,9 +267,7 @@ def test_delete_schedule_cross_pipeline_idor_404(
 # ---------------------------------------------------------------------------
 
 
-def test_patch_schedule_disable_enable(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_patch_schedule_disable_enable(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
         sid = c.post(f"/pipelines/{pipe_id}/schedules", json=_VALID_BODY).json()["schedule_id"]
@@ -304,9 +280,7 @@ def test_patch_schedule_disable_enable(
         assert enable_resp.json()["enabled"] is True
 
 
-def test_patch_schedule_non_owner_403(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_patch_schedule_non_owner_403(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     pipe_id = _make_pipeline(sched_ctx, owner=_USER_A)
     with _client(sched_app, sched_ctx, _USER_A) as c:
         sid = c.post(f"/pipelines/{pipe_id}/schedules", json=_VALID_BODY).json()["schedule_id"]
@@ -315,9 +289,7 @@ def test_patch_schedule_non_owner_403(
     assert resp.status_code == 403
 
 
-def test_patch_schedule_cross_pipeline_idor_404(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_patch_schedule_cross_pipeline_idor_404(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """A1/PVI-1: PATCH with S_other's id under P_self's URL must return 404 (IDOR guard)."""
     pipe_self = _make_pipeline(sched_ctx, owner=_USER_A)
     pipe_other = _make_pipeline(sched_ctx, owner=_USER_A)
@@ -365,9 +337,7 @@ def test_created_interval_schedule_appears_in_due_after_time(
 # ---------------------------------------------------------------------------
 
 
-def test_email_optin_endpoint_happy_path(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_email_optin_endpoint_happy_path(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """POST email-optin: owner can opt in (→ dry-run) and response includes email fields."""
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
@@ -389,9 +359,7 @@ def test_email_optin_endpoint_happy_path(
     assert data["email_recipient"] == "alice@example.com"
 
 
-def test_email_optin_endpoint_non_owner_403(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_email_optin_endpoint_non_owner_403(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """POST email-optin: non-owner → 403."""
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
@@ -428,9 +396,7 @@ def test_email_optin_endpoint_missing_recipient_422(
     assert r2.status_code == 422
 
 
-def test_email_promote_endpoint_happy_path(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_email_promote_endpoint_happy_path(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """POST email-promote: dry-run → live after opt-in."""
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
@@ -451,9 +417,7 @@ def test_email_promote_endpoint_happy_path(
     assert data["email_recipient"] == "alice@example.com"
 
 
-def test_email_promote_endpoint_not_enabled_409(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_email_promote_endpoint_not_enabled_409(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """POST email-promote: schedule not opted-in → 409."""
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
@@ -466,9 +430,7 @@ def test_email_promote_endpoint_not_enabled_409(
     assert r2.status_code == 409
 
 
-def test_email_promote_endpoint_non_owner_403(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_email_promote_endpoint_non_owner_403(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """POST email-promote: non-owner → 403."""
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
@@ -483,9 +445,7 @@ def test_email_promote_endpoint_non_owner_403(
     assert r2.status_code == 403
 
 
-def test_email_disable_endpoint_happy_path(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_email_disable_endpoint_happy_path(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """POST email-disable: owner can disable → OFF state."""
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
@@ -504,9 +464,7 @@ def test_email_disable_endpoint_happy_path(
     assert r2.json()["email_enabled"] is False
 
 
-def test_email_disable_endpoint_non_owner_403(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_email_disable_endpoint_non_owner_403(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """POST email-disable: non-owner → 403."""
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
@@ -521,9 +479,7 @@ def test_email_disable_endpoint_non_owner_403(
     assert r2.status_code == 403
 
 
-def test_schedule_response_includes_email_fields(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_schedule_response_includes_email_fields(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """GET /schedules list and POST /schedules both surface email fields."""
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
@@ -549,9 +505,7 @@ def test_schedule_response_includes_email_fields(
 # ---------------------------------------------------------------------------
 
 
-def test_email_optin_cross_pipeline_idor_404(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_email_optin_cross_pipeline_idor_404(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """A1 lesson: email-optin with schedule from another pipeline → 404 (IDOR guard)."""
     pipe_self = _make_pipeline(sched_ctx)
     pipe_other = _make_pipeline(sched_ctx)
@@ -568,9 +522,7 @@ def test_email_optin_cross_pipeline_idor_404(
     assert resp.status_code == 404
 
 
-def test_email_promote_cross_pipeline_idor_404(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_email_promote_cross_pipeline_idor_404(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """A1 lesson: email-promote with schedule from another pipeline → 404 (IDOR guard)."""
     pipe_self = _make_pipeline(sched_ctx)
     pipe_other = _make_pipeline(sched_ctx)
@@ -588,9 +540,7 @@ def test_email_promote_cross_pipeline_idor_404(
     assert resp.status_code == 404
 
 
-def test_email_disable_cross_pipeline_idor_404(
-    sched_app: FastAPI, sched_ctx: AppContext
-) -> None:
+def test_email_disable_cross_pipeline_idor_404(sched_app: FastAPI, sched_ctx: AppContext) -> None:
     """A1 lesson: email-disable with schedule from another pipeline → 404 (IDOR guard)."""
     pipe_self = _make_pipeline(sched_ctx)
     pipe_other = _make_pipeline(sched_ctx)

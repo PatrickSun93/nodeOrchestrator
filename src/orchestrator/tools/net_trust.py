@@ -105,8 +105,7 @@ def _resolve_and_validate(hostname: str, port: int) -> str:
     except _FutureTimeout:
         future.cancel()
         raise LocalToolError(
-            f"network_timeout: DNS resolution exceeded {DNS_RESOLVE_TIMEOUT_S}s"
-            f" for {hostname!r}"
+            f"network_timeout: DNS resolution exceeded {DNS_RESOLVE_TIMEOUT_S}s for {hostname!r}"
         ) from None
     except OSError as exc:
         raise LocalToolError(
@@ -126,9 +125,7 @@ def _resolve_and_validate(hostname: str, port: int) -> str:
         except ValueError:
             continue
         if is_denied_ip(ip_obj):
-            raise LocalToolError(
-                f"ssrf_blocked: {hostname!r} resolves to denied IP {addr_str!r}"
-            )
+            raise LocalToolError(f"ssrf_blocked: {hostname!r} resolves to denied IP {addr_str!r}")
         if pinned_ip is None:
             pinned_ip = addr_str
 

@@ -281,7 +281,10 @@ def test_apply_edit_uses_hardened_open(tmp_path: Path) -> None:
 
     mutation_path = (
         _Path(__file__).parent.parent.parent
-        / "src" / "orchestrator" / "tools" / "mutation_tools.py"
+        / "src"
+        / "orchestrator"
+        / "tools"
+        / "mutation_tools.py"
     )
     source = mutation_path.read_text(encoding="utf-8")
     assert "_hardened_open" in source, (

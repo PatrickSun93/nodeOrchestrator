@@ -369,10 +369,7 @@ def test_build_agent_context_snapshot_excerpt_bounded() -> None:
 
     agent = _agent("a2")
     room_id = generate_room_id()
-    events = [
-        _make_event(room_id, EventType.UTTERANCE, "x" * 1000)
-        for _ in range(20)
-    ]
+    events = [_make_event(room_id, EventType.UTTERANCE, "x" * 1000) for _ in range(20)]
     ctx = build_agent_context(
         agent, RoomType.RESEARCH, "exploration", available_skills={}, snapshot=events
     )

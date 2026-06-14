@@ -194,9 +194,7 @@ class TestOptInOff:
         store.append(current)
 
         tools = {"propose_edit": ToolMeta(reversibility=5)}
-        thresholds = ThresholdConfig(
-            threshold_auto=6, threshold_confirm=3, user_intent_modifier=0
-        )
+        thresholds = ThresholdConfig(threshold_auto=6, threshold_confirm=3, user_intent_modifier=0)
 
         # No countdown_auto_fire → disabled
         process_tool_calls(
@@ -234,16 +232,18 @@ class TestHardNeverFires:
         rid = generate_room_id()
         store.append_room(Room(id=rid, type=RoomType.RESEARCH))
         current = Event(
-            id=generate_event_id(), room_id=rid, type=EventType.UTTERANCE,
-            author="agent:op", timestamp=now_ms(), content="",
+            id=generate_event_id(),
+            room_id=rid,
+            type=EventType.UTTERANCE,
+            author="agent:op",
+            timestamp=now_ms(),
+            content="",
         )
         store.append(current)
 
         # apply_edit reversibility=2 → HARD_CONFIRM under these thresholds
         tools = {"apply_edit": ToolMeta(reversibility=2)}
-        thresholds = ThresholdConfig(
-            threshold_auto=6, threshold_confirm=3, user_intent_modifier=0
-        )
+        thresholds = ThresholdConfig(threshold_auto=6, threshold_confirm=3, user_intent_modifier=0)
         cfg = CountdownAutoFireConfig(
             enabled=True, window_s=300, sweep_interval_s=30, reversibility_floor=0
         )
@@ -271,7 +271,8 @@ class TestHardNeverFires:
         rid = _make_room(ctx.writer_store)
         past = TimestampMs(now_ms() - 1_000_000)
         _append_pending(
-            ctx.writer_store, rid,
+            ctx.writer_store,
+            rid,
             tier="hard_confirm",
             expires_at=past,  # even if stamped (shouldn't happen), must not fire
         )
@@ -299,16 +300,18 @@ class TestReversibilityFloor:
         rid = generate_room_id()
         store.append_room(Room(id=rid, type=RoomType.RESEARCH))
         current = Event(
-            id=generate_event_id(), room_id=rid, type=EventType.UTTERANCE,
-            author="agent:op", timestamp=now_ms(), content="",
+            id=generate_event_id(),
+            room_id=rid,
+            type=EventType.UTTERANCE,
+            author="agent:op",
+            timestamp=now_ms(),
+            content="",
         )
         store.append(current)
 
         # reversibility=4, floor=5 → below floor → no expires_at
         tools = {"propose_edit": ToolMeta(reversibility=4)}
-        thresholds = ThresholdConfig(
-            threshold_auto=6, threshold_confirm=3, user_intent_modifier=0
-        )
+        thresholds = ThresholdConfig(threshold_auto=6, threshold_confirm=3, user_intent_modifier=0)
         cfg = CountdownAutoFireConfig(
             enabled=True, window_s=300, sweep_interval_s=30, reversibility_floor=5
         )
@@ -341,15 +344,17 @@ class TestReversibilityFloor:
         rid = generate_room_id()
         store.append_room(Room(id=rid, type=RoomType.RESEARCH))
         current = Event(
-            id=generate_event_id(), room_id=rid, type=EventType.UTTERANCE,
-            author="agent:op", timestamp=now_ms(), content="",
+            id=generate_event_id(),
+            room_id=rid,
+            type=EventType.UTTERANCE,
+            author="agent:op",
+            timestamp=now_ms(),
+            content="",
         )
         store.append(current)
 
         tools = {"propose_edit": ToolMeta(reversibility=5)}
-        thresholds = ThresholdConfig(
-            threshold_auto=6, threshold_confirm=3, user_intent_modifier=0
-        )
+        thresholds = ThresholdConfig(threshold_auto=6, threshold_confirm=3, user_intent_modifier=0)
         cfg = CountdownAutoFireConfig(
             enabled=True, window_s=300, sweep_interval_s=30, reversibility_floor=5
         )
@@ -446,8 +451,7 @@ class TestIdempotency:
 
         # Exactly one TOOL_CALL
         tc_events = [
-            e for e in ctx.writer_store.get_room_events(rid)
-            if e.type == EventType.TOOL_CALL
+            e for e in ctx.writer_store.get_room_events(rid) if e.type == EventType.TOOL_CALL
         ]
         assert len(tc_events) == 1
         ctx.shutdown()
@@ -514,7 +518,8 @@ class TestBootRearm:
         server_start_ms = int(now_ms() - 2_000_000)
         past_expires = TimestampMs(now_ms() - 1000)  # already expired
         pending = _append_pending(
-            ctx.writer_store, rid,
+            ctx.writer_store,
+            rid,
             expires_at=past_expires,
         )
         # pending.timestamp >= server_start_ms (current process) AND expired → should fire
@@ -558,7 +563,8 @@ class TestApproverGuard:
         ctx = _make_ctx(tmp_path / "db.db")
         rid = _make_room(ctx.writer_store)
         pending = _append_pending(
-            ctx.writer_store, rid,
+            ctx.writer_store,
+            rid,
             call_id="call_t4",
             tool_name="propose_edit",
             agent_id="myagent",

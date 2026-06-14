@@ -298,9 +298,7 @@ def test_turn_loop_exits_on_zero_tool_calls(tmp_path: Any) -> None:
         _post_intent(client, room_id)
 
     # Should have terminated after pass 1 (2 total calls), not hit N.
-    assert call_count[0] == 2, (
-        f"Expected exactly 2 dispatch_turn calls; got {call_count[0]}"
-    )
+    assert call_count[0] == 2, f"Expected exactly 2 dispatch_turn calls; got {call_count[0]}"
     assert call_count[0] <= 1 + MAX_TURN_LOOP_PASSES
 
 
@@ -402,9 +400,9 @@ def test_turn_loop_countdown_pending_terminates_loop(tmp_path: Any) -> None:
 
     # No TOOL_CALL (AUTO_EXECUTE) must be present for propose_edit.
     tool_calls = [
-        e for e in events
-        if e.type == EventType.TOOL_CALL
-        and e.metadata.get("tool_name") == "propose_edit"
+        e
+        for e in events
+        if e.type == EventType.TOOL_CALL and e.metadata.get("tool_name") == "propose_edit"
     ]
     assert tool_calls == []
 
@@ -457,8 +455,9 @@ def test_state_machine_runs_once_per_turn() -> None:
     original_next = _original_next
 
     app = _make_test_app(ctx)
-    with TestClient(app, headers=_auth_headers(ctx)) as client, patch.object(
-        _runtime_mod, "next_room_state", side_effect=patched_next_room_state
+    with (
+        TestClient(app, headers=_auth_headers(ctx)) as client,
+        patch.object(_runtime_mod, "next_room_state", side_effect=patched_next_room_state),
     ):
         room_id = _post_room(client)
         _post_intent(client, room_id)
@@ -513,8 +512,9 @@ def test_turn_loop_wall_clock_deadline_exits(tmp_path: Any) -> None:
     app = _make_test_app(ctx)
     # Set re-dispatch deadline to -1.0 (always expired): the first boundary check
     # will see monotonic() - loop_start >= -1.0 (always True since difference >= 0).
-    with TestClient(app, headers=_auth_headers(ctx)) as client, patch.object(
-        _app_mod, "MAX_REDISPATCH_WALL_CLOCK_S", -1.0
+    with (
+        TestClient(app, headers=_auth_headers(ctx)) as client,
+        patch.object(_app_mod, "MAX_REDISPATCH_WALL_CLOCK_S", -1.0),
     ):
         room_id = _post_room(client)
         _post_intent(client, room_id)
@@ -653,9 +653,9 @@ def test_investigator_mutation_tool_does_not_auto_execute(tmp_path: Any) -> None
     assert len(pending) >= 1, "propose_edit must land as TOOL_CALL_PENDING (COUNTDOWN)"
 
     tool_calls = [
-        e for e in events
-        if e.type == EventType.TOOL_CALL
-        and e.metadata.get("tool_name") == "propose_edit"
+        e
+        for e in events
+        if e.type == EventType.TOOL_CALL and e.metadata.get("tool_name") == "propose_edit"
     ]
     assert tool_calls == [], "propose_edit must not AUTO-execute (threshold_auto=8 > rev=5)"
 

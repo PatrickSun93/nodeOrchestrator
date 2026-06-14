@@ -199,11 +199,7 @@ def test_rss_parse_comment_padded_prolog_doctype_blocked() -> None:
     """B1: comment padding pushes DOCTYPE past any byte-window — defusedxml still blocks."""
     # 9000-char comment pushes <!DOCTYPE past a hypothetical 8192-byte scan window.
     padding = "x" * 9000
-    xml = (
-        f"<!-- {padding} -->"
-        "<!DOCTYPE foo [<!ENTITY x 'y'>]>"
-        "<rss version='2.0'><channel/></rss>"
-    )
+    xml = f"<!-- {padding} --><!DOCTYPE foo [<!ENTITY x 'y'>]><rss version='2.0'><channel/></rss>"
     with pytest.raises(SourceReadError, match=r"rss_parse_failed|entity|forbidden"):
         _parse_feed(xml)
 

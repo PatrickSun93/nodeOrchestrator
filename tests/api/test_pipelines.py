@@ -146,9 +146,7 @@ _VALID_BODY: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 
-def test_create_pipeline_returns_201(
-    pipeline_app: FastAPI, pipeline_ctx: AppContext
-) -> None:
+def test_create_pipeline_returns_201(pipeline_app: FastAPI, pipeline_ctx: AppContext) -> None:
     with _client_for(pipeline_app, pipeline_ctx, _USER_A) as client:
         resp = client.post("/pipelines", json=_VALID_BODY)
     assert resp.status_code == 201
@@ -204,9 +202,7 @@ def test_create_pipeline_empty_prompts_rejected(
 # ---------------------------------------------------------------------------
 
 
-def test_list_pipelines_returns_own_only(
-    pipeline_app: FastAPI, pipeline_ctx: AppContext
-) -> None:
+def test_list_pipelines_returns_own_only(pipeline_app: FastAPI, pipeline_ctx: AppContext) -> None:
     with _client_for(pipeline_app, pipeline_ctx, _USER_A) as client:
         client.post("/pipelines", json=_VALID_BODY)
         client.post("/pipelines", json=_VALID_BODY)
@@ -233,9 +229,7 @@ def test_list_pipelines_unauthenticated(pipeline_app: FastAPI) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_pipeline_owner_can_read(
-    pipeline_app: FastAPI, pipeline_ctx: AppContext
-) -> None:
+def test_get_pipeline_owner_can_read(pipeline_app: FastAPI, pipeline_ctx: AppContext) -> None:
     with _client_for(pipeline_app, pipeline_ctx, _USER_A) as client:
         create_resp = client.post("/pipelines", json=_VALID_BODY)
         pipeline_id = create_resp.json()["pipeline_id"]
@@ -244,9 +238,7 @@ def test_get_pipeline_owner_can_read(
     assert get_resp.json()["pipeline_id"] == pipeline_id
 
 
-def test_get_pipeline_non_owner_gets_403(
-    pipeline_app: FastAPI, pipeline_ctx: AppContext
-) -> None:
+def test_get_pipeline_non_owner_gets_403(pipeline_app: FastAPI, pipeline_ctx: AppContext) -> None:
     """Non-owner principal gets 403 (R0-A F3 — owner-private access control)."""
     with _client_for(pipeline_app, pipeline_ctx, _USER_A) as client_a:
         create_resp = client_a.post("/pipelines", json=_VALID_BODY)
@@ -270,9 +262,7 @@ def test_get_pipeline_not_found_returns_404(
 # ---------------------------------------------------------------------------
 
 
-def test_run_pipeline_non_owner_gets_403(
-    pipeline_app: FastAPI, pipeline_ctx: AppContext
-) -> None:
+def test_run_pipeline_non_owner_gets_403(pipeline_app: FastAPI, pipeline_ctx: AppContext) -> None:
     """Non-owner gets 403 on run endpoint (R0-A F3)."""
     with _client_for(pipeline_app, pipeline_ctx, _USER_A) as client_a:
         create_resp = client_a.post("/pipelines", json=_VALID_BODY)
@@ -314,9 +304,7 @@ def test_run_pipeline_returns_run_result(
     assert data["room_id"].startswith("room_")
 
 
-def test_run_pipeline_unauthenticated(
-    pipeline_app: FastAPI, pipeline_ctx: AppContext
-) -> None:
+def test_run_pipeline_unauthenticated(pipeline_app: FastAPI, pipeline_ctx: AppContext) -> None:
     with _client_for(pipeline_app, pipeline_ctx, _USER_A) as client_a:
         create_resp = client_a.post("/pipelines", json=_VALID_BODY)
     pipeline_id = create_resp.json()["pipeline_id"]

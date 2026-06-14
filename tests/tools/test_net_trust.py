@@ -360,9 +360,7 @@ def test_nat64_wrapped_public_ipv4_allowed() -> None:
 
     # 93.184.216.34 (example.com) embedded in NAT64: 64:ff9b::5db8:d822
     nat64_public = ipaddress.ip_address("64:ff9b::5db8:d822")
-    assert not is_denied_ip(nat64_public), (
-        "NAT64-wrapped public IP (93.184.216.34) must be allowed"
-    )
+    assert not is_denied_ip(nat64_public), "NAT64-wrapped public IP (93.184.216.34) must be allowed"
 
 
 # ---------------------------------------------------------------------------

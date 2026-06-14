@@ -33,10 +33,12 @@ from orchestrator.api.auth.session import validate_session, validate_token
 # Public paths exempt from auth (explicit allowlist — fail-closed by default).
 # A new route is protected unless explicitly added here.
 # Allowlist: {/login, /health} — /logout is a protected route (requires auth).
-PUBLIC_PATHS: frozenset[str] = frozenset({
-    "/login",
-    "/health",
-})
+PUBLIC_PATHS: frozenset[str] = frozenset(
+    {
+        "/login",
+        "/health",
+    }
+)
 
 
 def _is_public(path: str) -> bool:

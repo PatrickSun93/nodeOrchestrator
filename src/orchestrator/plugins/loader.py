@@ -233,14 +233,10 @@ def _collision_check(
     _plugin_skills: set[str] = set()
     for skill_id in c.skills:
         if skill_id in host_skills:
-            _log.warning(
-                "plugin %r: skill %r collides with host skill — refusing", pid, skill_id
-            )
+            _log.warning("plugin %r: skill %r collides with host skill — refusing", pid, skill_id)
             return False
         if skill_id in _plugin_skills:
-            _log.warning(
-                "plugin %r: skill %r duplicate within plugin — refusing", pid, skill_id
-            )
+            _log.warning("plugin %r: skill %r duplicate within plugin — refusing", pid, skill_id)
             return False
         _plugin_skills.add(skill_id)
 
@@ -249,14 +245,10 @@ def _collision_check(
     _plugin_tools: set[str] = set()
     for tool_name in c.tools:
         if tool_name in host_tools:
-            _log.warning(
-                "plugin %r: tool %r collides with host tools — refusing", pid, tool_name
-            )
+            _log.warning("plugin %r: tool %r collides with host tools — refusing", pid, tool_name)
             return False
         if tool_name in _plugin_tools:
-            _log.warning(
-                "plugin %r: tool %r duplicate within plugin — refusing", pid, tool_name
-            )
+            _log.warning("plugin %r: tool %r duplicate within plugin — refusing", pid, tool_name)
             return False
         _plugin_tools.add(tool_name)
 

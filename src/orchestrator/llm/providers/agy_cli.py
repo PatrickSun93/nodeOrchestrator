@@ -143,9 +143,7 @@ class AgyCliProvider:
                 env=self._build_child_env(),
             )
         except FileNotFoundError as exc:
-            raise ProviderUnhealthyError(
-                f"agy binary not found at {self.cli_path!r}"
-            ) from exc
+            raise ProviderUnhealthyError(f"agy binary not found at {self.cli_path!r}") from exc
         except OSError as exc:
             raise ProviderUnhealthyError(f"agy CLI launch failed: {exc}") from exc
 
@@ -162,9 +160,7 @@ class AgyCliProvider:
                 pass
             if isinstance(exc, asyncio.CancelledError):
                 raise
-            raise TransientProviderError(
-                f"agy_cli timed out after {self.timeout_s}s"
-            ) from exc
+            raise TransientProviderError(f"agy_cli timed out after {self.timeout_s}s") from exc
 
         latency_ms = int((time.monotonic() - t0) * 1000)
         stdout_str = stdout_bytes.decode("utf-8", errors="replace")

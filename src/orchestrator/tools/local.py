@@ -290,7 +290,9 @@ def _make_find_references(sandbox_root: Path) -> LocalToolFn:
         )
         content = "\n".join(hits) if hits else "(no matches)"
         truncated_at = MAX_RESULT_BYTES if truncated else None
-        _log.debug("find_references: %d files %d hits trunc=%s", files_scanned, len(hits), truncated)  # noqa: E501
+        _log.debug(
+            "find_references: %d files %d hits trunc=%s", files_scanned, len(hits), truncated
+        )
         return LocalToolOutput(content=content, output_truncated_at=truncated_at)
 
     return _find_references
@@ -325,7 +327,9 @@ def _make_find_definition(sandbox_root: Path) -> LocalToolFn:
         )
         content = "\n".join(hits) if hits else "(no matches)"
         truncated_at = MAX_RESULT_BYTES if truncated else None
-        _log.debug("find_definition: %d files %d hits trunc=%s", files_scanned, len(hits), truncated)  # noqa: E501
+        _log.debug(
+            "find_definition: %d files %d hits trunc=%s", files_scanned, len(hits), truncated
+        )
         return LocalToolOutput(content=content, output_truncated_at=truncated_at)
 
     return _find_definition

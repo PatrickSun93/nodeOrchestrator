@@ -119,9 +119,7 @@ def test_token_is_random(conn: sqlite3.Connection) -> None:
 def test_token_stored_hashed_not_plaintext(conn: sqlite3.Connection) -> None:
     raw_token = create_token(conn, "iris")
     # The raw token must NOT appear in the DB
-    row = conn.execute(
-        "SELECT token_hash FROM user_tokens WHERE user_id = 'iris'"
-    ).fetchone()
+    row = conn.execute("SELECT token_hash FROM user_tokens WHERE user_id = 'iris'").fetchone()
     assert row is not None
     token_hash = row[0]
     assert token_hash != raw_token
