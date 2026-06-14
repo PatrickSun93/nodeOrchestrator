@@ -1,7 +1,7 @@
 task_id: P6.7
-state: awaiting_R0_A
+state: awaiting_architect_decision
 cycle: 1
-last_transition_at: '2026-06-14T21:15:27.201428Z'
+last_transition_at: '2026-06-14T21:16:45.771957Z'
 cycle_started_at: '2026-06-14T20:07:15.373611Z'
 override_history:
 - timestamp: '2026-06-14T20:33:18.898796Z'
