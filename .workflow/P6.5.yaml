@@ -1,7 +1,7 @@
 task_id: P6.5
-state: awaiting_R0_A
+state: closed
 cycle: 2
-last_transition_at: '2026-06-14T19:22:45.831476Z'
+last_transition_at: '2026-06-14T19:37:04.318648Z'
 cycle_started_at: '2026-06-14T18:58:14.434468Z'
 override_history:
 - timestamp: '2026-06-13T19:55:16.974481Z'
@@ -35,4 +35,12 @@ override_history:
     commits fall before the boundary): R0-B 🔴 refspec bypass (reject branch :/+) +
     R0-A Y1/Y2 test-honesty + Y3 wording. Routine git_push hardening, no contract
     change. See architect-routing-on-impl.md.'
+- timestamp: '2026-06-14T19:37:04.318648Z'
+  actor: architect
+  from_state: awaiting_PR_merge
+  to_state: closed
+  reason: 'P6.5 merged (PR #75). git_push hardening: GIT_ALLOW_PROTOCOL + configured-remote
+    + refspec-prefix reject (cross-family refspec bypass fixed+verified). 5/6 low-pri
+    items dropped (verify-first). cycle-2 R0-B N1 non-force-glob accepted-as-shipped
+    → task #110. Spine 0-diff.'
 requires_cross_family_review: true
