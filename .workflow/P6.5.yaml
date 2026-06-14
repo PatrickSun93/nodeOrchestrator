@@ -1,8 +1,8 @@
 task_id: P6.5
 state: awaiting_junior_impl
-cycle: 1
-last_transition_at: '2026-06-14T18:57:16.773960Z'
-cycle_started_at: '2026-06-13T19:32:58.006767Z'
+cycle: 2
+last_transition_at: '2026-06-14T18:58:14.434468Z'
+cycle_started_at: '2026-06-14T18:58:14.434468Z'
 override_history:
 - timestamp: '2026-06-13T19:55:16.974481Z'
   actor: architect
@@ -18,4 +18,21 @@ override_history:
     test-honesty + Y3 wording. All routine git_push input-validation hardening / test
     fixes, no spine/ADR-contract change. Y3 config-poisoning follow-on → task #109.
     See architect-routing-on-impl.md.'
+- timestamp: '2026-06-14T18:58:10.901202Z'
+  actor: architect
+  from_state: awaiting_junior_impl
+  to_state: awaiting_architect_decision
+  reason: Restore to architect_decision to take the documented is_rework path (architect_decision→junior_impl,
+    cycle++ + cycle_started_at re-stamp) for the cycle-2 refspec/test rework. The
+    prior senior_revision→junior_impl override did not trigger is_rework, so cycle-1
+    impl commits still counted as post-boundary and the hook re-advanced to senior_plan_vs_impl
+    (RC-28).
+- timestamp: '2026-06-14T18:58:14.434468Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 α rework (is_rework: cycle++ + re-stamp cycle_started_at so cycle-1
+    commits fall before the boundary): R0-B 🔴 refspec bypass (reject branch :/+) +
+    R0-A Y1/Y2 test-honesty + Y3 wording. Routine git_push hardening, no contract
+    change. See architect-routing-on-impl.md.'
 requires_cross_family_review: true
