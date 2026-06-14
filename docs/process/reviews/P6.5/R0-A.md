@@ -3,72 +3,52 @@ task_id: P6.5
 kind: R0-A-on-impl
 surface: product
 stage: impl
-cycle: 1
-reviewed_ref: origin/claude/P6.5-impl @ fb68efc
-lens: subprocess-injection threat-probe (cross-family dual-lens; runs beside R0-B)
-verdict: needs_architect   # impl is correct + safe to ship on the security axis; 3 🟡 test-integrity / annotation-precision findings warrant an architect routing call (α fix-in-cycle vs β defer)
+cycle: 2
+reviewed_ref: origin/claude/P6.5-impl @ 3ae8042
+supersedes: R0-A cycle-1 (@ fb68efc, verdict needs_architect) — this re-review covers the α-bundle rework
+lens: subprocess-injection threat-probe (cross-family dual-lens; absorbs the R0-B R1/R2 fix this cycle)
+verdict: clean   # all cycle-1 + cross-family findings resolved with fail-on-revert coverage; G1 unregressed; spine 0-diff; gates green; ready to merge
 author: architect-partner
 ---
 
-# P6.5 R0-A — git_push remote hardening (transport allowlist + configured-remote restriction)
+# P6.5 R0-A (cycle 2) — git_push remote hardening: α-bundle rework re-review
 
 ## TL;DR
 
-The hardening is **functionally correct and safe to ship**. Both named vectors are genuinely closed: I verified the transport block empirically (git refuses `ext` under `GIT_ALLOW_PROTOCOL`) and the configured-remote restriction runs on **both** dispatch paths with fail-closed error handling. Spine 0-diff, ADR-037 D2 isolation contract untouched, t9/t12 green, full gate green.
+The cycle-2 α bundle resolves **all five** routed findings (R0-B R1🔴 + R2🟡 refspec bypass; R0-A Y1/Y2🟡 test-honesty; Y3🟡 annotation). The cycle-2 diff (`88ac9bd..3ae8042`) is **+5 product lines / +71 test lines / ±2 ADR lines**, touches only `subprocess_tools.py` + its test + ADR-036, and is **purely additive** to G1 — no regression, **spine 0-diff**, no new `LLMPurpose`, ADR-037 D2 isolation contract untouched. I re-ran the full gate independently in an isolated detached worktree (`uv sync --all-extras`): **ruff clean / mypy 310 files / pytest 2527 passed**. Beyond passing, I confirmed each new guard genuinely **bites** with three fail-on-revert probes (remove the guard → the test fails). **Verdict: clean — ready to merge.**
 
-**But two of the three tests the senior plan §4 designated as "fail-on-revert" do not actually fail on revert**, and the load-bearing `file`-in-allowlist choice (senior §5a) is **entirely unguarded**. None of this is a product-code defect — the impl is right — so this is `needs_architect` (route the test work α now / β follow-on), **not** blocking.
+## Cycle-1 → cycle-2 resolution
 
-## What is verified correct (the security core holds)
+| # | Cycle-1 finding | Fix in 3ae8042 | Independently verified |
+|---|---|---|---|
+| **R0B-R1** 🔴 | `branch=":main"` deletes the remote ref, evading the `--delete` ban | `if branch.startswith(":") or branch.startswith("+"): raise LocalToolError(... "only plain branch names are accepted")`, placed before argv build **and** before the posture branch (guards both `_sandbox_dispatch` and the non-sandbox `_dispatch` RCE path) | code-read + **PROBE A** (remove guard → `test_git_push_refspec_delete_rejected` fails); the test also asserts the remote `main` ref survives via `git ls-remote` |
+| **R0B-R2** 🟡 | `branch="+main:main"` force-pushes, evading `--force` | same `:`/`+` guard | **PROBE A** (`test_git_push_refspec_force_push_rejected` fails on revert) |
+| **R0A-Y1** 🟡 | happy-path passed on a *failed* push; the load-bearing `file`-allowlist choice was unguarded | happy-path now `git init -b main` + asserts `exit_code=0`; new `test_git_push_transport_allowlist_set` pins the set (`file` in, `ext` out) | **PROBE B** (drop `file` from the allowlist → both tests fail) |
+| **R0A-Y2** 🟡 | the `ext::` test was a false-pass (side-effect that never fires) | asserts `"not allowed" in result.content` (the protocol-denied signal) | **PROBE C** (re-allow `ext::` on the push env → test fails) |
+| **R0A-Y3** 🟡 | ADR-036 note overstated "operator-configured" | "operator-configured" → "configured" + explicit `apply_edit`/`.git/config` config-poisoning caveat + → task #109 | ADR diff read; matches the routed wording + deferral |
 
-- **2a — transport RCE closed (empirically).** `_GIT_ALLOW_PROTOCOL = "https:ssh:git:file"` (`subprocess_tools.py:55`) is overlaid on the push subprocess env (`:468`) and flows through **both** paths — sandbox `_sandbox_dispatch(…, extra_env=extra_env)` and non-sandbox `return _dispatch("git_push", …, extra_env=extra_env)` (`:486`), plus the DEGRADED fall-through (`_dispatch(tool_name, …, extra_env)`, `:173`). Every other git invocation in the module also carries it: HEAD resolve (`:407`), the new `git remote` list (`:444`), and `git remote get-url` (`:503`). I confirmed git's behaviour directly: with `GIT_ALLOW_PROTOCOL=https:ssh:git:file`, `git push <ext-remote>` → `fatal: transport 'ext' not allowed` (denied at the transport layer before any helper spawns). Robust.
-- **2b + 2a-via-param — configured-remote restriction on both paths, fail-closed.** The name-check (`:439-459`) is placed **after** the flag/banned-flag checks and **before** the `if posture_resolver is not None` branch, so it guards the non-sandbox `_dispatch` RCE path too. `configured_remotes` is the `git remote` output set on exit 0, else `set()`; `SubprocessTimeoutError`/`OSError` → `set()` (`:451-454`); any non-match → `LocalToolError` (`:455-459`). Empty-set-on-error = fail-closed (every remote rejected). Correct.
-- **No regression to existing guards.** The flag-shape rejection (`remote.startswith("-")`) and the 5 banned-flag checks are preserved ahead of the new block. `test_git_push_flag_shaped_*` / `_banned_flag_*` still pass.
-- **Spine byte-frozen.** Diff touches only `subprocess_tools.py` + its test + `ADR-036`. `scoring.py` / `profile.py` / the gate / `_execute_local_call` / `autonomy/` are **0-diff** (verified by name-only diff). ADR-037 D2 isolation contract untouched — `_sandbox_dispatch` signature and egress-pinning logic unchanged; the change lives entirely inside `_make_git_push._impl`, below the executor.
-- **ADR-036 D3-iii note** present, reads as a *narrowing* (not "solved"), names both layers + cites the P4.3 egress proxy as the hard boundary. Accurate (one wording nit — Y3).
-- **No new `LLMPurpose`** (t3 free — `tools/` covered); all new git calls are fixed-argv (t9 green); t12 unaffected.
+## Independent verification
 
-## Gate results (run independently in an isolated detached worktree, `uv sync --all-extras`)
+**Refspec guard (R1/R2) — placement + completeness.** The new 5-line block sits in `_make_git_push._impl` between the existing flag-shape (`startswith("-")`) check and the banned-flags loop — i.e. **before the argv build and before the `if posture_resolver is not None` branch**, so it covers both dispatch paths exactly as the existing flag-shape guard does. It closes the two destructive refspec spellings R0-B named (`:dst` = delete, `+src:dst` = force); a non-prefixed mapping (`a:b`) is a normal fast-forward push still gated by the configured-remote check + the always-HARD confirm, and a HEAD-resolved branch is a plain name. Fail-fast: a `:main` is rejected before the `git remote` subprocess even spawns. (PROBE A: with the guard removed, both refspec tests fail — the delete test because the `:main` push then actually deletes the bare remote's `main`, so both the `pytest.raises` and the `ls-remote`-intact assertion fall over.)
 
+**G1 no regression.** The cycle-2 change is additive only. The configured-remote restriction (`remote not in configured_remotes` → reject, fail-closed on `git remote` error/timeout → `set()`) and the `GIT_ALLOW_PROTOCOL` overlay on all four git invocations (HEAD resolve, `git remote` list, push, `git remote get-url`) are untouched. All 18 `git_push` test nodes are green, including the pre-existing flag-shape / banned-flag / inline-URL / ext-transport-name guards.
+
+**Spine byte-frozen.** `git diff main..3ae8042` is **empty** across `src/orchestrator/autonomy/`, `core/`, `llm/`; the only `src/` file changed is `subprocess_tools.py`. `_execute_local_call` (`tools/executor.py`), `scoring.py`, the gate, and `autonomy/` are 0-diff. No new `LLMPurpose` (argv stays fixed `["git","push",remote,branch]`; t9/t12 reasoning holds by inspection). ADR-037 D2 isolation contract untouched — `_sandbox_dispatch` signature unchanged; the guard lives entirely above the executor inside `_make_git_push._impl`.
+
+**Gates (isolated detached worktree @ 3ae8042, `uv sync --all-extras`).**
 - `ruff check .` → **All checks passed**
-- `mypy` → **Success: no issues in 310 source files**
-- `pytest` (full) → **rc=0** (green). Targeted: `tests/tools/test_subprocess_tools.py` + `test_constitution.py` = **52 passed**; all 14 `git_push` nodes pass incl. the 4 new P6.5 tests; `t9_no_shell_in_subprocess_surface` + `t12_git_push_argv_discipline` green.
+- `mypy` (strict, `files=[src,tests]`) → **Success: no issues found in 310 source files**
+- `pytest` (full) → **2527 passed** (1 pre-existing Starlette deprecation warning, unrelated)
 
-## Findings
+**Fail-on-revert probes (the "真咬" check).** In the throwaway worktree I reverted each guard in turn, ran the affected tests, and restored (`git checkout`) — confirming none of the cycle-2 tests are vacuous:
+- **PROBE A** — remove the `:`/`+` guard → `refspec_delete` + `refspec_force` → **2 failed**
+- **PROBE B** — drop `file` from `_GIT_ALLOW_PROTOCOL` → `transport_allowlist_set` + `happy_path_local_remote` → **2 failed**
+- **PROBE C** — re-allow `ext::` on the push env → `ext_protocol_blocked_by_allowlist` → **1 failed**
 
-### 🟡 Y1 — happy-path test passes on a *failed* push; the `file`-allowlist choice is unguarded
+## Cross-family note (R0-B)
 
-`test_git_push_happy_path_local_remote` pushes `{"remote":"origin","branch":"main"}` but sets the repo up with bare `git init src` (no `-b main`). On the CI git (2.43.0, no `init.defaultBranch`) the default branch is **`master`**, so the tool runs `git push origin main` → `error: src refspec main does not match any` → **real `exit_code=1`**. The test asserts only `assert "exit_code=" in result.content`, which matches `exit_code=1` → **the test passes although the push failed.**
+R0-B's R1/R2 were folded into this α bundle, and I confirmed them under the **same subprocess-injection / attacker-perspective lens** R0-B used — PROBE A is an attacker-perspective fail-on-revert. The fix is surgical and bites. Whether to also re-run a separate R0-B session for cycle-2 is your dispatch call (`dual-lens-r0b.md`); from the R0-A lens the cross-family findings are resolved.
 
-Two compounding consequences, both verified empirically:
-1. **Criterion 3 ("origin push still works", `exit_code=0`) is not actually verified.** The push never succeeds in this test.
-2. **The `file`-in-`_GIT_ALLOW_PROTOCOL` decision — senior §5a's explicitly load-bearing call — is exercised by *zero* tests.** The refspec error precedes git's protocol allow-check: `GIT_ALLOW_PROTOCOL="https:ssh:git" git push origin main` → `src refspec main does not match any` (exit 1), whereas with the *correct* branch `… push origin master` → `fatal: transport 'file' not allowed` (exit 128), and `…:file … push origin master` → success (exit 0). So if someone took the `https:ssh:git` (drop-`file`) option the senior surfaced in §5a, **this test would stay green** — the one change most likely to regress the happy path is uncaught.
+## Verdict
 
-The **impl is correct** — a real `git_push(remote="origin", branch="<real-branch>")` pushes fine (proven: exit 0 with the correct branch), and real callers resolve the branch from HEAD. This is a test defect, not a product bug. Fix is a 2-line test edit: init with `-b main` (or push the actual default branch) **and** assert `exit_code=0`.
-
-**Lean: α (fix in-cycle).** It's test-only, and for a security slice the regression guard on the load-bearing allowlist set should bite.
-
-### 🟡 Y2 — the ext defense-in-depth test is a false-pass
-
-`test_git_push_ext_protocol_blocked_by_allowlist` configures `evil → "ext::sh -c 'touch {pwned}'"`, pushes `remote="evil"`, and asserts `not pwned.exists()`. The transport block it documents **is real** (Y-positive: proven `fatal: transport 'ext' not allowed`). But the *test* doesn't prove it: git's `ext::` transport space-splits its argv with no shell and no quote processing, so `ext::sh -c 'touch X'` becomes argv `["sh","-c","'touch","X'"]` → `sh -c "'touch"` → "Bad command", **no file created — even with `ext` allowed** (I verified: `git -c protocol.ext.allow=always push evil` → no PWNED). So "assert no PWNED" holds regardless of `GIT_ALLOW_PROTOCOL`; the test would pass on a revert of the transport allowlist.
-
-Mitigant: the allowlist's **wiring** is independently guarded — `test_git_push_allow_protocol_in_env` asserts `GIT_ALLOW_PROTOCOL == _GIT_ALLOW_PROTOCOL` in the subprocess env and *does* fail-on-revert of the `:468` line. So the property is not unguarded, only this behavioural demonstration is hollow. Suggested strengthening: assert the protocol-denied signal instead of a side-effect that never fires — e.g. `"not allowed" in result.content` (true fail-on-revert: without the allowlist the error is "Bad command", not "transport 'ext' not allowed").
-
-**Lean: α (fix in-cycle), lower urgency than Y1** — the env-presence test already guards the wiring, so this is test-honesty, not a coverage hole.
-
-### 🟡 Y3 — annotation precision: "operator-configured" overstates; `apply_edit` → `.git/config` re-opens 2b (out of scope, net-improvement)
-
-The name-restriction assumes `git remote` reflects only **operator**-configured remotes. But `apply_edit`'s `_check_path` enforces *containment under the repo root*, not a `.git/`-deny — and `.git/config` sits under the root. An in-sandbox agent holding both `apply_edit` and `git_push` could write a remote `evil → https://attacker.example` into `.git/config`, then `git_push(remote="evil")` passes the name-check and, on the sandbox path, `_resolve_git_remote_host` pins egress to the agent-chosen host — i.e. the 2b exfil vector re-opens via config-poisoning rather than the inline-URL param.
-
-Scope/severity calibration: this is a **different vector** (config-poisoning) than the 2a/2b *param* vectors P6.5 was ratified to close, it is **out of P6.5's scope**, and P6.5 is a strict **net improvement** (pre-P6.5, any inline URL worked with no config step at all). git_push is rev-1 HARD → always human-confirmed, and the confirm surfaces `remote`. So **not blocking**. The only in-artifact issue: the ADR-036 D3-iii annotation's phrase *"NARROWED to operator-configured remotes"* is slightly optimistic — strictly it's "configured remotes," which an in-sandbox `apply_edit` can extend. (The annotation does already name the egress proxy as the hard boundary, which is the honest backstop.)
-
-**Lean: note + β.** A one-word annotation tweak ("configured" not "operator-configured", or an explicit apply_edit caveat) is cheap; the underlying follow-on (e.g. `.git/`-deny in `apply_edit`, or resolving remotes from a source git can't self-mutate) is its own backlog item, not this slice. Surfacing for awareness — same exfil-by-remote lens the brief itself used.
-
-## Verdict & routing question
-
-**`needs_architect`.** The hardening is correct and safe — ship-worthy on the security axis. The open call is purely about test integrity on a security slice:
-
-- **Y1** (happy-path passes on failure; `file`-allowlist unguarded) — lean **α** (2-line test fix).
-- **Y2** (ext test false-pass) — lean **α**, lower urgency (wiring already guarded by the env test).
-- **Y3** (annotation "operator-configured" overstates; apply_edit config-poison re-opens 2b, out of scope) — lean **note + β** follow-on.
-
-Architect: route Y1/Y2 **α (fix in this cycle)** or **β (merge, test-hardening follow-on)**? Y3 is a wording tweak + backlog item, your call. R0-B runs in parallel on the same surface; synthesize when both land.
+**`clean`.** All five routed findings are resolved with real fail-on-revert coverage; G1 is unregressed; spine 0-diff; gates green. No open finding and no architect decision on the review axis — Y3's config-poisoning follow-on was already routed → task #109. The slice is ready to merge → P6.5 closes.
