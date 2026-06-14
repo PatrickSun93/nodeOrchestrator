@@ -193,8 +193,12 @@ def verify_password(conn: sqlite3.Connection, user_id: str, password: str) -> bo
         # Dummy scrypt: normalise timing regardless of user existence.
         _dummy_salt = b"\x00" * 16
         hashlib.scrypt(
-            password.encode(), salt=_dummy_salt,
-            n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN,
+            password.encode(),
+            salt=_dummy_salt,
+            n=_SCRYPT_N,
+            r=_SCRYPT_R,
+            p=_SCRYPT_P,
+            dklen=_SCRYPT_DKLEN,
         )
         return False
     stored_hash, stored_salt, disabled = row

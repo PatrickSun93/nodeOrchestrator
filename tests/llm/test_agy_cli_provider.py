@@ -164,9 +164,7 @@ class TestHappyPath:
         assert "--model" in cli_args
         assert "gemini-2.0-flash" in cli_args
 
-    async def test_temperature_from_request_passed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_temperature_from_request_passed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         captured = _patch_exec(monkeypatch, lambda args: FakeProc(0, _ok_envelope()))
         provider = _provider()
         await _call(provider, _request(temperature=0.7), _model())

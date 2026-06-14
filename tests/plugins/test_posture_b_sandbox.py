@@ -166,7 +166,8 @@ def test_rw8_load_plugin_code_sets_resolver(tmp_path: Path) -> None:
     resolver = PostureResolver(config=SandboxConfig(image="test:latest"), runtime=None)
 
     result = load_plugin_code(
-        tmp_path, "test-plugin",
+        tmp_path,
+        "test-plugin",
         {"test_tool": "tools_impl:my_tool"},
         provenance="fetched",
         posture_resolver=resolver,

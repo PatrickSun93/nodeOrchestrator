@@ -35,8 +35,7 @@ def validate_schedule_expr(kind: str, expr: str) -> None:
         raise ValueError(f"unknown schedule kind {kind!r}; supported: {sorted(_SUPPORTED_KINDS)}")
     if kind == "cron":
         raise ValueError(
-            "cron scheduling is deferred to a follow-on slice; "
-            "use kind='interval' in P5.1b"
+            "cron scheduling is deferred to a follow-on slice; use kind='interval' in P5.1b"
         )
     # interval validation
     try:
@@ -46,9 +45,7 @@ def validate_schedule_expr(kind: str, expr: str) -> None:
             f"interval expr must be a positive integer seconds string, got {expr!r}"
         ) from exc
     if interval_s <= 0:
-        raise ValueError(
-            f"interval expr must be positive, got {interval_s!r}"
-        )
+        raise ValueError(f"interval expr must be positive, got {interval_s!r}")
 
 
 def compute_next_fire(kind: str, expr: str, after_ms: int) -> int:
@@ -64,8 +61,7 @@ def compute_next_fire(kind: str, expr: str, after_ms: int) -> int:
         raise ValueError(f"unknown schedule kind {kind!r}; supported: {sorted(_SUPPORTED_KINDS)}")
     if kind == "cron":
         raise NotImplementedError(
-            "cron scheduling is deferred to a follow-on slice; "
-            "use kind='interval' in P5.1b"
+            "cron scheduling is deferred to a follow-on slice; use kind='interval' in P5.1b"
         )
     # interval: validate first so callers get a clear ValueError, not an int() traceback
     validate_schedule_expr(kind, expr)

@@ -306,9 +306,7 @@ def test_host_preclassified_tool_impl_gates_auto(tmp_path: Path) -> None:
     combined = {**host_tools, **result.tools}
     assert combined["myplugin__auto_tool"].reversibility == 10
 
-    op = Operation(
-        tool_id="myplugin__auto_tool", initiating_agent="a1", user_explicit_intent=False
-    )
+    op = Operation(tool_id="myplugin__auto_tool", initiating_agent="a1", user_explicit_intent=False)
     thresholds = ThresholdConfig(threshold_auto=4, threshold_confirm=2, user_intent_modifier=1)
     gate_score = score(op, combined)
     autonomy = decide_tier(gate_score, thresholds, False, tool_id="myplugin__auto_tool")
@@ -436,13 +434,17 @@ def test_p442_version_mismatch_refused(tmp_path: Path) -> None:
     # Activation entry (old mechanism still guards fetched)
     act_path = tmp_path / "activations.yaml"
     act_path.write_text(
-        yaml.dump({
-            "activations": [{
-                "plugin_id": "fetched_p",
-                "source_url": "https://example.com/fp.zip",
-                "digest": "sha256:fp",
-            }]
-        }),
+        yaml.dump(
+            {
+                "activations": [
+                    {
+                        "plugin_id": "fetched_p",
+                        "source_url": "https://example.com/fp.zip",
+                        "digest": "sha256:fp",
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -482,13 +484,17 @@ def test_p442_version_absent_loads_fail_safe(tmp_path: Path) -> None:
 
     act_path = tmp_path / "activations.yaml"
     act_path.write_text(
-        yaml.dump({
-            "activations": [{
-                "plugin_id": "fetched_p",
-                "source_url": "https://example.com/fp.zip",
-                "digest": "sha256:fp",
-            }]
-        }),
+        yaml.dump(
+            {
+                "activations": [
+                    {
+                        "plugin_id": "fetched_p",
+                        "source_url": "https://example.com/fp.zip",
+                        "digest": "sha256:fp",
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 

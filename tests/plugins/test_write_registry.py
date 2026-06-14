@@ -99,10 +99,13 @@ def test_wpr4_existing_file_unchanged_on_failure(tmp_path: Path) -> None:
     p.write_text(original_text)
 
     # Patch loader to simulate a round-trip failure (monkeypatched validator path).
-    with patch(
-        "orchestrator.plugins.provenance.load_plugin_registry",
-        side_effect=ConfigError("simulated validation failure"),
-    ), pytest.raises(ConfigError):
+    with (
+        patch(
+            "orchestrator.plugins.provenance.load_plugin_registry",
+            side_effect=ConfigError("simulated validation failure"),
+        ),
+        pytest.raises(ConfigError),
+    ):
         write_plugin_registry(p, {"new": _entry("new")})
 
     assert p.read_text() == original_text
@@ -116,10 +119,13 @@ def test_wpr4_existing_file_unchanged_on_failure(tmp_path: Path) -> None:
 def test_wpr5_no_temp_left_behind(tmp_path: Path) -> None:
     p = tmp_path / "plugins.yaml"
 
-    with patch(
-        "orchestrator.plugins.provenance.load_plugin_registry",
-        side_effect=ConfigError("bad"),
-    ), pytest.raises(ConfigError):
+    with (
+        patch(
+            "orchestrator.plugins.provenance.load_plugin_registry",
+            side_effect=ConfigError("bad"),
+        ),
+        pytest.raises(ConfigError),
+    ):
         write_plugin_registry(p, {"x": _entry("x")})
 
     leftovers = list(tmp_path.glob(".plugins_tmp_*"))

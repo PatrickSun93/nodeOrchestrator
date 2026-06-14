@@ -50,9 +50,7 @@ def test_rw2_malformed_plugins_yaml_returns_sentinel_and_warns(
     """
     config_dir = tmp_path / "config"
     config_dir.mkdir()
-    (config_dir / "plugins.yaml").write_text(
-        "plugins: not-a-list\n", encoding="utf-8"
-    )
+    (config_dir / "plugins.yaml").write_text("plugins: not-a-list\n", encoding="utf-8")
     with caplog.at_level(logging.WARNING, logger="orchestrator.api.app"):
         result = _resolve_plugin_registry(config_dir)
     assert result is REGISTRY_REFUSE_ALL
@@ -90,10 +88,7 @@ def test_rw3_valid_plugins_yaml_entries_applied(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "plugins.yaml").write_text(
-        "plugins:\n"
-        "  - plugin_id: my_plugin\n"
-        "    enabled: true\n"
-        "    version: '1.0.0'\n",
+        "plugins:\n  - plugin_id: my_plugin\n    enabled: true\n    version: '1.0.0'\n",
         encoding="utf-8",
     )
     result = _resolve_plugin_registry(config_dir)

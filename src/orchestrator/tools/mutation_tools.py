@@ -119,9 +119,7 @@ def _hardened_open(path: str, flags: int, mode: int) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _check_disallowed(
-    params: dict[str, Any], allowed: frozenset[str], tool_name: str
-) -> None:
+def _check_disallowed(params: dict[str, Any], allowed: frozenset[str], tool_name: str) -> None:
     """Raise LocalToolError if any param key is outside the allowlist."""
     disallowed = set(params.keys()) - allowed
     if disallowed:

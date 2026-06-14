@@ -710,8 +710,7 @@ def _actuate_pipeline_emails(
         )
         if isinstance(result, _ApproveOk):
             _log.info(
-                "pipeline-email: actuated send_email pending=%s in room=%s "
-                "owner=%s → tool_call=%s",
+                "pipeline-email: actuated send_email pending=%s in room=%s owner=%s → tool_call=%s",
                 evt.id,
                 run_room_id,
                 schedule.owner_user_id,
@@ -1993,9 +1992,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
     # ---------------------------------------------------------------------------
 
     @app.post("/pipelines", response_model=_PipelineResponse, status_code=201)
-    async def _create_pipeline(
-        body: _PipelineCreateRequest, request: Request
-    ) -> _PipelineResponse:
+    async def _create_pipeline(body: _PipelineCreateRequest, request: Request) -> _PipelineResponse:
         """Create a new pipeline definition. owner_user_id captured from principal."""
         from orchestrator.pipeline.schema import OutputConfig, PipelineDefinition
         from orchestrator.pipeline.store import create_pipeline
@@ -2245,9 +2242,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         "/pipelines/{pipeline_id}/schedules",
         response_model=list[_ScheduleResponse],
     )
-    async def _list_schedules(
-        pipeline_id: str, request: Request
-    ) -> list[_ScheduleResponse]:
+    async def _list_schedules(pipeline_id: str, request: Request) -> list[_ScheduleResponse]:
         """List schedules for a pipeline (owner-private)."""
         from orchestrator.pipeline.store import get_pipeline, list_schedules_for_pipeline
 
@@ -2286,9 +2281,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         "/pipelines/{pipeline_id}/schedules/{schedule_id}",
         status_code=204,
     )
-    async def _delete_schedule(
-        pipeline_id: str, schedule_id: str, request: Request
-    ) -> None:
+    async def _delete_schedule(pipeline_id: str, schedule_id: str, request: Request) -> None:
         """Delete a schedule (owner-private)."""
         from orchestrator.pipeline.store import delete_schedule, get_pipeline, get_schedule
 
@@ -2300,20 +2293,14 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         def _write() -> None:
             pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
             if pipeline is None:
-                raise HTTPException(
-                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
             if pipeline.owner_user_id != _principal.user_id:
                 raise HTTPException(status_code=403, detail="access denied: not the owner")
             sched = get_schedule(ctx.writer_store.conn, schedule_id)
             if sched is None:
-                raise HTTPException(
-                    status_code=404, detail=f"schedule {schedule_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
             if sched.pipeline_id != pipeline_id:
-                raise HTTPException(
-                    status_code=404, detail=f"schedule {schedule_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
             delete_schedule(ctx.writer_store.conn, schedule_id)
 
         await loop.run_in_executor(ctx.writer_executor, _write)
@@ -2349,20 +2336,14 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         def _write() -> _ScheduleResponse:
             pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
             if pipeline is None:
-                raise HTTPException(
-                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
             if pipeline.owner_user_id != _principal.user_id:
                 raise HTTPException(status_code=403, detail="access denied: not the owner")
             sched = get_schedule(ctx.writer_store.conn, schedule_id)
             if sched is None:
-                raise HTTPException(
-                    status_code=404, detail=f"schedule {schedule_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
             if sched.pipeline_id != pipeline_id:
-                raise HTTPException(
-                    status_code=404, detail=f"schedule {schedule_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
             set_schedule_enabled(ctx.writer_store.conn, schedule_id, body.enabled)
             # On re-enable: recompute next_fire from now (avoid immediate stale fire).
             if body.enabled:
@@ -2415,20 +2396,14 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         def _write() -> _ScheduleResponse:
             pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
             if pipeline is None:
-                raise HTTPException(
-                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
             if pipeline.owner_user_id != _principal.user_id:
                 raise HTTPException(status_code=403, detail="access denied: not the owner")
             sched = get_schedule(ctx.writer_store.conn, schedule_id)
             if sched is None:
-                raise HTTPException(
-                    status_code=404, detail=f"schedule {schedule_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
             if sched.pipeline_id != pipeline_id:
-                raise HTTPException(
-                    status_code=404, detail=f"schedule {schedule_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
             set_schedule_email_optin(
                 ctx.writer_store.conn, schedule_id, recipient=body.email_recipient
             )
@@ -2474,20 +2449,14 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         def _write() -> _ScheduleResponse:
             pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
             if pipeline is None:
-                raise HTTPException(
-                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
             if pipeline.owner_user_id != _principal.user_id:
                 raise HTTPException(status_code=403, detail="access denied: not the owner")
             sched = get_schedule(ctx.writer_store.conn, schedule_id)
             if sched is None:
-                raise HTTPException(
-                    status_code=404, detail=f"schedule {schedule_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
             if sched.pipeline_id != pipeline_id:
-                raise HTTPException(
-                    status_code=404, detail=f"schedule {schedule_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
             if not sched.email_enabled:
                 raise HTTPException(
                     status_code=409,
@@ -2536,20 +2505,14 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         def _write() -> _ScheduleResponse:
             pipeline = get_pipeline(ctx.writer_store.conn, pipeline_id)
             if pipeline is None:
-                raise HTTPException(
-                    status_code=404, detail=f"pipeline {pipeline_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"pipeline {pipeline_id!r} not found")
             if pipeline.owner_user_id != _principal.user_id:
                 raise HTTPException(status_code=403, detail="access denied: not the owner")
             sched = get_schedule(ctx.writer_store.conn, schedule_id)
             if sched is None:
-                raise HTTPException(
-                    status_code=404, detail=f"schedule {schedule_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
             if sched.pipeline_id != pipeline_id:
-                raise HTTPException(
-                    status_code=404, detail=f"schedule {schedule_id!r} not found"
-                )
+                raise HTTPException(status_code=404, detail=f"schedule {schedule_id!r} not found")
             disable_schedule_email(ctx.writer_store.conn, schedule_id)
             updated = get_schedule(ctx.writer_store.conn, schedule_id)
             assert updated is not None

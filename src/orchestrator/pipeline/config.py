@@ -51,6 +51,4 @@ def load_pipeline_scheduler_config(path: Path) -> PipelineSchedulerConfig:
     try:
         return PipelineSchedulerConfig.model_validate(section)
     except ValidationError as exc:
-        raise ValueError(
-            f"{path.name}: pipeline_scheduler: {exc}"
-        ) from exc
+        raise ValueError(f"{path.name}: pipeline_scheduler: {exc}") from exc

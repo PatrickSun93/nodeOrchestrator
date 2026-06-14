@@ -52,6 +52,4 @@ def load_countdown_auto_fire_config(path: Path) -> CountdownAutoFireConfig:
     try:
         return CountdownAutoFireConfig.model_validate(section)
     except ValidationError as exc:
-        raise ValueError(
-            f"{path.name}: countdown_auto_fire: {exc}"
-        ) from exc
+        raise ValueError(f"{path.name}: countdown_auto_fire: {exc}") from exc

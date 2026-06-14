@@ -479,9 +479,7 @@ def test_pr3_entry_not_mapping_raises(tmp_path: Path) -> None:
 def test_pr4_source_url_without_digest_raises(tmp_path: Path) -> None:
     p = tmp_path / "plugins.yaml"
     p.write_text(
-        "plugins:\n"
-        "  - plugin_id: p\n"
-        "    source_url: https://example.com/p.zip\n",
+        "plugins:\n  - plugin_id: p\n    source_url: https://example.com/p.zip\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match="both be present or both absent"):
@@ -491,9 +489,7 @@ def test_pr4_source_url_without_digest_raises(tmp_path: Path) -> None:
 def test_pr4_digest_without_source_url_raises(tmp_path: Path) -> None:
     p = tmp_path / "plugins.yaml"
     p.write_text(
-        "plugins:\n"
-        "  - plugin_id: p\n"
-        "    digest: sha256:abc\n",
+        "plugins:\n  - plugin_id: p\n    digest: sha256:abc\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match="both be present or both absent"):
@@ -585,9 +581,7 @@ def test_pr6_version_null_is_valid(tmp_path: Path) -> None:
 
 def test_pr7_unknown_key_raises(tmp_path: Path) -> None:
     p = tmp_path / "plugins.yaml"
-    p.write_text(
-        "plugins:\n  - plugin_id: p\n    extra_field: oops\n", encoding="utf-8"
-    )
+    p.write_text("plugins:\n  - plugin_id: p\n    extra_field: oops\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="unknown keys"):
         load_plugin_registry(p)
 
@@ -600,9 +594,7 @@ def test_pr7_unknown_key_raises(tmp_path: Path) -> None:
 def test_pr8_duplicate_plugin_id_raises(tmp_path: Path) -> None:
     p = tmp_path / "plugins.yaml"
     p.write_text(
-        "plugins:\n"
-        "  - plugin_id: myplugin\n"
-        "  - plugin_id: myplugin\n",
+        "plugins:\n  - plugin_id: myplugin\n  - plugin_id: myplugin\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match="duplicate plugin_id"):
@@ -617,9 +609,7 @@ def test_pr8_duplicate_plugin_id_raises(tmp_path: Path) -> None:
 def test_pr9_provenance_field_rejected(tmp_path: Path) -> None:
     """An entry must never declare 'provenance' — it's host-derived (un-spoofable)."""
     p = tmp_path / "plugins.yaml"
-    p.write_text(
-        "plugins:\n  - plugin_id: p\n    provenance: fetched\n", encoding="utf-8"
-    )
+    p.write_text("plugins:\n  - plugin_id: p\n    provenance: fetched\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="unknown keys"):
         load_plugin_registry(p)
 
@@ -627,9 +617,7 @@ def test_pr9_provenance_field_rejected(tmp_path: Path) -> None:
 def test_pr9_posture_field_rejected(tmp_path: Path) -> None:
     """An entry must never declare 'posture' — it's host-derived (un-spoofable)."""
     p = tmp_path / "plugins.yaml"
-    p.write_text(
-        "plugins:\n  - plugin_id: p\n    posture: A\n", encoding="utf-8"
-    )
+    p.write_text("plugins:\n  - plugin_id: p\n    posture: A\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="unknown keys"):
         load_plugin_registry(p)
 
@@ -658,13 +646,8 @@ def test_pr10_valid_env_preserved(tmp_path: Path) -> None:
 def test_pr10_non_string_env_value_raises(tmp_path: Path) -> None:
     p = tmp_path / "plugins.yaml"
     p.write_text(
-        "plugins:\n"
-        "  - plugin_id: p\n"
-        "    plugin_subprocess_env:\n"
-        "      KEY: 123\n",
+        "plugins:\n  - plugin_id: p\n    plugin_subprocess_env:\n      KEY: 123\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match="must be strings"):
         load_plugin_registry(p)
-
-

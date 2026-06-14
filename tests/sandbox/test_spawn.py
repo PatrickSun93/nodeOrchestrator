@@ -40,9 +40,7 @@ def test_result_shape_parity(tmp_path: Path) -> None:
     egress = build_deny_default_spec()
 
     with mock.patch("subprocess.run") as mock_run:
-        mock_run.return_value = mock.Mock(
-            returncode=0, stdout=b"hello\n", stderr=b""
-        )
+        mock_run.return_value = mock.Mock(returncode=0, stdout=b"hello\n", stderr=b"")
         result = sandboxed_run(
             ["echo", "hello"],
             cwd=tmp_path,
@@ -64,9 +62,7 @@ def test_result_nonzero_exit_code(tmp_path: Path) -> None:
 
     with mock.patch("subprocess.run") as mock_run:
         mock_run.return_value = mock.Mock(returncode=1, stdout=b"fail", stderr=b"")
-        result = sandboxed_run(
-            ["false"], cwd=tmp_path, env={}, profile=profile, runtime=rt
-        )
+        result = sandboxed_run(["false"], cwd=tmp_path, env={}, profile=profile, runtime=rt)
 
     assert result.exit_code == 1
 
@@ -138,10 +134,13 @@ def test_timeout_raises_subprocess_timeout(tmp_path: Path) -> None:
     rt = _make_runtime()
     profile = _make_profile(tmp_path)
 
-    with mock.patch(
-        "subprocess.run",
-        side_effect=subprocess.TimeoutExpired(cmd=["docker"], timeout=1.0),
-    ), pytest.raises(SubprocessTimeoutError):
+    with (
+        mock.patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["docker"], timeout=1.0),
+        ),
+        pytest.raises(SubprocessTimeoutError),
+    ):
         sandboxed_run(
             ["sleep", "999"],
             cwd=tmp_path,
@@ -157,10 +156,13 @@ def test_timeout_teardown_still_kills_container(tmp_path: Path) -> None:
     rt = _make_runtime()
     profile = _make_profile(tmp_path)
 
-    with mock.patch(
-        "subprocess.run",
-        side_effect=subprocess.TimeoutExpired(cmd=["docker"], timeout=1.0),
-    ), pytest.raises(SubprocessTimeoutError):
+    with (
+        mock.patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["docker"], timeout=1.0),
+        ),
+        pytest.raises(SubprocessTimeoutError),
+    ):
         sandboxed_run(
             ["sleep", "999"],
             cwd=tmp_path,
@@ -221,9 +223,12 @@ def test_rw8_proxy_start_and_stop_fire_on_normal_run(tmp_path: Path) -> None:
     rt = _make_runtime()
     profile = _make_profile(tmp_path)
     spec = build_egress_spec(
-        "1.2.3.4", 443,
-        runtime_kind="docker", tool_kind="web_fetch",
-        hostname="example.com", call_id="rw8"
+        "1.2.3.4",
+        443,
+        runtime_kind="docker",
+        tool_kind="web_fetch",
+        hostname="example.com",
+        call_id="rw8",
     )
 
     start_calls: list[int] = []
@@ -248,7 +253,11 @@ def test_rw8_proxy_start_and_stop_fire_on_normal_run(tmp_path: Path) -> None:
         mock_run.return_value = mock.Mock(returncode=0, stdout=b"ok", stderr=b"")
         sandboxed_run(
             ["echo", "hi"],
-            cwd=tmp_path, env={}, profile=profile, egress_spec=spec, runtime=rt,
+            cwd=tmp_path,
+            env={},
+            profile=profile,
+            egress_spec=spec,
+            runtime=rt,
         )
 
     assert len(start_calls) == 1, "EgressProxy.start must be called exactly once"
@@ -263,9 +272,12 @@ def test_rw8_proxy_stop_fires_on_timeout_cancel(tmp_path: Path) -> None:
     rt = _make_runtime()
     profile = _make_profile(tmp_path)
     spec = build_egress_spec(
-        "1.2.3.4", 443,
-        runtime_kind="docker", tool_kind="web_fetch",
-        hostname="example.com", call_id="rw8t"
+        "1.2.3.4",
+        443,
+        runtime_kind="docker",
+        tool_kind="web_fetch",
+        hostname="example.com",
+        call_id="rw8t",
     )
 
     stop_calls: list[bool] = []
@@ -285,8 +297,12 @@ def test_rw8_proxy_stop_fires_on_timeout_cancel(tmp_path: Path) -> None:
     ):
         sandboxed_run(
             ["sleep", "999"],
-            cwd=tmp_path, env={}, profile=profile,
-            egress_spec=spec, timeout_s=1.0, runtime=rt,
+            cwd=tmp_path,
+            env={},
+            profile=profile,
+            egress_spec=spec,
+            timeout_s=1.0,
+            runtime=rt,
         )
 
     assert len(stop_calls) == 1, "EgressProxy.stop must fire in shielded finally on timeout"
@@ -300,9 +316,12 @@ def test_rw8_network_create_and_rm_fire(tmp_path: Path) -> None:
     rt = _make_runtime()
     profile = _make_profile(tmp_path)
     spec = build_egress_spec(
-        "1.2.3.4", 443,
-        runtime_kind="docker", tool_kind="web_fetch",
-        hostname="example.com", call_id="rw8n"
+        "1.2.3.4",
+        443,
+        runtime_kind="docker",
+        tool_kind="web_fetch",
+        hostname="example.com",
+        call_id="rw8n",
     )
 
     call_args: list[list[str]] = []
@@ -319,7 +338,11 @@ def test_rw8_network_create_and_rm_fire(tmp_path: Path) -> None:
     ):
         sandboxed_run(
             ["echo", "hi"],
-            cwd=tmp_path, env={}, profile=profile, egress_spec=spec, runtime=rt,
+            cwd=tmp_path,
+            env={},
+            profile=profile,
+            egress_spec=spec,
+            runtime=rt,
         )
 
     net_creates = [a for a in call_args if len(a) >= 3 and a[1] == "network" and a[2] == "create"]

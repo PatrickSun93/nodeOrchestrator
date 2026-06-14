@@ -604,9 +604,7 @@ def test_log_event_eventtype_enum_unchanged() -> None:
     }
     actual = {e.name for e in EventType}
     new_types = actual - known_types
-    assert not new_types, (
-        f"log_event must not introduce new EventType values: {sorted(new_types)}"
-    )
+    assert not new_types, f"log_event must not introduce new EventType values: {sorted(new_types)}"
 
 
 def test_log_event_output_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

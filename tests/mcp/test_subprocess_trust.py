@@ -309,9 +309,7 @@ def test_run_scoped_command_timeout_kills_no_orphan(tmp_path: Path) -> None:
         child_pid = int(pid_file.read_text().strip())
         try:
             os.kill(child_pid, 0)
-            pytest.fail(
-                f"Child PID {child_pid} still alive after timeout — orphan detected"
-            )
+            pytest.fail(f"Child PID {child_pid} still alive after timeout — orphan detected")
         except ProcessLookupError:
             pass  # Expected: killed by _terminate_subprocess + _kill_watchdog
 

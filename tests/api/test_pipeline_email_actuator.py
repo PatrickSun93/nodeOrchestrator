@@ -371,8 +371,7 @@ def test_live_mode_case_insensitive_recipient_match(ctx: AppContext) -> None:
     """live mode: case-insensitive recipient match actuates (Alice@Foo.com vs alice@foo.com)."""
     pipe_id = _make_pipeline(ctx)
     schedule = _make_schedule_record(
-        ctx, pipe_id, email_enabled=True, email_mode="live",
-        email_recipient="Alice@Example.Com"
+        ctx, pipe_id, email_enabled=True, email_mode="live", email_recipient="Alice@Example.Com"
     )
     room_id = _make_room(ctx)
     _append_send_email_pending(ctx, room_id, to="alice@example.com")
@@ -482,9 +481,7 @@ def test_three_state_transition_dry_run_then_live(ctx: AppContext, tmp_path: Pat
         loop2.close()
 
     events_after_live = ctx.writer_store.get_room_events(room_id2)
-    assert any(e.type == EventType.TOOL_CALL for e in events_after_live), (
-        "live mode must actuate"
-    )
+    assert any(e.type == EventType.TOOL_CALL for e in events_after_live), "live mode must actuate"
 
 
 # ---------------------------------------------------------------------------

@@ -230,13 +230,15 @@ def test_s3_execute_local_call_empty_decision_diff() -> None:
 
     assert fn_node is not None, "s3: _execute_local_call not found in executor.py"
 
-    sandbox_symbols = frozenset({
-        "sandboxed_run",
-        "PostureResolver",
-        "SandboxRuntime",
-        "SandboxUnavailableError",
-        "SandboxConfig",
-    })
+    sandbox_symbols = frozenset(
+        {
+            "sandboxed_run",
+            "PostureResolver",
+            "SandboxRuntime",
+            "SandboxUnavailableError",
+            "SandboxConfig",
+        }
+    )
     violations: list[str] = []
     for node in ast.walk(fn_node):
         if isinstance(node, (ast.Name, ast.Attribute)):
@@ -351,8 +353,7 @@ def test_s6_docker_sock_never_in_profile_args(tmp_path: Path) -> None:
         args = build_container_args(profile, ["pytest"])
         for arg in args:
             assert "/var/run/docker.sock" not in arg, (
-                f"s6: /var/run/docker.sock found in profile args "
-                f"(network={network!r}): {arg!r}"
+                f"s6: /var/run/docker.sock found in profile args (network={network!r}): {arg!r}"
             )
 
 

@@ -85,9 +85,7 @@ class _NetworkToolFn:
 # ---------------------------------------------------------------------------
 
 
-def _check_disallowed(
-    params: dict[str, Any], allowed: frozenset[str], tool_name: str
-) -> None:
+def _check_disallowed(params: dict[str, Any], allowed: frozenset[str], tool_name: str) -> None:
     """Raise LocalToolError if any param key is outside the allowlist."""
     disallowed = set(params.keys()) - allowed
     if disallowed:
@@ -327,9 +325,7 @@ def _make_web_search(provider_config: dict[str, Any] | None) -> _NetworkToolFn:
             try:
                 max_results = int(raw_max)
             except (TypeError, ValueError) as exc:
-                raise LocalToolError(
-                    f"web_search: max_results must be an integer: {exc}"
-                ) from exc
+                raise LocalToolError(f"web_search: max_results must be an integer: {exc}") from exc
             max_results = max(
                 _WEB_SEARCH_MAX_RESULTS_MIN,
                 min(_WEB_SEARCH_MAX_RESULTS_MAX, max_results),
@@ -515,9 +511,7 @@ def _make_send_email(
             raise LocalToolError(f"send_failed: {exc}") from exc
 
         if response.status_code >= 500:
-            raise LocalToolError(
-                f"send_failed: provider returned HTTP {response.status_code}"
-            )
+            raise LocalToolError(f"send_failed: provider returned HTTP {response.status_code}")
 
         # Return provider send-status as raw output (untrusted; framed by caller).
         status_text = f"status={response.status_code}\n{response.text}"

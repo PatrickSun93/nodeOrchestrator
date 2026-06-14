@@ -71,6 +71,8 @@ def _make_authed_client(app: Any, ctx: AppContext) -> TestClient:
     """Build a TestClient with bearer-token auth for _TEST_USER."""
     raw_token = create_token(ctx.writer_store.conn, _TEST_USER)
     return TestClient(app, headers={"Authorization": f"Bearer {raw_token}"})
+
+
 _MOCK_PROVIDER = ProviderId("mock-provider")
 
 

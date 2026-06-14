@@ -366,17 +366,12 @@ def test_t6_b2_no_subprocess_in_local_tools() -> None:
         elif isinstance(node, ast.Attribute):
             if node.attr == "Popen":
                 violations.append(f"  local.py:{node.lineno}: references .Popen")
-            if (
-                node.attr == "system"
-                and isinstance(node.value, ast.Name)
-                and node.value.id == "os"
-            ):
+            if node.attr == "system" and isinstance(node.value, ast.Name) and node.value.id == "os":
                 violations.append(f"  local.py:{node.lineno}: calls os.system")
 
     assert not violations, (
         "t6 guard: tools/local.py uses subprocess/Popen/os.system "
-        "(B2 tools must be in-process; ADR-033 D5 carry-forward #6):\n"
-        + "\n".join(violations)
+        "(B2 tools must be in-process; ADR-033 D5 carry-forward #6):\n" + "\n".join(violations)
     )
 
 
@@ -502,9 +497,7 @@ def test_t9_no_shell_in_subprocess_surface() -> None:
                 and isinstance(node.value, ast.Constant)
                 and node.value.value is True
             ):
-                violations.append(
-                    f"  {scope}:{node.value.col_offset}: shell=True found"
-                )
+                violations.append(f"  {scope}:{node.value.col_offset}: shell=True found")
             # Forbidden: os.system(...)
             if (
                 isinstance(node, ast.Call)
@@ -513,9 +506,7 @@ def test_t9_no_shell_in_subprocess_surface() -> None:
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "os"
             ):
-                violations.append(
-                    f"  {scope}:{node.lineno}: os.system() call found"
-                )
+                violations.append(f"  {scope}:{node.lineno}: os.system() call found")
 
     # Verify argv to open_process/run_scoped_command is always a list (not a single string)
     # in subprocess_tools.py AND subprocess_trust.py — symmetric with the shell=True/os.system
@@ -535,9 +526,7 @@ def test_t9_no_shell_in_subprocess_surface() -> None:
                     fname = func.id
                 if fname in ("open_process", "run_scoped_command") and node.args:
                     first_arg = node.args[0]
-                    if isinstance(first_arg, ast.Constant) and isinstance(
-                        first_arg.value, str
-                    ):
+                    if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
                         violations.append(
                             f"  {scope}:{node.lineno}: "
                             f"{fname}() called with shell-string (not list argv)"
@@ -833,8 +822,7 @@ def test_t10c_no_verify_false_in_network_surface() -> None:
 
     assert not violations, (
         "t10 guard: verify=False in network surface "
-        "(ADR-032 + ADR-035 t10 — must always use verify=True):\n"
-        + "\n".join(violations)
+        "(ADR-032 + ADR-035 t10 — must always use verify=True):\n" + "\n".join(violations)
     )
 
 
@@ -897,8 +885,10 @@ def test_t6_and_t9_still_pass_with_net_trust_present() -> None:
             for alias in node.names:
                 if alias.name == "subprocess" or alias.name.startswith("subprocess."):
                     local_violations.append(f"  local.py:{node.lineno}: imports {alias.name!r}")
-        elif isinstance(node, ast.ImportFrom) and node.module and (
-            node.module == "subprocess" or node.module.startswith("subprocess.")
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and (node.module == "subprocess" or node.module.startswith("subprocess."))
         ):
             local_violations.append(f"  local.py:{node.lineno}: from {node.module!r} import …")
     assert not local_violations, "t6 regression: local.py imports subprocess:\n" + "\n".join(

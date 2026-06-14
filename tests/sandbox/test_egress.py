@@ -30,9 +30,12 @@ def test_always_uses_proxy_mechanism() -> None:
 
 def test_hostname_carried_in_spec() -> None:
     spec = build_egress_spec(
-        "93.184.216.34", 443,
-        runtime_kind="docker", tool_kind="web_fetch",
-        hostname="example.com", call_id="c1"
+        "93.184.216.34",
+        443,
+        runtime_kind="docker",
+        tool_kind="web_fetch",
+        hostname="example.com",
+        call_id="c1",
     )
     assert spec.hostname == "example.com"
 
@@ -71,8 +74,7 @@ def test_v4_pin_blocks_v6() -> None:
 def test_v6_pin_blocks_v4() -> None:
     """IPv6 pinned address → ipv6_only=True, ipv4_only=False."""
     spec = build_egress_spec(
-        "2600:1408:ec00::17d3:8b86", 443,
-        runtime_kind="docker", tool_kind="web_fetch", call_id="c4"
+        "2600:1408:ec00::17d3:8b86", 443, runtime_kind="docker", tool_kind="web_fetch", call_id="c4"
     )
     assert spec.ipv6_only is True
     assert spec.ipv4_only is False
@@ -89,9 +91,12 @@ def test_network_name_includes_call_id() -> None:
 def test_subprocess_ssh_uses_proxy_not_denied() -> None:
     """git_push ssh uses PROXY mechanism (RW1 — ssh-via-ProxyCommand enabled)."""
     spec = build_egress_spec(
-        "1.2.3.4", 22,
-        runtime_kind="docker", tool_kind="subprocess",
-        hostname="github.com", call_id="ssh1"
+        "1.2.3.4",
+        22,
+        runtime_kind="docker",
+        tool_kind="subprocess",
+        hostname="github.com",
+        call_id="ssh1",
     )
     assert spec.mechanism == EgressMechanism.PROXY
     assert spec.pinned_port == 22
@@ -137,9 +142,7 @@ def test_container_args_ipv6_disabled_when_ipv4_pinned() -> None:
         "93.184.216.34", 443, runtime_kind="docker", tool_kind="web_fetch", call_id="ca2"
     )
     args = container_network_args(spec)
-    assert any("disable_ipv6" in a for a in args), (
-        "IPv6 should be disabled when IPv4 is pinned"
-    )
+    assert any("disable_ipv6" in a for a in args), "IPv6 should be disabled when IPv4 is pinned"
 
 
 def test_container_args_add_host_docker_internal() -> None:
@@ -167,8 +170,12 @@ def test_container_args_proxy_env_injected() -> None:
 def test_container_args_git_ssh_command_injected() -> None:
     """When proxy_port is set, GIT_SSH_COMMAND with ProxyCommand is in the args."""
     spec = build_egress_spec(
-        "1.2.3.4", 22, runtime_kind="docker", tool_kind="subprocess",
-        hostname="github.com", call_id="ca5"
+        "1.2.3.4",
+        22,
+        runtime_kind="docker",
+        tool_kind="subprocess",
+        hostname="github.com",
+        call_id="ca5",
     )
     args = container_network_args(spec, proxy_port=12345)
     joined = " ".join(args)

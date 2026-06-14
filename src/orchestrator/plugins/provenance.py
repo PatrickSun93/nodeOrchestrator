@@ -283,9 +283,7 @@ def load_plugin_registry(path: Path | None) -> PluginRegistry:
         # Reject unknown keys (extra="forbid" equivalent; catches provenance/posture attempts).
         unknown_keys = set(entry.keys()) - _KNOWN_REGISTRY_ENTRY_KEYS
         if unknown_keys:
-            raise ConfigError(
-                f"{path.name}: plugins[{i}]: unknown keys {sorted(unknown_keys)!r}"
-            )
+            raise ConfigError(f"{path.name}: plugins[{i}]: unknown keys {sorted(unknown_keys)!r}")
 
         # plugin_id: non-empty str
         plugin_id = entry.get("plugin_id")
@@ -294,9 +292,7 @@ def load_plugin_registry(path: Path | None) -> PluginRegistry:
 
         # Duplicate plugin_id — list format lets us catch this; mapping format cannot.
         if plugin_id in registry:
-            raise ConfigError(
-                f"{path.name}: plugins[{i}]: duplicate plugin_id {plugin_id!r}"
-            )
+            raise ConfigError(f"{path.name}: plugins[{i}]: duplicate plugin_id {plugin_id!r}")
 
         # enabled: MUST be isinstance bool.  YAML `enabled: "false"` (quoted string) is
         # truthy — it would silently enable a plugin the operator intended to disable.
@@ -305,7 +301,7 @@ def load_plugin_registry(path: Path | None) -> PluginRegistry:
             raise ConfigError(
                 f"{path.name}: plugins[{i}] ({plugin_id!r}): "
                 f"'enabled' must be a bool (true/false), got {type(enabled_raw).__name__!r} "
-                f"— quoted string values like \"false\" are not bools in YAML"
+                f'— quoted string values like "false" are not bools in YAML'
             )
 
         # version: str or None
@@ -320,16 +316,14 @@ def load_plugin_registry(path: Path | None) -> PluginRegistry:
         source_url: str | None = entry.get("source_url", None)
         if source_url is not None and (not isinstance(source_url, str) or not source_url):
             raise ConfigError(
-                f"{path.name}: plugins[{i}] ({plugin_id!r}): "
-                "'source_url' must be a non-empty str"
+                f"{path.name}: plugins[{i}] ({plugin_id!r}): 'source_url' must be a non-empty str"
             )
 
         # digest: non-empty str or absent
         digest: str | None = entry.get("digest", None)
         if digest is not None and (not isinstance(digest, str) or not digest):
             raise ConfigError(
-                f"{path.name}: plugins[{i}] ({plugin_id!r}): "
-                "'digest' must be a non-empty str"
+                f"{path.name}: plugins[{i}] ({plugin_id!r}): 'digest' must be a non-empty str"
             )
 
         # source_url + digest must come as a pair (both or neither).

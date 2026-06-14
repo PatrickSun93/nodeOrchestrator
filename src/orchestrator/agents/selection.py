@@ -170,7 +170,8 @@ def _render_snapshot_excerpt(snapshot: list[Event]) -> str | None:
     """
     external_result_ids = _external_output_tool_result_call_ids(snapshot)
     relevant = [
-        e for e in snapshot
+        e
+        for e in snapshot
         if e.type in _EXCERPT_EVENT_TYPES
         and not (
             e.type in {EventType.TOOL_RESULT, EventType.TOOL_FAILED}

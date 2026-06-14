@@ -378,9 +378,7 @@ class TestConcurrentHttpAuth:
         self, app: FastAPI, ctx: AppContext
     ) -> None:
         room_id_str = generate_room_id()
-        ctx.writer_store.append_room(
-            Room(id=RoomId(room_id_str), type=RoomType.FREE_CHAT)
-        )
+        ctx.writer_store.append_room(Room(id=RoomId(room_id_str), type=RoomType.FREE_CHAT))
         _append_event(ctx, room_id_str, "seed-event")
 
         auth_hdrs = make_auth_headers(ctx)

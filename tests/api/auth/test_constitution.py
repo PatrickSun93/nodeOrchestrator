@@ -209,9 +209,7 @@ class TestLensAFailClosed:
     ) -> None:
         """Every protected route returns 401 before any handler logic."""
         resp = unauth_client.request(method, path, json={})
-        assert resp.status_code == 401, (
-            f"{method} {path} returned {resp.status_code}, expected 401"
-        )
+        assert resp.status_code == 401, f"{method} {path} returned {resp.status_code}, expected 401"
 
     def test_new_route_protected_by_default(self, ctx: AppContext) -> None:
         """Fail-closed default: a newly-added dummy route is protected without explicit listing."""
@@ -235,9 +233,7 @@ class TestLensAFailClosed:
         # 401 (wrong credentials) not 401 from middleware — middleware lets it through
         assert r.status_code in (200, 401, 422), "login must not be 401 from middleware"
 
-    def test_ws_unauthenticated_rejected_with_1008(
-        self, unauth_client: TestClient
-    ) -> None:
+    def test_ws_unauthenticated_rejected_with_1008(self, unauth_client: TestClient) -> None:
         """Unauthenticated WS upgrade is closed with code 1008 before accept().
 
         The WS handler rejects without calling accept() — no half-open-stream
@@ -258,9 +254,7 @@ class TestLensAFailClosed:
 class TestLensACookiePath:
     """Cookie login path: POST /login → session cookie → cookie-authenticated requests."""
 
-    def test_login_sets_cookie_authenticates_subsequent_requests(
-        self, ctx: AppContext
-    ) -> None:
+    def test_login_sets_cookie_authenticates_subsequent_requests(self, ctx: AppContext) -> None:
         """POST /login → Set-Cookie session_id → cookie carries auth for next request.
 
         base_url='https://testserver' makes TestClient treat requests as HTTPS,
@@ -271,9 +265,7 @@ class TestLensACookiePath:
 
         app = _make_test_app(ctx)
         with TestClient(app, base_url="https://testserver") as client:
-            resp = client.post(
-                "/login", json={"user_id": TEST_USER, "password": TEST_PW}
-            )
+            resp = client.post("/login", json={"user_id": TEST_USER, "password": TEST_PW})
             assert resp.status_code == 200, f"login failed: {resp.json()}"
             assert "session_id" in resp.cookies, "login must set session_id cookie"
 
@@ -337,9 +329,7 @@ class TestLensACredentialStorage:
         """Bearer token is stored hashed (SHA-256 hex), not plaintext."""
         create_user(db_conn, "eve", "pw")
         raw_token = create_token(db_conn, "eve")
-        row = db_conn.execute(
-            "SELECT token_hash FROM user_tokens WHERE user_id = 'eve'"
-        ).fetchone()
+        row = db_conn.execute("SELECT token_hash FROM user_tokens WHERE user_id = 'eve'").fetchone()
         assert row is not None
         stored_hash = row[0]
         assert stored_hash != raw_token, "token stored in plaintext"
@@ -388,7 +378,11 @@ class TestLensBGateIdentityBlind:
         from orchestrator.autonomy.scoring import Operation
 
         expected = {
-            "tool_id", "initiating_agent", "user_explicit_intent", "params", "estimated_cost_usd"
+            "tool_id",
+            "initiating_agent",
+            "user_explicit_intent",
+            "params",
+            "estimated_cost_usd",
         }
         actual = set(Operation.model_fields.keys())
         assert actual == expected, f"Operation field set changed: {actual!r}"
@@ -413,9 +407,9 @@ class TestLensBIsValidAuthorExhaustive:
     @pytest.mark.parametrize(
         "valid",
         [
-            "user",          # bare (backward-compat)
-            "user:alice",    # authenticated
-            "user:1",        # short id
+            "user",  # bare (backward-compat)
+            "user:alice",  # authenticated
+            "user:1",  # short id
             "user:my-user_1",
             "agent:operator",
             "agent:my-agent-v2",
@@ -429,11 +423,11 @@ class TestLensBIsValidAuthorExhaustive:
         "invalid",
         [
             "",
-            "user:",          # empty id
+            "user:",  # empty id
             "user:bad space",
             "user:bad@",
-            "agent",          # missing :id
-            "agent:",         # empty id
+            "agent",  # missing :id
+            "agent:",  # empty id
             "agent:bad name",
             "User",
             "USER",

@@ -321,9 +321,7 @@ def test_pm7_refuse_all_rejected(tmp_path: pytest.TempPathFactory) -> None:
     # Seed an existing valid registry
     from orchestrator.plugins.provenance import PluginRegistry, RegistryEntry, write_plugin_registry
 
-    original: PluginRegistry = {
-        "existing": RegistryEntry(plugin_id="existing", enabled=True)
-    }
+    original: PluginRegistry = {"existing": RegistryEntry(plugin_id="existing", enabled=True)}
     write_plugin_registry(config_dir / "plugins.yaml", original)
     original_text = (config_dir / "plugins.yaml").read_text()
 
