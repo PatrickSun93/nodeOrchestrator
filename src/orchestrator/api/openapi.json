@@ -715,7 +715,7 @@
     "/pipelines/{pipeline_id}/schedules": {
       "post": {
         "summary": " Create Schedule",
-        "description": "Create a schedule for a pipeline (owner-private; 403 for non-owner).\n\n``kind=cron`` is rejected with 422 (deferred \u2014 ADR-042 D3 Y1 routing).",
+        "description": "Create a schedule for a pipeline (owner-private; 403 for non-owner).\n\n``kind=cron`` with a valid expression is accepted; malformed cron is rejected with 422.",
         "operationId": "_create_schedule_pipelines__pipeline_id__schedules_post",
         "parameters": [
           {

@@ -1,8 +1,8 @@
-"""Tests for schedule management endpoints (ADR-042 D9 / P5.1b-5).
+"""Tests for schedule management endpoints (ADR-042 D9 / P5.1b-5 + P6.7).
 
 Covers:
 - POST /pipelines/{id}/schedules: owner happy-path, non-owner 403, missing-pipeline 404,
-  malformed expr 422, kind=cron → 422 (deferred)
+  malformed expr 422, valid cron → 201, malformed cron → 422
 - GET /pipelines/{id}/schedules: owner list, non-owner 403
 - DELETE /pipelines/{id}/schedules/{sid}: owner delete, non-owner 403
 - PATCH /pipelines/{id}/schedules/{sid}: enable/disable, non-owner 403
@@ -179,16 +179,32 @@ def test_create_schedule_malformed_expr_422(sched_app: FastAPI, sched_ctx: AppCo
     assert resp.status_code == 422
 
 
-def test_create_schedule_cron_422_deferred(sched_app: FastAPI, sched_ctx: AppContext) -> None:
-    """kind=cron is deferred (Y1 routing) — must return 422."""
+def test_create_schedule_valid_cron_201(sched_app: FastAPI, sched_ctx: AppContext) -> None:
+    """Valid cron expr is accepted with 201 and a correct next_fire (P6.7 un-gate)."""
     pipe_id = _make_pipeline(sched_ctx)
     with _client(sched_app, sched_ctx, _USER_A) as c:
         resp = c.post(
             f"/pipelines/{pipe_id}/schedules",
             json={"kind": "cron", "expr": "*/5 * * * *"},
         )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["kind"] == "cron"
+    assert data["expr"] == "*/5 * * * *"
+    # next_fire must be a positive int at a 5-minute boundary (multiple of 300_000 ms)
+    assert isinstance(data["next_fire"], int) and data["next_fire"] > 0
+    assert data["next_fire"] % 60_000 == 0  # aligned to a whole minute
+
+
+def test_create_schedule_malformed_cron_422(sched_app: FastAPI, sched_ctx: AppContext) -> None:
+    """Malformed cron expr still returns 422 (gate narrows, not removed — ADR-042 D9)."""
+    pipe_id = _make_pipeline(sched_ctx)
+    with _client(sched_app, sched_ctx, _USER_A) as c:
+        resp = c.post(
+            f"/pipelines/{pipe_id}/schedules",
+            json={"kind": "cron", "expr": "*/0 * * * *"},
+        )
     assert resp.status_code == 422
-    assert "deferred" in resp.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------
