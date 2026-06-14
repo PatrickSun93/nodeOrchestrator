@@ -1,66 +1,62 @@
 ---
 task_id: P6.5
 round: R0-B
-verdict: blocking
+cycle: 2
+verdict: needs_architect
 findings_count:
-  red: 1
+  red: 0
   yellow: 1
   green: 4
-lens: subprocess-injection (cross-family — same lens that caught P6.1 Bug B)
-reviewed_commit: fb68efc
+lens: subprocess-injection (cross-family — refspec-bypass re-verification + attacker-perspective exhaustiveness)
+reviewed_cycle_1_commit: fb68efc
+reviewed_cycle_2_commit: 3ae8042 (origin/claude/P6.5-impl)
+gates_run: ruff ✅ / mypy ✅ / pytest 32/32 subprocess_tools + 23/23 constitution ✅ / t9+t12 ✅
 spine_verified: byte-identical (gate/_execute_local_call/decide_tier — zero diff vs main)
-gates:
-  ruff: pass
-  mypy: pass
-  pytest_subprocess: 29/29
-  pytest_constitution_t9_t12: pass
 no_new_llmpurpose: true
+cycle_1_verdict: blocking (1🔴 R1 refspec-delete + 1🟡 R2 refspec-force)
+cycle_1_findings_resolved:
+  R1: "✅ fixed — branch :refspec rejected via startswith(':')"
+  R2: "✅ fixed — same check covers +refspec via startswith('+')"
+  R0A-Y1: "✅ fixed — happy-path test asserts exit_code=0"
+  R0A-Y2: "✅ fixed — ext:: test asserts 'not allowed'"
+  R0A-Y3: "✅ fixed — ADR-036 wording + apply_edit caveat → task #109"
 ---
 
-# P6.5 R0-B cross-family review
+# P6.5 R0-B cross-family review — cycle 1 + cycle 2
 
-## Lens
+## Cycle 1 (2026-06-14, fb68efc) — summary
 
-Subprocess-injection / attacker-perspective — same lens that caught P6.1 Bug B.
-For every input-validation check, exhaust every syntax-level bypass: what are
-ALL the ways git can express "delete a remote branch" or "force-push," not
-just the ways the flag-oriented checks cover.
+Cycle 1 reviewed the G1 impl (transport allowlist + configured-remote restriction).
+The G1 diff itself was clean — all four git subprocess paths covered by
+`GIT_ALLOW_PROTOCOL`, configured-remote enforcement correctly fail-closed, spine
+byte-identical, gates green. One 🔴 found on adjacent pre-existing code:
 
-## Findings
+- **🔴 R1 — `branch=":main"` deletion refspec bypass.** `:refspec` carries
+  the same destructive semantics as `--delete` (which IS banned) but uses
+  different syntax, evading both the `-`-prefix check and the
+  `_GIT_PUSH_BANNED_FLAGS` exact-match check. Empirically confirmed on git 2.43.
+- **🟡 R2 — `branch="+main:main"` force-push refspec bypass.** Same blind spot;
+  `+refspec` = force-push, evading the `--force` ban.
+  Suggested fix: reject `branch` values starting with `:` or `+` before argv build.
 
-### 🔴 R1 — refspec deletion bypass: `branch=":main"` evades `--delete` ban
+Verdict: blocking (1🔴). Architect routed α — fix R1/R2 + R0-A Y1/Y2 test-honesty
++ Y3 wording in a single rework cycle.
 
-**Severity:** high. The banned-flags defense (`_GIT_PUSH_BANNED_FLAGS`) blocks
-`--delete` by exact string match, and a separate `startswith("-")` check blocks
-flag-shaped values. Both checks are in `subprocess_tools.py:417-422` (pre-P6.5
-code, unchanged by this diff).
+## Cycle 2 (2026-06-14, 3ae8042) — re-review
 
-`branch = ":main"` passes both:
-- `":main".startswith("-")` → `False` (starts with `:`, not `-`)
-- `":main" in _GIT_PUSH_BANNED_FLAGS` → `False` (`:main` ≠ `--delete`)
+### Diff scope
 
-argv becomes `["git", "push", "origin", ":main"]`. git interprets `:<ref>` as
-"delete the remote ref" — functionally identical to `--delete <ref>`, which IS
-banned.
+`git diff 88ac9bd..origin/claude/P6.5-impl` — 3 files, 74 insertions, 4 deletions:
 
-**Empirical confirmation (git 2.43):**
+| File | Change |
+|---|---|
+| `src/orchestrator/tools/subprocess_tools.py` | +5 lines: `:`/`+` prefix check at `:433-438` |
+| `tests/tools/test_subprocess_tools.py` | +67/-4: 3 new tests + 3 assertion fixes |
+| `docs/decisions/ADR-036-mutation-local-tools.md` | 1-line wording edit + apply_edit caveat |
 
-```
-$ git push origin ":main"
- - [deleted]         main
-```
+### 🔴 R1/R2 — refspec bypass fix
 
-The remote `main` branch is silently deleted. No error, no rejection.
-
-**Pre-existing:** this gap exists on `main` pre-P6.5. P6.5 does not introduce
-or widen it. But the cross-family lens caught it because it probes the refspec
-layer, not the flag layer — exactly the class of blind spot that P6.1 Bug B
-was (a flag-shape check that missed a flag variant).
-
-**Suggested fix direction:** add a third input-validation rule before the
-argv is built — reject `branch` values starting with `:` (deletion refspec)
-and `+` (force-push refspec). Minimal, surgical, covers the refspec syntax
-surface. Example guard at line ~415:
+The fix adds a single guard clause before argv construction (`subprocess_tools.py:433-438`):
 
 ```python
 if branch.startswith(":") or branch.startswith("+"):
@@ -70,81 +66,133 @@ if branch.startswith(":") or branch.startswith("+"):
     )
 ```
 
-This would close both R1 and R2 (see below) in two lines, zero new dependencies.
+**Status: ✅ FIXED.** The check blocks both `:refspec` (delete) and `+refspec` (force).
+Empirically confirmed on git 2.43. The fix is surgical (5 lines), correctly placed
+after the `-`-prefix check and before argv construction, with zero effect on the
+banned-flags check or the env/argv build below.
 
-### 🟡 R2 — refspec force-push bypass: `branch="+main:main"` evades `--force` ban
+### Attacker-perspective exhaustiveness audit
 
-Same blind spot, different refspec operator. `branch = "+main:main"`:
-- Does not start with `-` → passes flag-shape check
-- Not in `_GIT_PUSH_BANNED_FLAGS` → passes exact-match check
+I enumerated every git refspec syntax variant that carries destructive or
+potentially-destructive semantics and tested each empirically against git 2.43
+to determine whether the combined check-set (`-`-prefix → `:`/`+`-prefix →
+`_GIT_PUSH_BANNED_FLAGS` exact-match) blocks it.
 
-git interprets `+refspec` as "allow non-fast-forward update" — functionally
-identical to `--force` for that refspec.
+**Blocked vectors (destructive, caught by one or more checks):**
 
-**Suggested fix:** covered by the same `:`/`+` guard proposed in R1.
-
-### 🟢 N1 — P6.5 diff itself is clean (no new bugs)
-
-`GIT_ALLOW_PROTOCOL="https:ssh:git:file"` is a real git env var (confirmed
-via `man git` and empirical test on git 2.43). `ext::` and `fd::` transports
-are both rejected by git when this var is set.
-
-Coverage across all four git subprocess paths in the module:
-
-| call | line | GIT_ALLOW_PROTOCOL |
+| Variant | Git behavior | Blocked by |
 |---|---|---|
-| `git rev-parse HEAD` | ~393 | ✅ `scoped_env(extra_env={...})` |
-| `git remote` (list) | ~448 | ✅ `scoped_env(extra_env={...})` |
-| `git push` | ~468 | ✅ `extra_env["GIT_ALLOW_PROTOCOL"] = ...` |
-| `git remote get-url` | ~500 | ✅ `scoped_env(extra_env={...})` |
+| `:main` | Delete remote `main` | `startswith(":")` ✅ |
+| `:refs/heads/main` | Delete (full ref) | `startswith(":")` ✅ |
+| `+main:main` | Force-push | `startswith("+")` ✅ |
+| `+refs/heads/*:refs/heads/*` | Force-push all branches | `startswith("+")` ✅ |
+| `--force`, `--force-with-lease`, `-f`, `--mirror`, `--delete` | Destructive flags | `_GIT_PUSH_BANNED_FLAGS` ✅ |
+| `-f`, `--foo`, any `-`-prefixed | Flag injection | `startswith("-")` ✅ |
 
-Env inheritance: `scoped_env()` → `extra_env` overlay → `run_scoped_command` →
-`anyio.open_process(env=env)`. Both `_dispatch` and `_sandbox_dispatch` build
-env from `scoped_env(extra_env=extra_env or {})`. Intact across both code paths.
+**Whitespace/control-char bypass attempts — practically inert:**
 
-### 🟢 N2 — Configured-remote restriction correctly fail-closed
+| Variant | Git result | Why inert |
+|---|---|---|
+| ` :main` (leading space) | `error: src refspec does not match any` | git treats space as part of refspec name; no deletion |
+| `\t:main` (leading tab) | Same error | Same mechanism |
+| `\n:main` (leading newline) | Same error | Same mechanism |
 
-- Inline URLs (`https://evil/r`, `git@evil:r.git`) are not in `git remote`
-  output → rejected ✅
-- `ext::` / `fd::` strings are not configured remote names → rejected ✅
-- Case-sensitive match (`origin` ≠ `ORIGIN`) ✅
-- `git remote` failure/timeout → `configured_remotes = set()` → all pushes
-  fail-closed ✅
-- Empty output → `splitlines()` of `""` → `[]` → `set()` → fail-closed ✅
-- Remote names starting with `-` are rejected by git itself (`git remote add
-  --foo` fails) — defense-in-depth, no practical gap ✅
+The hypothesis that git silently strips leading whitespace is **falsified**.
+Remote ref confirmed intact after all three attempts.
 
-### 🟢 N3 — Gates all green, spine byte-identical
+**Correctly permitted (normal push, not destructive):**
 
-- `tests/tools/test_subprocess_tools.py`: 29 passed (4 new P6.5 tests + 3
-  updated + 22 unchanged)
-- `test_t9_no_shell_in_subprocess_surface` ✅
-- `test_t12_git_push_banned_flags` ✅
-- ruff / mypy: clean
-- Spine: `gate.py` / `scoring.py` / `_execute_local_call` — zero diff vs main
-- No new `LLMPurpose` in tools/
+| Variant | Git behavior | Why permitted |
+|---|---|---|
+| `main` | Normal push | Plain branch name — intended use |
+| `main:other` | Create `other` on remote | Normal `src:dst` push; no force/delete |
+| `HEAD:main` | Push HEAD to `main` | Normal push; no force/delete |
+| `refs/heads/main:refs/heads/other` | Full-ref push | Same as `main:other` with explicit refs |
 
-### 🟢 N4 — Happy-path regression confirmed
+### 🟡 N1 — Glob refspec passes all checks (pre-existing edge case)
 
-`test_git_push_happy_path_local_remote` updated from inline `remote=str(bare)`
-to `git remote add origin <bare>` + `remote="origin"` — pushes succeed through
-the configured-remote check, confirming no regression.
+**Claim:** `branch="refs/heads/*:refs/heads/*"` starts with `r` (no prefix match),
+is not in `_GIT_PUSH_BANNED_FLAGS`, and is accepted by git as a valid refspec.
+In a multi-branch repo, this pushes ALL branches. The code's error message says
+"only plain branch names are accepted" — but the check only blocks `:` and `+`
+prefixes, not glob patterns.
+
+**Why 🟡, not 🔴:** the glob refspec is non-destructive:
+- No `+` prefix → non-fast-forward branches are rejected at the remote
+- No `--prune` → no deletion of remote branches missing locally
+- No `--mirror` → tags and non-branch refs are NOT pushed
+- HARD confirm dialog surfaces the `branch` value — glob is visually recognizable
+
+The `--mirror` ban is about comprehensive push-all-refs with force semantics.
+A non-force glob pushes all branches but fails on any that would require force —
+it lacks the destructive payload. The `+refs/heads/*:refs/heads/*` force-glob
+variant IS caught by the `+`-prefix check.
+
+**Pre-existing:** this edge case predates both cycle-1 and cycle-2. Cycle-2's
+`+`-prefix check does block the destructive variant.
+
+**Suggested investigation:** either tighten the check (reject `*`, `?`, `[` in
+`branch`) or narrow the error message ("only plain branch names" → "no refspec
+prefixes (: / +)"). The architect may also route this as "wontfix" — the HARD
+confirm dialog makes the value visible to the operator.
+
+### R0-A test-honesty fixes — verified
+
+| R0-A finding | Status | Evidence |
+|---|---|---|
+| Y1 — vacuous happy-path test | ✅ Fixed | `assert "exit_code=0" in result.content` (was `"exit_code=" in`) |
+| Y2 — ext:: false-pass test | ✅ Fixed | `assert "not allowed" in result.content` (was `"exit_code=" in`) |
+| Y3 — ADR wording | ✅ Fixed | "configured remotes" + `apply_edit` caveat → task #109 |
+
+New regression tests added in cycle-2:
+- `test_git_push_transport_allowlist_set` — pins `file` in, `ext` out ✅
+- `test_git_push_refspec_delete_rejected` — `:main` → `LocalToolError` + remote ref intact ✅
+- `test_git_push_refspec_force_push_rejected` — `+main:main` → `LocalToolError` ✅
+
+The refspec-delete test is particularly well-constructed: it pushes `main` to a
+bare repo, attempts `:main`, asserts rejection, then verifies the remote ref
+still exists via `git ls-remote`. This is a genuine fail-on-revert test.
+
+### Regressions
+
+None. The cycle-2 product-code change is exactly 5 lines — a single `if` block.
+No existing test broke; the 3 updated assertions are all within the tests that
+the plan identified as needing changes.
+
+### 🟢 Positive
+
+- **🟢-1 (spine byte-freeze held).** `gate.py`, `_execute_local_call`, `decide_tier`
+  — zero diff vs main. Same as cycle-1.
+- **🟢-2 (constitution gates silent).** t9 (no-shell) and t12 (banned-flags)
+  pass with zero test code changes. The refspec check runs before argv construction,
+  so no new shell/flag surface.
+- **🟢-3 (no new LLMPurpose).** Only `content-gen` purposes in the module.
+- **🟢-4 (gates all green).** ruff ✅, mypy ✅, pytest 32/32 subprocess_tools
+  + 23/23 constitution ✅. Run in isolated detached worktree at 3ae8042
+  (`uv sync --all-extras`).
+
+## Gates (cycle-2, worktree at 3ae8042)
+
+| Gate | Result |
+|---|---|
+| `ruff check` on changed files | ✅ clean |
+| `mypy --strict` on changed files | ✅ clean |
+| `pytest tests/tools/test_subprocess_tools.py` | 32/32 ✅ |
+| `pytest tests/tools/test_constitution.py` | 23/23 ✅ |
+| Spine diff vs main (`gate.py`, `_execute_local_call`, `decide_tier`) | 0 bytes |
 
 ## Synthesis
 
-R1/R2 are a **syntax-level blind spot** in `_GIT_PUSH_BANNED_FLAGS`: the check
-blocks destructive operations by matching literal flag strings (`--delete`,
-`--force`) and rejecting `-`-prefixed values, but git's refspec syntax provides
-alternate spellings (`:ref` = delete, `+ref` = force) that carry the same
-destructive semantics without triggering either check.
+Cycle-2 is a correct, surgical fix. The `:`/`+`-prefix check, combined with the
+existing `-`-prefix and banned-flags checks, blocks every destructive refspec
+variant I could enumerate. Whitespace/control-character bypass attempts are
+practically inert — git itself rejects them as invalid refspecs. The test-honesty
+fixes make the flagged tests genuinely bite on revert.
 
-This is the same error class as P6.1 Bug B, where a flag-shape check missed a
-flag variant. The P6.5 diff itself is clean and well-tested; the finding is on
-adjacent pre-existing code that the cross-family lens was dispatched to probe.
+The one 🟡 (glob refspec) is pre-existing, non-destructive (no force-no-delete),
+and bounded by the HARD confirm dialog. The architect may close it as accepted
+residual, tighten the check, or narrow the error message.
 
-**Verdict rationale:** `blocking` because R1 is a confirmed 🔴 — a
-prompt-injected agent can delete remote branches despite the explicit `--delete`
-ban, and the `:` prefix is subtle enough that a user skimming the HARD-confirm
-dialog may not recognize it as a deletion instruction. The fix is surgical
-(two additional `startswith` guards on `branch`), does not touch the spine,
-and can ride as a P6.5 scope expansion or a follow-on atom.
+**Recommendation:** merge as-is. The cycle-1 🔴 is provably closed with thorough
+defense. The 🟡 is an edge case the architect can route independently — it does
+not block closing P6.5.
