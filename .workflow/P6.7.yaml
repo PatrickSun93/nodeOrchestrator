@@ -1,8 +1,8 @@
 task_id: P6.7
-state: awaiting_architect_decision
-cycle: 1
-last_transition_at: '2026-06-14T21:16:45.771957Z'
-cycle_started_at: '2026-06-14T20:07:15.373611Z'
+state: awaiting_junior_impl
+cycle: 2
+last_transition_at: '2026-06-15T05:26:09.274930Z'
+cycle_started_at: '2026-06-15T05:26:09.274930Z'
 override_history:
 - timestamp: '2026-06-14T20:33:18.898796Z'
   actor: architect
@@ -11,4 +11,18 @@ override_history:
   reason: 'No-ADR slice: plan_has_adr=False → junior_impl; hook mis-advanced to architect_accept
     (recurring no-ADR-slice gotcha). ADR-042 D3 is an in-place amendment, no Accept
     gate.'
+- timestamp: '2026-06-15T05:26:05.715514Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_architect_decision
+  reason: Restore to architect_decision to take the is_rework path (cycle++ + cycle_started_at
+    re-stamp) for cycle-2; the prior senior_revision→junior_impl override didn't trigger
+    is_rework so cycle-1 commits stayed post-boundary (RC-28).
+- timestamp: '2026-06-15T05:26:09.274930Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 α (is_rework: cycle++ + re-stamp): bump cron never-match horizon
+    to 8*366*24*60 (century-boundary Feb-29) + comment + ADR-042 D3 text + test. Both
+    reviewers agree; routine, no spine/contract/dep change. See architect-routing-on-impl.md.'
 requires_cross_family_review: true
