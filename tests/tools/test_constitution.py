@@ -1097,6 +1097,27 @@ def test_t12_git_push_argv_discipline() -> None:
         except LocalToolError:
             pass
 
+        # P6.9-110: glob (*) refspec refused.
+        try:
+            fn({"remote": "origin", "branch": "refs/heads/*:refs/heads/*"})
+            raise AssertionError(
+                "t12: glob refspec refs/heads/*:refs/heads/* should have been refused"
+            )
+        except LocalToolError as exc:
+            assert "glob" in str(exc), (
+                f"t12: glob refspec raised LocalToolError but message did not mention 'glob': {exc}"
+            )
+
+        # P6.9-110: simple src:dst (main:other) must NOT be blocked by the glob/prefix guard.
+        # (It may fail later for other reasons such as network, but not the refspec guard.)
+        try:
+            fn({"remote": "origin", "branch": "main:other"})
+        except LocalToolError as exc:
+            msg = str(exc)
+            assert "glob" not in msg and "refspec prefix" not in msg, (
+                f"t12: main:other raised the glob/prefix guard unexpectedly: {msg!r}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # B5-5 free-coverage re-assertion: t9 covers git_push + t3 covers mutation_tools

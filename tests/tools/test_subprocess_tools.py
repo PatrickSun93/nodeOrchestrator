@@ -657,7 +657,7 @@ def test_git_push_refspec_delete_rejected(tmp_path: Path) -> None:
         ["git", "push", "origin", "main"], cwd=str(src), check=True, capture_output=True
     )
 
-    with pytest.raises(LocalToolError, match="only plain branch names are accepted"):
+    with pytest.raises(LocalToolError, match=r"glob \(\*\) refspecs are rejected"):
         _invoke("git_push", src, {"remote": "origin", "branch": ":main"})
 
     ls = _subprocess.run(
@@ -670,5 +670,63 @@ def test_git_push_refspec_delete_rejected(tmp_path: Path) -> None:
 
 def test_git_push_refspec_force_push_rejected(tmp_path: Path) -> None:
     """branch='+main:main' is a force-push refspec — rejected before argv build."""
-    with pytest.raises(LocalToolError, match="only plain branch names are accepted"):
+    with pytest.raises(LocalToolError, match=r"glob \(\*\) refspecs are rejected"):
         _invoke("git_push", tmp_path, {"remote": "origin", "branch": "+main:main"})
+
+
+# P6.9-110: glob (*) refspec rejection + accurate guard message
+
+
+def test_git_push_glob_refspec_rejected(tmp_path: Path) -> None:
+    """branch containing '*' (glob) is rejected before argv build (P6.9-#110)."""
+    with pytest.raises(LocalToolError, match=r"glob \(\*\) refspecs are rejected"):
+        _invoke("git_push", tmp_path, {"remote": "origin", "branch": "refs/heads/*:refs/heads/*"})
+
+
+def test_git_push_glob_star_alone_rejected(tmp_path: Path) -> None:
+    """branch='*' (bare glob) is rejected (P6.9-#110)."""
+    with pytest.raises(LocalToolError, match=r"glob \(\*\) refspecs are rejected"):
+        _invoke("git_push", tmp_path, {"remote": "origin", "branch": "*"})
+
+
+def test_git_push_glob_in_src_dst_rejected(tmp_path: Path) -> None:
+    """branch='main:*' (glob in dst) is rejected (P6.9-#110)."""
+    with pytest.raises(LocalToolError, match=r"glob \(\*\) refspecs are rejected"):
+        _invoke("git_push", tmp_path, {"remote": "origin", "branch": "main:*"})
+
+
+def test_git_push_simple_src_dst_not_over_blocked(tmp_path: Path) -> None:
+    """branch='main:other' (simple src:dst, no glob) must not be blocked by the
+    glob/prefix guard (P6.9-#110 no-over-block invariant)."""
+    import subprocess as _subprocess
+
+    bare = tmp_path / "bare.git"
+    bare.mkdir()
+    _subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+
+    src = tmp_path / "src"
+    src.mkdir()
+    _subprocess.run(["git", "init", "-b", "main", str(src)], check=True, capture_output=True)
+    for cmd in (
+        ["git", "config", "user.email", "test@test.com"],
+        ["git", "config", "user.name", "Test"],
+    ):
+        _subprocess.run(cmd, cwd=str(src), check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        cwd=str(src),
+        check=True,
+        capture_output=True,
+    )
+    (src / "f.txt").write_text("hello")
+    _subprocess.run(["git", "add", "."], cwd=str(src), check=True, capture_output=True)
+    _subprocess.run(["git", "commit", "-m", "init"], cwd=str(src), check=True, capture_output=True)
+
+    try:
+        _invoke("git_push", src, {"remote": "origin", "branch": "main:other"})
+    except LocalToolError as exc:
+        msg = str(exc)
+        assert "glob" not in msg and "refspec prefix" not in msg, (
+            f"test_git_push_simple_src_dst_not_over_blocked: "
+            f"main:other raised the glob/prefix guard unexpectedly: {msg!r}"
+        )

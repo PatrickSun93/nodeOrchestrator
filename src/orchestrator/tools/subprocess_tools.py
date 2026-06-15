@@ -433,7 +433,15 @@ def _make_git_push(
         if branch.startswith(":") or branch.startswith("+"):
             raise LocalToolError(
                 f"git_push: branch {branch!r} uses a refspec prefix "
-                "(: deletion / + force-push); only plain branch names are accepted"
+                "(: delete / + force); refspec prefixes (: delete / + force) and "
+                "glob (*) refspecs are rejected; plain branch names and simple "
+                "src:dst are accepted"
+            )
+        if "*" in branch:
+            raise LocalToolError(
+                f"git_push: branch {branch!r} contains a glob (*); refspec prefixes "
+                "(: delete / + force) and glob (*) refspecs are rejected; plain branch "
+                "names and simple src:dst are accepted"
             )
 
         # Validate no banned destructive flags appear in remote/branch (defense-in-depth).
