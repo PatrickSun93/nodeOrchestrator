@@ -165,6 +165,17 @@ def _make_apply_edit(sandbox_root: Path) -> LocalToolFn:
         # escaping final-component symlink. apply_edit REFUSES (read tools only skip).
         dest = _check_path(path_str, resolved_root)
 
+        # Control-plane denylist: deny writes under .git/ (ADR-036 D3-i, P6.9-#109).
+        # .git/ is owned by git porcelain; agent edits of .git/config could inject
+        # attacker-controlled remotes and reopen the P6.5-G1 exfil vector.
+        # Check is apply_edit-local (not in _check_path) to leave read tools unaffected.
+        parts = dest.relative_to(resolved_root).parts
+        if parts and parts[0] == ".git":
+            raise LocalToolError(
+                "apply_edit: writes under .git/ are denied (control-plane path protection; "
+                "ADR-036 D3-i)"
+            )
+
         # Ensure parent directory exists (create if needed, still inside sandbox).
         dest.parent.mkdir(parents=True, exist_ok=True)
 

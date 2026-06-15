@@ -972,6 +972,41 @@ def test_t11_apply_edit_write_containment() -> None:
             fn({"path": "atomic.txt", "content": "partial"})
         assert not dest.exists(), "t11: partial file at destination after mid-write failure"
 
+        # P6.9-109: .git/ control-plane denylist (ADR-036 D3-i carve-out).
+        git_dir = root / ".git"
+        git_dir.mkdir()
+        git_config = git_dir / "config"
+        git_config.write_text("[original]")
+
+        try:
+            fn({"path": ".git/config", "content": '[remote "x"]\n  url = bad'})
+            raise AssertionError("t11: .git/config write should have been denied")
+        except LocalToolError:
+            pass
+        assert git_config.read_text() == "[original]", (
+            "t11: .git/config was mutated despite .git/ deny"
+        )
+
+        hooks_dir = git_dir / "hooks"
+        hooks_dir.mkdir()
+        try:
+            fn({"path": ".git/hooks/pre-push", "content": "#!/bin/sh\nbad"})
+            raise AssertionError("t11: .git/hooks/pre-push write should have been denied")
+        except LocalToolError:
+            pass
+        assert not (hooks_dir / "pre-push").exists(), (
+            "t11: .git/hooks/pre-push was created despite .git/ deny"
+        )
+
+        # Normal workspace write still succeeds (deny not over-broad).
+        result = fn({"path": "workspace.txt", "content": "ok"})
+        assert (root / "workspace.txt").exists(), (
+            "t11: normal workspace write failed after .git/ deny guard added"
+        )
+        assert "workspace.txt" in result.content, (
+            f"t11: unexpected result from normal write: {result.content!r}"
+        )
+
     # --- AST guard: assert the PINNED write recipe in mutation_tools.py ---
     mutation_path = _TOOLS_PKG / "mutation_tools.py"
     mutation_source = mutation_path.read_text(encoding="utf-8")
