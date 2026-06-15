@@ -157,39 +157,54 @@ the JSON `definition` blob:** `PipelineDefinition` is `frozen=True` and the JSON
 non-queryable, so every fire would rewrite the whole definition and the sweeper could not
 index due-ness.
 
-### D3. `next_fire` arithmetic is **code**, never an LLM judgment — **interval-only in P5.1b; cron deferred** (architect-routed Y1 = (c))
+### D3. `next_fire` arithmetic is **code**, never an LLM judgment — **interval + cron both implemented** (amended in place by P6.7)
 
 The computation of *when* a schedule next fires — `compute_next_fire(kind, expr, after_ms)`
 — is **pure deterministic code** in a new isolated module (`pipeline/schedule.py`):
 
-- **`interval`** (implemented) → `next = after_ms + interval_s * 1000`. UTC epoch-ms; the act
-  recomputes from claim-time (D4/D5 skip-to-next), so an interval drifts by up to
+- **`interval`** (implemented in P5.1b) → `next = after_ms + interval_s * 1000`. UTC epoch-ms;
+  the act recomputes from claim-time (D4/D5 skip-to-next), so an interval drifts by up to
   `sweep_interval_s` per fire — the correct price of skip-to-next (computing from the old
   `next_fire` would re-introduce the backfill storm B3 rejects).
-- **`cron`** (**deferred to a focused follow-on**) → not evaluated in P5.1b:
-  `validate_schedule_expr("cron", …)` raises `ValueError` and `compute_next_fire` raises
-  `NotImplementedError`; the schedule-create endpoint (D9) rejects `kind=cron` with **422**.
+- **`cron`** (**implemented in P6.7** — hand-rolled 5-field UTC-only subset; no new dependency):
+  - **Fields (5, whitespace-separated):** `minute hour DOM month DOW`. Exactly 5 fields
+    required; 4 or 6 → `ValueError`.
+  - **Domains:** minute `0-59`, hour `0-23`, DOM `1-31`, month `1-12`, DOW `0-6` (0 = Sunday).
+    DOW `7` accepted as a Sunday alias (Vixie convention), normalised to `0` at parse time.
+  - **Tokens (compositional, comma-list of terms per field):** `*` (full domain), `a` (single
+    value), `a-b` (inclusive range, `a ≤ b`), `*/n` (full domain stepped by `n`), `a-b/n`
+    (range stepped by `n`). Step `n ≥ 1`. Numbers only — name tokens (`JAN`/`MON`) excluded.
+  - **DOM-vs-DOW union (standard Vixie):** when both DOM and DOW fields are restricted (neither
+    is the literal `*`), a minute matches if `DOM matches OR DOW matches`. A `*/n`/range/list
+    counts as *restricted* even if it spans the full domain (Vixie flag = literal-`*` test, not
+    full-domain-coverage). When exactly one is restricted, only that field constrains. When
+    both are `*`, day is unconstrained.
+  - **Bounded never-match guard:** forward search capped at `_CRON_SEARCH_HORIZON_MIN = 8 ×
+    366 × 24 × 60` minutes (~8 years) to cover legitimate `0 0 29 2 *` (Feb-29-only) including
+    the century-boundary gap (1896→1904, 2096→2104 skip non-leap 1900/2100 → ~8 years between
+    consecutive Feb-29 occurrences). On cap
+    exhaustion raises `ValueError` (fail-closed — never loops forever). Malformed exprs are
+    rejected at validate time and never reach the search.
+  - **All calendar arithmetic via stdlib** `datetime` / `timezone.utc` (leap years, month
+    lengths, day/hour/minute rollover, year-wrap — not hand-written). Weekday conversion:
+    `cron_dow = (dt.weekday() + 1) % 7` (Python Mon=0..Sun=6; cron Sun=0..Sat=6).
+  - **UTC-only** — consistent with interval; no timezone token.
+  - `validate_schedule_expr("cron", expr)` raises `ValueError` for malformed cron (un-gating
+    the 422 for valid cron — D9 narrows from "all cron" to "malformed cron only").
 
-**Why interval-only (architect routing, `architect-routing-on-plan.md` Y1).** The ratified
-B2 table named `kind ∈ {interval, cron}`, but *how* to evaluate cron was never in the
-decision surface (B0–B6 silent). A hand-rolled 5-field cron evaluator is exactly the
-**greenfield-correctness class** P5.1a cyc1 shipped as the RSS billion-laughs hole; keeping it
-**out** of the scheduler dual-lens (which exists to scrutinize the *scheduler*, not a parser)
-mirrors B0's own discipline of deferring incrementality to keep the slice tight. The scheduler
-crux (sibling sweeper + persistence + re-arm + residual + opt-in) is **fully exercisable with
-interval-only**. Cron evaluation lands in its own follow-on with a dedicated
-greenfield-correctness review. *(Rejected for P5.1b: (a) hand-rolled subset — the strong
-runner-up, honors the no-new-dep posture but adds the RSS-class surface to this dual-lens;
-(b) `croniter` — cuts against the project's 4-runtime-dependency conservatism, ADR-040 D1.)*
+**Historical note (P5.1b interval-only routing, `architect-routing-on-plan.md` Y1 — preserved
+for audit trail).** The ratified B2 table named `kind ∈ {interval, cron}`, but *how* to
+evaluate cron was never in the decision surface (B0–B6 silent). A hand-rolled 5-field cron
+evaluator is exactly the **greenfield-correctness class** P5.1a cyc1 shipped as the
+RSS billion-laughs hole; keeping it **out** of the scheduler dual-lens (which exists to
+scrutinize the *scheduler*, not a parser) mirrored B0's own discipline of deferring
+incrementality to keep the slice tight. Cron evaluation was deferred to P6.7 with a dedicated
+greenfield-correctness review; that review has now cleared (P6.7 dual-lens). *(Rejected for
+P5.1b: (a) hand-rolled subset — strong runner-up; (b) `croniter` — against 4-dep conservatism,
+ADR-040 D1. P6.7 ratified (a) on 2026-06-14 for the same reason: honoring ADR-040 D1 posture.)*
 
-**The `kind` column is retained for forward-compat — its presence never implies a working
-cron path.** This routing narrows **only** the arithmetic module: the `pipeline_schedules`
-schema (D2), the sibling sweeper (D1/D4), boot re-arm (D5), and the endpoint surface (D9) are
-**unchanged** — they are kind-agnostic; only `compute_next_fire`/`validate_schedule_expr`
-restrict to interval, and the create endpoint gates cron out at 422.
-
-**No new routing `LLMPurpose`.** Interval arithmetic = orchestration = code/config (ADR-041
-§9). The **only** LLM in a scheduled run remains the analyze + reduce content-gen inside the
+**No new routing `LLMPurpose`.** Cron arithmetic = orchestration = code/config (ADR-041 §9).
+The **only** LLM in a scheduled run remains the analyze + reduce content-gen inside the
 unchanged `run_pipeline`. The scheduler **actuates, never decides** (ADR-040 D2 framing): the
 operator defined the schedule (**when**) and the pipeline (**what**); the timer only
 **initiates** the configured run at the configured time.
@@ -326,10 +341,10 @@ ADR-041 D7's "minimal definition CRUD ships so there is something to run" and it
 (ADR-039 D1 — the principal is server-derived, never from the body):
 
 - **`POST /pipelines/{id}/schedules`** — create a schedule (`validate_schedule_expr(kind,
-  expr)` → 422 on malformed; per D3 this **rejects `kind=cron` with 422** until the cron
-  follow-on lands, so the `kind` column never implies a usable cron path; compute the initial
-  `next_fire = compute_next_fire(kind, expr, now)` for `interval`); owner of the parent
-  pipeline only (403 otherwise).
+  expr)` → 422 on malformed; per D3 **valid `kind=cron` is accepted** (P6.7), **malformed cron
+  still 422s** — the gate narrows from "all cron" to "malformed cron only"; compute the initial
+  `next_fire = compute_next_fire(kind, expr, now)` for both `interval` and `cron`); owner of
+  the parent pipeline only (403 otherwise).
 - **`GET /pipelines/{id}/schedules`** — list the caller's schedules for that pipeline.
 - **`DELETE /pipelines/{id}/schedules/{schedule_id}`** and **`PATCH …`
   (enable/disable)** — owner only.
@@ -347,6 +362,23 @@ validation.)*
 - **ADR-040** (note) — the *sibling* `_schedule_sweeper` reuses ADR-040's *pattern* and
   shares **none** of its spine-critical actuation code; `RB-PIPELINE-SCHED` references
   `RB-AUTOFIRE` as the **milder neighbor** (reversible initiation vs gated actuation).
+
+### Amendments carried by P6.7 (inscribed at impl — plan task P6.7-5)
+
+**Amended in place by P6.7** (`plan_has_adr=False`, no new ADR, no Accept gate — same
+amendment-in-place weight as the P6.x annotation notes; architect ratification 2026-06-14;
+dual-lens reviews the cron correctness + this contract inscription):
+
+- **D3** — flipped from "interval-only; cron deferred" to "cron implemented" with the full
+  subset contract inscribed (hand-rolled 5-field UTC-only; tokens `* */n a-b a-b/n a,b,c`;
+  domains; DOW `7`=Sun alias; DOM-vs-DOW OR-union; bounded never-match guard; stdlib
+  `datetime`/`timezone.utc` for all calendar arithmetic).
+- **D9** — 422 gate **narrows** from "rejects all `kind=cron`" to "rejects **malformed** cron;
+  valid cron accepted".
+- **Reversibility D3 row** — updated to reflect cron now implemented.
+- **Consequences "Cron is deferred" bullet** — resolved: cron implemented in P6.7 with the
+  dedicated greenfield-correctness dual-lens (R0-A + R0-B). Historical Y1 deferral rationale
+  preserved as annotated history in D3 (not erased — the audit trail of the deferral stands).
 - **ADR-025 D6** (note) — a **second** bounded background-task surface sits beside the
   single writer: it discovers on the reader path and acts via the writer executor,
   preserving single-writer-consistency + reader-liveness; it must shut down cleanly.
@@ -386,9 +418,12 @@ validation.)*
   Accepted not softened.
 - A **second** bounded background task joins the lifecycle (ADR-025 D6) — it must shut down
   cleanly and never block the writer (discovery is read-path).
-- **Cron is deferred** (D3, architect-routed Y1) — P5.1b is interval-only; the cron evaluator
-  (the RSS-class greenfield surface) lands in its own follow-on with a dedicated review. The
-  `kind` column ships but `kind=cron` is rejected at create (422) until then.
+- **Cron implemented** (D3, amended in place by P6.7) — P5.1b was interval-only; the cron
+  evaluator (the RSS-class greenfield surface) was deferred to its own follow-on. **P6.7**
+  completed that follow-on with the dedicated greenfield-correctness dual-lens: hand-rolled
+  5-field UTC-only subset, adversarial correctness suite (C5 boundary/leap/`*/n`/DOM-vs-DOW
+  union/year-wrap/malformed-reject/never-match/DST-irrelevance), no new dependency (ADR-040 D1
+  posture preserved). Valid cron is now accepted at create (422 narrows to malformed-only).
 - The `pipeline_schedules` table + the schedule endpoints add schema + API surface the
   P5.1c extension must respect.
 - **Unbounded `FREE_CHAT` room growth under automation (N3 — a conscious deferred concern,
@@ -408,7 +443,7 @@ path is unchanged. The COUNTDOWN auto-fire spine is **byte-untouched** in either
 |---|---|
 | D1 sibling sweeper | **Low** — removable (off ⇒ never started); shares nothing spine-critical. |
 | D2 `pipeline_schedules` side table | **Medium** — the table shape binds P5.1c; additive, droppable with the feature. |
-| D3 `next_fire` arithmetic (code, no LLM; interval-only, cron deferred) | **Do-not-reverse** (no-LLM-scheduling is a spine invariant) / **Medium** (cron added later behind the retained `kind` column). |
+| D3 `next_fire` arithmetic (code, no LLM; interval + cron both implemented) | **Do-not-reverse** (no-LLM-scheduling is a spine invariant) / **Low** (cron now implemented in P6.7 behind the same `kind` column; the subset contract is inscribed). |
 | D4 claim-then-run + writer re-check | **Do-not-reverse** — the still-due re-check + claim-first ordering is the double-fire crux. |
 | D5 boot re-arm = skip-to-next | **Low** — a read/UPDATE rule, tunable without schema change. |
 | D6 reversible-only / second-caller | **Do-not-reverse** — `countdown_auto_fire=None` is the safety floor P5.1c steps beyond. |

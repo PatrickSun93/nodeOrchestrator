@@ -94,7 +94,7 @@ class PipelineRunResult:
         }
 
 
-# Schedule kind — interval implemented; cron column kept for forward-compat (ADR-042 D3).
+# Schedule kind — interval and cron both implemented (ADR-042 D3, amended by P6.7).
 ScheduleKind = Literal["interval", "cron"]
 
 

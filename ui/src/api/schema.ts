@@ -358,7 +358,7 @@ export interface paths {
          * Create Schedule
          * @description Create a schedule for a pipeline (owner-private; 403 for non-owner).
          *
-         *     ``kind=cron`` is rejected with 422 (deferred — ADR-042 D3 Y1 routing).
+         *     ``kind=cron`` with a valid expression is accepted; malformed cron is rejected with 422.
          */
         post: operations["_create_schedule_pipelines__pipeline_id__schedules_post"];
         delete?: never;
