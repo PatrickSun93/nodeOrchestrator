@@ -179,8 +179,10 @@ The computation of *when* a schedule next fires — `compute_next_fire(kind, exp
     counts as *restricted* even if it spans the full domain (Vixie flag = literal-`*` test, not
     full-domain-coverage). When exactly one is restricted, only that field constrains. When
     both are `*`, day is unconstrained.
-  - **Bounded never-match guard:** forward search capped at `_CRON_SEARCH_HORIZON_MIN = 4 ×
-    366 × 24 × 60` minutes (~4 years) to cover legitimate `0 0 29 2 *` (Feb-29-only). On cap
+  - **Bounded never-match guard:** forward search capped at `_CRON_SEARCH_HORIZON_MIN = 8 ×
+    366 × 24 × 60` minutes (~8 years) to cover legitimate `0 0 29 2 *` (Feb-29-only) including
+    the century-boundary gap (1896→1904, 2096→2104 skip non-leap 1900/2100 → ~8 years between
+    consecutive Feb-29 occurrences). On cap
     exhaustion raises `ValueError` (fail-closed — never loops forever). Malformed exprs are
     rejected at validate time and never reach the search.
   - **All calendar arithmetic via stdlib** `datetime` / `timezone.utc` (leap years, month

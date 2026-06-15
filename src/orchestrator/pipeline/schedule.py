@@ -39,9 +39,10 @@ from datetime import UTC, datetime, timedelta
 
 _SUPPORTED_KINDS = frozenset({"interval", "cron"})
 
-# Forward-search cap: ≥ 4*366*24*60 minutes to cover leap-year Feb-29 schedules
-# (worst case: ~4 years until next 29 Feb).  Fail-closed on exhaustion.
-_CRON_SEARCH_HORIZON_MIN: int = 4 * 366 * 24 * 60  # 2_108_160
+# Forward-search cap: ≥ 8*366*24*60 minutes to cover the century-boundary Feb-29 gap
+# (1896→1904, 2096→2104 skip non-leap 1900/2100 → worst case ~8 years between consecutive
+# Feb-29 occurrences).  Fail-closed on exhaustion.
+_CRON_SEARCH_HORIZON_MIN: int = 8 * 366 * 24 * 60  # 4_216_320
 
 
 @dataclass(frozen=True)

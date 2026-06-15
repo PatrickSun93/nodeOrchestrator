@@ -546,3 +546,43 @@ def test_cron_dst_spring_forward_no_skip() -> None:
     assert dt.day == 10
     assert dt.hour == 2
     assert dt.minute == 30
+
+
+# ---------------------------------------------------------------------------
+# C5.8 — Century-boundary 8-year Feb-29 gap (Y1 horizon bump correctness)
+# ---------------------------------------------------------------------------
+
+
+def test_cron_feb29_century_boundary_8yr_gap_matches() -> None:
+    """0 0 29 2 * across the 2096→2104 century-boundary 8-year gap must resolve.
+
+    2096 is a leap year; 2100 is NOT (divisible by 100 but not 400); 2104 is a
+    leap year.  The gap between consecutive Feb-29 occurrences is ~8 years —
+    exceeding the old ~4-year horizon.  after_ms is placed just past 2096-02-29
+    (the first half of the 8-year gap).
+
+    Fail-on-revert: restoring _CRON_SEARCH_HORIZON_MIN to 4*366*24*60 causes
+    this to raise ValueError (incorrectly fail-closed under the old horizon).
+    """
+    after = _ms(2096, 2, 29, 0, 0)
+    result = compute_next_fire("cron", "0 0 29 2 *", after_ms=after)
+    dt = _dt(result)
+    assert dt.year == 2104
+    assert dt.month == 2
+    assert dt.day == 29
+    assert dt.hour == 0
+    assert dt.minute == 0
+
+
+def test_cron_feb30_still_fail_closes_at_century_boundary() -> None:
+    """0 0 30 2 * (Feb 30 — never exists) still raises ValueError even when
+    after_ms is anchored at the century-boundary gap start.
+
+    Guards that the horizon bump does not accidentally allow a genuinely-
+    unsatisfiable expr to slip through fail-close.
+
+    Fail-on-revert: removing the horizon cap makes this loop forever.
+    """
+    after = _ms(2096, 3, 1, 0, 0)
+    with pytest.raises(ValueError):
+        compute_next_fire("cron", "0 0 30 2 *", after_ms=after)
