@@ -1,3 +1,5 @@
+**English | [中文](README.zh-CN.md)**
+
 # Orchestrator
 
 **AI research and decision assistant — honest interlocutor, not obedient executor.**
