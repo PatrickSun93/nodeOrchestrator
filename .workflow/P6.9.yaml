@@ -1,7 +1,7 @@
 task_id: P6.9
-state: awaiting_R0_A
+state: closed
 cycle: 1
-last_transition_at: '2026-06-15T18:16:39.530757Z'
+last_transition_at: '2026-06-15T18:53:37.242674Z'
 cycle_started_at: '2026-06-15T17:25:32.413116Z'
 override_history:
 - timestamp: '2026-06-15T17:41:33.458681Z'
