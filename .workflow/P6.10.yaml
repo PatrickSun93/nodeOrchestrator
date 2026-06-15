@@ -1,0 +1,15 @@
+task_id: P6.10
+state: awaiting_junior_impl
+cycle: 1
+last_transition_at: '2026-06-15T18:55:22.063701Z'
+cycle_started_at: '2026-06-15T18:55:18.154644Z'
+override_history:
+- timestamp: '2026-06-15T18:55:22.063701Z'
+  actor: architect
+  from_state: awaiting_brief
+  to_state: awaiting_junior_impl
+  reason: Docs-only light slice (bilingual README, the architect's standing 中英文 requirement).
+    No brief/plan/ADR — scope self-evident (add a language-switch link to README.md
+    + a faithful README.zh-CN.md translation). Single-lens light review (translation
+    faithful + links + screenshots reused), like the FE light track.
+requires_cross_family_review: false
