@@ -2,15 +2,96 @@
 task_id: P6.7
 kind: R0-A
 stage: impl
+cycle: 2
 surface: product
 reviewer: architect-partner
 lens: A (cron-evaluator correctness) + B (spine / scheduler no-regression)
 state_at_review: awaiting_senior_plan_vs_impl
-reviewed_ref: origin/claude/P6.7-impl @ 85a0eab
-gates: ruff-format ✓ / ruff-check ✓ / mypy ✓ (310 files) / pytest full-suite exit 0 (0 failed)
-verdict: needs_architect
-findings: 1 🟡 (Y1 — non-blocking; architect routing only)
+reviewed_ref: origin/claude/P6.7-impl @ 90a2a1e   # cycle-2 = ce4e074..90a2a1e (α horizon bump)
+cycle_1_ref: origin/claude/P6.7-impl @ 85a0eab
+gates: ruff-format ✓ / ruff-check ✓ / mypy ✓ (310 files) / pytest 2564 passed exit 0 (0 failed)
+verdict: clean
+findings: 0 new — cycle-1 Y1 resolved by the α horizon bump (verified)
+prior_cycle: cycle-1 verdict needs_architect (1 🟡 Y1, routed α — architect-routing-on-impl.md)
 ---
+
+# P6.7 R0-A (impl) — cycle-2 re-review: Y1 horizon bump
+
+## Verdict — `clean`
+
+Cycle-1's **only** finding across all three reviews (🟡 Y1, routed **α** per
+`architect-routing-on-impl.md`) is **resolved**. The cycle-2 diff
+(`ce4e074..origin/claude/P6.7-impl` @ `90a2a1e`, one commit) is **exactly the prescribed α
+fix and nothing more**: the constant + its comment + the ADR-042 D3 text + two tests. Spine
+0-diff, no new dependency, no regression; gates independently green. **No new findings →
+ready to merge.** (Read-only from `main`; gates run in an isolated detached worktree,
+`uv sync --all-extras`. Cycle-2 senior plan-vs-impl already clean — `fd4029e`.)
+
+## Cycle-2 diff scope — 3 files, +48 / −5
+
+| File | Change | Verified |
+|---|---|---|
+| `pipeline/schedule.py` | `_CRON_SEARCH_HORIZON_MIN` `4*366*24*60` → `8*366*24*60` (= `4_216_320` min = 2928 days) + comment rewritten to cite the century-boundary gap | **constant-value-only** — `git diff` shows **zero logic lines**; the search loop / `_parse_cron` / `_cron_day_matches` / `_expand_field*` / validate / interval branches are byte-unchanged |
+| `ADR-042` D3 | "~4 years … cover legitimate `0 0 29 2 *`" → "~8 years … including the century-boundary gap (1896→1904, 2096→2104 skip non-leap 1900/2100)" | the previously-inscribed-but-false "~4y covers Feb-29" claim Y1 named is now corrected; durable contract is true |
+| `tests/pipeline/test_schedule.py` | +2 tests (class C5.8) | both pass — see below |
+
+`git diff --name-only` confirms **no `pyproject.toml` / `uv.lock`** (no new dependency) and
+**no spine file** (`_execute_local_call`, gate, `run_pipeline`, `_countdown_sweeper`,
+`_writer_approve_helper`, `_schedule_sweeper`, schedule endpoints) — **NONE** touched.
+
+## Y1 acceptance criteria (from the α routing) — all four met
+
+1. **Horizon bump** — `_CRON_SEARCH_HORIZON_MIN = 8 * 366 * 24 * 60` (= 4 216 320 min = 2928 days),
+   2× the old bound; covers the maximum consecutive-Feb-29 gap. ✓
+2. **Constant comment corrected** — now cites the century-boundary gap (1896→1904, 2096→2104 skip
+   non-leap 1900/2100 → ~8y), not the false "~4y". ✓
+3. **ADR-042 D3 text corrected** — same wording fix in the durable contract. ✓
+4. **Tests** — both prescribed cases present and green:
+   - `test_cron_feb29_century_boundary_8yr_gap_matches`: `0 0 29 2 *`, `after_ms = 2096-02-29 00:00`
+     → resolves to **2104-02-29** (a real match, **not** never-match). **Arithmetic checked
+     independently:** the gap is exactly **2921 days** (2096 leap=366 + 2097–2103 ×365 = 2555,
+     day-60 offsets cancel) **< 2928-day horizon** → found with a 7-day margin; under the old
+     1464-day horizon it would raise — the docstring's fail-on-revert claim is sound. ✓
+   - `test_cron_feb30_still_fail_closes_at_century_boundary`: `0 0 30 2 *` (Feb 30 — never exists),
+     anchored at the gap start → still raises `ValueError`. Confirms (a) the bump does **not**
+     let a genuinely-unsatisfiable expr slip, and (b) the larger loop still **terminates**
+     (doesn't hang). ✓
+
+## Fail-close preserved (C4 safety property intact)
+
+The guard still *raises* on horizon exhaustion — **only the bound's size changed**, not the
+fail-closed behavior. The Feb-30 test is direct evidence (unsatisfiable cron at the doubled
+horizon raises within bounded time). The doubling raises only the worst-case iteration count
+of the never-match guard for pathological Feb-29 / unsatisfiable exprs (~2.1M → ~4.2M iters) —
+a guard cost on a non-hot path, exactly as cycle-1 flagged and the architect ratified at α.
+
+## Gates — independently run (detached worktree @ `90a2a1e`, `uv sync --all-extras`)
+
+| Gate | Result |
+|---|---|
+| `ruff format --check` | 313 files already formatted ✓ |
+| `ruff check` | All checks passed ✓ |
+| `mypy` (files=src,tests, strict) | Success — no issues, 310 source files ✓ |
+| `pytest` full suite | **2564 passed**, 0 failed / 0 errors, exit 0 ✓ |
+| `tests/pipeline/test_schedule.py` | 51 passed (incl. the 2 new C5.8 tests) ✓ |
+| 2 new tests by name | 2 passed ✓ |
+
+*(The full-suite log carries the same `network_timeout` warning from the unrelated `net_trust`
+DNS-timeout test cycle-1 noted — `hung.example.invalid`, not P6.7; exit 0 is authoritative.)*
+
+## Disposition
+
+Cycle-1 Y1 — the sole finding across senior plan-vs-impl + R0-A + R0-B — is closed by the α
+fix; cycle-2 introduces **no new findings**. Lens A and Lens B were cleared in cycle-1 over the
+full evaluator (preserved verbatim below); cycle-2 changes only a guard bound + its docs +
+tests, leaving every reviewed semantic untouched. **`clean` → ready to merge → P6.7 closes**
+(pending R0-B cycle-2 disposition + architect synthesis — both the orchestrator's call, not
+this review's).
+
+---
+## ── Cycle-1 review (preserved verbatim for the audit trail, @ `85a0eab`) ──
+*Frontmatter folded into the cycle-2 block above (cycle-1 verdict `needs_architect`, 1 🟡 Y1).
+The full dual-lens deep review is retained below unchanged.*
 
 # P6.7 R0-A (impl) — cron evaluator, dual-lens Lens A ∥ Lens B
 
