@@ -1,7 +1,7 @@
 task_id: P6.8
-state: awaiting_architect_decision
+state: closed
 cycle: 1
-last_transition_at: '2026-06-15T17:19:51.992861Z'
+last_transition_at: '2026-06-15T17:23:36.435892Z'
 cycle_started_at: '2026-06-15T16:08:01.410454Z'
 override_history:
 - timestamp: '2026-06-15T16:27:43.381896Z'
@@ -10,4 +10,11 @@ override_history:
   to_state: awaiting_junior_impl
   reason: 'No-ADR slice: plan_has_adr=False → junior_impl; hook mis-advanced to architect_accept
     (recurring no-ADR-slice gotcha).'
+- timestamp: '2026-06-15T17:23:36.435892Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: closed
+  reason: 'P6.8 merged (PR #78). GUI room list (light): GET /rooms + list_rooms +
+    sidebar; ADR-039 D10 RB-AUTHZ residual note. BE full dual-lens clean, FE light-track
+    single-lens (Y1 .catch nit accepted). Spine 0-diff, no new ADR.'
 requires_cross_family_review: true
