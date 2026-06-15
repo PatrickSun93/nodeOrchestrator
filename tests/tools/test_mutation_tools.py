@@ -291,3 +291,47 @@ def test_apply_edit_uses_hardened_open(tmp_path: Path) -> None:
         "P4.3-9: mutation_tools.py must reference _hardened_open "
         "(openat2 RESOLVE_NO_SYMLINKS hardening for R7 retirement)"
     )
+
+
+# ---------------------------------------------------------------------------
+# P6.9-109: apply_edit .git/ control-plane denylist (ADR-036 D3-i carve-out)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_edit_git_config_denied(tmp_path: Path) -> None:
+    """apply_edit denies writes to .git/config (P6.9-#109 config-poisoning close)."""
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    git_config = git_dir / "config"
+    git_config.write_text("[original]")
+
+    fn = _make_apply_edit(tmp_path)
+    with pytest.raises(LocalToolError, match=r"\.git/"):
+        fn({"path": ".git/config", "content": '[remote "x"]\n  url = bad'})
+
+    assert git_config.read_text() == "[original]", (
+        "test_apply_edit_git_config_denied: .git/config was mutated despite deny"
+    )
+
+
+def test_apply_edit_git_hooks_denied(tmp_path: Path) -> None:
+    """apply_edit denies writes under .git/hooks/ (whole-.git/ deny, not just config)."""
+    git_dir = tmp_path / ".git"
+    hooks_dir = git_dir / "hooks"
+    hooks_dir.mkdir(parents=True)
+
+    fn = _make_apply_edit(tmp_path)
+    with pytest.raises(LocalToolError, match=r"\.git/"):
+        fn({"path": ".git/hooks/pre-push", "content": "#!/bin/sh\nbad"})
+
+    assert not (hooks_dir / "pre-push").exists(), (
+        "test_apply_edit_git_hooks_denied: .git/hooks/pre-push was created despite deny"
+    )
+
+
+def test_apply_edit_git_deny_not_over_broad(tmp_path: Path) -> None:
+    """Normal workspace write succeeds after .git/ deny guard is in place."""
+    fn = _make_apply_edit(tmp_path)
+    result = fn({"path": "workspace.txt", "content": "hello"})
+    assert (tmp_path / "workspace.txt").read_text() == "hello"
+    assert "workspace.txt" in result.content
