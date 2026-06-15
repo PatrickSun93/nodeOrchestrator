@@ -1,15 +1,92 @@
 ---
 task_id: P6.7
 round: plan-vs-impl
+cycle: 2
 verdict: clean
 findings_count:
   red: 0
   yellow: 0
-  green: 5
-notes_count: 3
+  green: 6          # 5 cycle-1 atomic-fidelity 🟢 + 1 cycle-2 α-rework 🟢
+notes_count: 3       # cycle-1 advisory notes; none re-opened by the α rework
+covers_cycles: [1, 2]
 ---
 
 # Review: P6.7 — plan-vs-impl (cron evaluation for pipeline schedules)
+
+> **This file spans both review cycles.** Cycle 2 (the α horizon-bump rework) is verified
+> first; the cycle-1 atomic-by-atomic review is preserved below verbatim as audit history.
+> Both cycles are **clean**.
+
+---
+
+# Cycle 2 — α rework verification (never-match horizon bump)
+
+**Reviewer:** senior planner (Claude Opus 4.8 [1M], primary session)
+**Date:** 2026-06-15
+**Under review:** `origin/claude/P6.7-impl` @ `90a2a1e`, diffed `git diff ce4e074..origin/claude/P6.7-impl`
+(`ce4e074` = cycle-1 R0-B review tip → the cycle boundary).
+**Routing absorbed:** `docs/process/reviews/P6.7/architect-routing-on-impl.md` — single finding **Y1**
+routed **α** (R0-A + R0-B independently confirmed): `_CRON_SEARCH_HORIZON_MIN` (~4y / 2.1M min)
+under-covers the **century-boundary 8-year Feb-29 gap** (1896→1904, 2096→2104 skip the non-leap
+1900/2100 → consecutive Feb-29s are ~8y apart). α fix = double the horizon to `8 × 366 × 24 × 60`,
+sync the constant comment **and** ADR-042 D3 text, add a matching test pair.
+
+## Verdict: **clean**
+
+The α rework is implemented **exactly** to the routed scope — one constant doubled, two text sites
+synced, two additive tests — with **no plan-external expansion**. The cycle-2 diff is exactly 3 files
+(`schedule.py`, `ADR-042`, `test_schedule.py`); no spine file, no `app.py`/`schema.py`/`openapi.json`/
+`schema.ts`, no `pyproject.toml`, no stray `.workflow/` state-advance commit. Single commit `90a2a1e`.
+
+## α-fidelity checks (routing → impl, point-for-point)
+
+🟢 **Horizon constant bumped + arithmetic verified** (`schedule.py`)
+`_CRON_SEARCH_HORIZON_MIN: int = 8 * 366 * 24 * 60  # 4_216_320` — value comment arithmetically
+correct (8·366·24·60 = 4,216,320). Exactly doubles the prior bound per the α call; no other
+`schedule.py` change (the matcher, parser, union, weekday offset, fail-closed branch all byte-stable —
+this is a pure bound widening). Faithful.
+
+🟢 **Both text sites synced** (constant comment + ADR-042 D3)
+The plan/routing required updating **both** the inline constant comment **and** the ADR-042 D3 prose
+(both previously asserted "~4 years … covers Feb-29", now factually stale). Both are updated to "~8
+years" with the same century-boundary rationale (1896→1904, 2096→2104 skip non-leap 1900/2100). The
+fail-closed-on-exhaustion semantics text is preserved unchanged — only the horizon magnitude + its
+justification moved. No drift between the two sites or against the routing wording. Faithful.
+
+🟢 **Test pair added, fail-on-revert framed, math hand-verified** (`test_schedule.py`, additive +40 LOC)
+Two new C5.8 tests, appended after the existing suite (no existing test removed or altered — the
+cycle-1 C5.2 `0 0 29 2 *` → 2028 ~4y test still stands):
+- `test_cron_feb29_century_boundary_8yr_gap_matches` — `after = 2096-02-29 00:00`, strictly-after
+  skips that minute; 2100 is non-leap (÷100 not ÷400) → next Feb-29 is **2104**. Hand-verified span
+  = 2,921 days = 4,206,240 minutes **< 4,216,320 horizon** (≈7-day margin) → resolves, asserts
+  `year==2104, month==2, day==29, 00:00`. Docstring states the fail-on-revert: restoring the 4y
+  horizon makes this incorrectly raise `ValueError`. ✓
+- `test_cron_feb30_still_fail_closes_at_century_boundary` — `0 0 30 2 *` (Feb 30 never exists)
+  anchored at the gap start still raises `ValueError`, guarding that the wider horizon does not let a
+  genuinely-unsatisfiable expr slip past fail-close. Docstring fail-on-revert: removing the cap loops
+  forever. ✓
+
+  Both tests pass `after_ms` explicitly (wall clock never read); required symbols
+  (`pytest`, `compute_next_fire`, `_ms`, `_dt`) all already imported/defined in the file head. The
+  pair is the exact test the routing prescribed ("Feb-29 across a century-boundary 8-year gap → matches;
+  `0 0 30 2 *` still fail-closes within the new horizon").
+
+## Forcing-function checks (cycle-2 delta)
+
+- **No plan-external expansion** — cycle-2 diff = 3 files, all named by the α routing; nothing else.
+- **Spine byte-frozen** — no spine file in the diff; `schedule.py` change is one constant + its comment.
+- **No new dependency / no new `LLMPurpose`** — `pyproject.toml` untouched; cron arithmetic stays code.
+- **ADR-042 stays an in-place amendment** — D3 prose edit only, no Accept gate (per routing; same
+  weight as the cycle-1 inscription). Reversibility/Consequences/D9 untouched this cycle.
+- **No stray state-advance** — branch carries no `.workflow/` commit.
+
+The α rework clears the senior gate. Per `requires_cross_family_review: true`, the dual-lens
+(R0-A ∥ R0-B) re-confirmation on the bumped horizon is the architect's call; the bound is now true to
+the inscribed "covers legitimate `0 0 29 2 *`" contract claim, which was the sole point of the rework.
+
+---
+
+# Cycle 1 — original atomic-by-atomic review (preserved as audit history)
 
 **Reviewer:** senior planner (Claude Opus 4.8 [1M], primary session)
 **Date:** 2026-06-14
