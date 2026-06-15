@@ -67,6 +67,10 @@ export function getRoom(id: string): Promise<Room> {
   return request<Room>(`${BASE}/rooms/${id}`);
 }
 
+export function listRooms(): Promise<Room[]> {
+  return request<Room[]>(`${BASE}/rooms`);
+}
+
 export function getEvents(roomId: string): Promise<Event[]> {
   return request<Event[]>(`${BASE}/rooms/${roomId}/events`);
 }

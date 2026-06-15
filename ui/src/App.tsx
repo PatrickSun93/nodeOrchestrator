@@ -5,6 +5,7 @@ import { getEvents, getSnapshot, getRoom, set401Handler, probeAuth, logout } fro
 import { useAuthStore } from "./authStore.ts";
 import { RoomPicker } from "./components/RoomPicker.tsx";
 import { RoomCreate } from "./components/RoomCreate.tsx";
+import { RoomList } from "./components/RoomList.tsx";
 import { RoomView } from "./components/RoomView.tsx";
 import { LoginPage } from "./components/LoginPage.tsx";
 import { NavBar } from "./components/NavBar.tsx";
@@ -157,6 +158,7 @@ export default function App() {
             <RoomCreate />
             <div className={styles.divider}>或者</div>
             <RoomPicker />
+            <RoomList />
           </div>
         </div>
       )}

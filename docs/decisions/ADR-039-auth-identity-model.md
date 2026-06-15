@@ -106,7 +106,7 @@ ADR-038 D5 froze `GET /plugins` / `POST /plugins/{id}/enable·disable·admit` / 
 
 ### D10. Honest residual set (inscribe, don't soften — DP5; the routing-dependent set, now fixed by the ratified DP1b/DP3a)
 
-- **`RB-AUTHZ`** (DP3a) — no least-privilege; any authenticated account is a full operator (irreversible HARD tools + plugin admission). Persists until a role model (DP3b) is separately built at a D5 checkpoint seam.
+- **`RB-AUTHZ`** (DP3a) — no least-privilege; any authenticated account is a full operator (irreversible HARD tools + plugin admission). Persists until a role model (DP3b) is separately built at a D5 checkpoint seam. `GET /rooms` (P6.8) is a **read-surface instance** of this posture: any authenticated user can enumerate all room ids — the same trust as `GET /rooms/{id}`, which already reads any room; this only removes the need-to-know-the-id friction. Owner-scoped room visibility is future work (DP3b).
 - **`TLS-at-deployment`** (DP2b) — the app does not terminate TLS; secure transport is a deployment requirement (reverse proxy), named not coded. The `Secure` session cookie *requires* it for any remote deployment.
 - **Cross-origin GUI posture** (A-2) — the slice assumes **same-origin** GUI+API deployment (D3); a future **cross-origin** client would require `SameSite=None`+`Secure`+a CSRF token + the CORS-with-credentials path (D8). Named, not built — the same-origin assumption is the MVP posture, the cross-origin posture is the additive residual.
 - **Rate-limiting** — if deferred (plan §5), the write chokepoints (`/intent`/`/confirm`/`/login`) are unthrottled — a named residual.

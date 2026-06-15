@@ -45,7 +45,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Rooms
+         * @description List all rooms ordered by created_at ASC.
+         *
+         *     Auth-protected by being outside PUBLIC_PATHS (fail-closed middleware).
+         *     Enumeration is an RB-AUTHZ read-surface instance — see ADR-039 D10.
+         */
+        get: operations["_list_rooms_rooms_get"];
         put?: never;
         /** Create Room */
         post: operations["_create_room_rooms_post"];
@@ -985,6 +992,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["_LogoutResponse"];
+                };
+            };
+        };
+    };
+    _list_rooms_rooms_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"][];
                 };
             };
         };

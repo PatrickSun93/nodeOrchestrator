@@ -1340,6 +1340,19 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         await loop.run_in_executor(ctx.writer_executor, ctx.writer_store.append_room, room)
         return room
 
+    @app.get("/rooms", response_model=list[Room])
+    async def _list_rooms() -> list[Room]:
+        """List all rooms ordered by created_at ASC.
+
+        Auth-protected by being outside PUBLIC_PATHS (fail-closed middleware).
+        Enumeration is an RB-AUTHZ read-surface instance — see ADR-039 D10.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            ctx.reader_executor,
+            lambda: ctx.get_reader_store().list_rooms(),
+        )
+
     @app.get("/rooms/{room_id}", response_model=Room)
     async def _get_room(room_id: str) -> Room:
         loop = asyncio.get_running_loop()

@@ -402,6 +402,26 @@ class EventStore:
         rows = self.conn.execute("SELECT id FROM rooms ORDER BY created_at ASC").fetchall()
         return [RoomId(row["id"]) for row in rows]
 
+    def list_rooms(self) -> list[Room]:
+        """Return all rooms in the store ordered by created_at ASC (P6.8-BE).
+
+        One SELECT — avoids the N+1 of list_room_ids() + N x get_room().
+        Read-only; safe to call on a reader connection.
+        Returns ``[]`` on an empty store.
+        """
+        rows = self.conn.execute(
+            "SELECT id, type, state, created_at FROM rooms ORDER BY created_at ASC"
+        ).fetchall()
+        return [
+            Room(
+                id=RoomId(row["id"]),
+                type=RoomType(row["type"]),
+                state=row["state"],
+                created_at=TimestampMs(row["created_at"]),
+            )
+            for row in rows
+        ]
+
     # -- relations cache ------------------------------------------------
 
     def get_relations_for(self, event_id: EventId) -> list[Relation]:
