@@ -343,6 +343,35 @@ class TestRoomStorage:
         ids.clear()
         assert len(store.list_room_ids()) == 1
 
+    def test_list_rooms_empty(self, in_memory_event_store: EventStore) -> None:
+        assert in_memory_event_store.list_rooms() == []
+
+    def test_list_rooms_all_returned(self, in_memory_event_store: EventStore) -> None:
+        store = in_memory_event_store
+        r1 = Room(id=generate_room_id(), type=RoomType.RESEARCH, state="open")
+        r2 = Room(id=generate_room_id(), type=RoomType.FREE_CHAT, state="open")
+        store.append_room(r1)
+        store.append_room(r2)
+        rooms = store.list_rooms()
+        assert len(rooms) == 2
+        ids = [room.id for room in rooms]
+        assert r1.id in ids
+        assert r2.id in ids
+
+    def test_list_rooms_ordered_created_at_asc(self, in_memory_event_store: EventStore) -> None:
+        store = in_memory_event_store
+        r1 = Room(id=generate_room_id(), type=RoomType.RESEARCH, state="open")
+        r2 = Room(id=generate_room_id(), type=RoomType.FREE_CHAT, state="open")
+        r3 = Room(id=generate_room_id(), type=RoomType.BUG_FIX, state="open")
+        store.append_room(r1)
+        store.append_room(r2)
+        store.append_room(r3)
+        rooms = store.list_rooms()
+        assert len(rooms) == 3
+        assert rooms[0].id == r1.id
+        assert rooms[1].id == r2.id
+        assert rooms[2].id == r3.id
+
 
 # ---------------------------------------------------------------------------
 # append_in_transaction (ADR-016 D11 / P1.6.5-2)

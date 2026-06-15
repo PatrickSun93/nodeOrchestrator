@@ -62,6 +62,27 @@
       }
     },
     "/rooms": {
+      "get": {
+        "summary": " List Rooms",
+        "description": "List all rooms ordered by created_at ASC.\n\nAuth-protected by being outside PUBLIC_PATHS (fail-closed middleware).\nEnumeration is an RB-AUTHZ read-surface instance \u2014 see ADR-039 D10.",
+        "operationId": "_list_rooms_rooms_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Room"
+                  },
+                  "type": "array",
+                  "title": "Response  List Rooms Rooms Get"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "summary": " Create Room",
         "operationId": "_create_room_rooms_post",

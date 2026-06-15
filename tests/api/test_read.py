@@ -121,6 +121,58 @@ class TestGetRoomEvents:
 
 
 # ---------------------------------------------------------------------------
+# §1.5  GET /rooms — list all rooms
+# ---------------------------------------------------------------------------
+
+
+class TestListRooms:
+    def test_empty_store_returns_empty_list(self, client: TestClient) -> None:
+        r = client.get("/rooms")
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_lists_all_rooms(self, client: TestClient) -> None:
+        r1 = client.post("/rooms", json={"type": "free_chat"})
+        r2 = client.post("/rooms", json={"type": "research"})
+        id1 = r1.json()["id"]
+        id2 = r2.json()["id"]
+
+        r = client.get("/rooms")
+        assert r.status_code == 200
+        rooms = r.json()
+        assert len(rooms) == 2
+        ids = [room["id"] for room in rooms]
+        assert id1 in ids
+        assert id2 in ids
+
+    def test_rooms_ordered_created_at_asc(self, client: TestClient) -> None:
+        r1 = client.post("/rooms", json={"type": "free_chat"})
+        r2 = client.post("/rooms", json={"type": "research"})
+        r3 = client.post("/rooms", json={"type": "bug_fix"})
+
+        r = client.get("/rooms")
+        rooms = r.json()
+        assert len(rooms) == 3
+        timestamps = [room["created_at"] for room in rooms]
+        assert timestamps == sorted(timestamps)
+        assert rooms[0]["id"] == r1.json()["id"]
+        assert rooms[1]["id"] == r2.json()["id"]
+        assert rooms[2]["id"] == r3.json()["id"]
+
+    def test_each_item_is_full_room(self, client: TestClient) -> None:
+        client.post("/rooms", json={"type": "code_review"})
+        r = client.get("/rooms")
+        room = r.json()[0]
+        assert "id" in room
+        assert "type" in room
+        assert "state" in room
+        assert "created_at" in room
+        assert room["type"] == "code_review"
+        assert isinstance(room["created_at"], int)
+        assert room["created_at"] > 0
+
+
+# ---------------------------------------------------------------------------
 # §1.4  GET /rooms/{id}/snapshot — produce snapshot
 # ---------------------------------------------------------------------------
 

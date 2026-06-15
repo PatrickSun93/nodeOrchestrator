@@ -194,6 +194,7 @@ class TestLensAFailClosed:
 
     PROTECTED_ROUTES: ClassVar[list[tuple[str, str]]] = [
         ("POST", "/rooms"),
+        ("GET", "/rooms"),
         ("GET", "/rooms/nonexistent-room"),
         ("GET", "/rooms/nonexistent-room/events"),
         ("GET", "/rooms/nonexistent-room/snapshot"),
