@@ -1,7 +1,7 @@
 task_id: P6.10
-state: awaiting_senior_plan_vs_impl
+state: closed
 cycle: 1
-last_transition_at: '2026-06-15T18:58:37.785277Z'
+last_transition_at: '2026-06-15T19:04:28.476539Z'
 cycle_started_at: '2026-06-15T18:55:18.154644Z'
 override_history:
 - timestamp: '2026-06-15T18:55:22.063701Z'
@@ -12,4 +12,10 @@ override_history:
     No brief/plan/ADR — scope self-evident (add a language-switch link to README.md
     + a faithful README.zh-CN.md translation). Single-lens light review (translation
     faithful + links + screenshots reused), like the FE light track.
+- timestamp: '2026-06-15T19:04:28.476539Z'
+  actor: architect
+  from_state: awaiting_senior_plan_vs_impl
+  to_state: closed
+  reason: P6.10 merged (bilingual README, dual-file + cross-links). Docs-only light
+    track, R0-A clean.
 requires_cross_family_review: false
