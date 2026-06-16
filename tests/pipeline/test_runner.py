@@ -360,6 +360,77 @@ def test_llm_purpose_is_agent_response(tmp_path: Path) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# A3: H2-d fetched_context ceiling (P6.11-A3)
+# ---------------------------------------------------------------------------
+
+
+def test_fetched_context_truncated_at_1mib(tmp_path: Path) -> None:
+    """H2-d revert-gate: joined context > 1 MiB → analyze receives ≤1 MiB + marker.
+
+    Revert the truncation → full context, no marker.
+    """
+    from orchestrator.pipeline.runner import _MAX_FETCHED_CONTEXT_BYTES
+
+    store = _make_store()
+    captured_contexts: list[str] = []
+
+    def _capture(request: Any) -> LLMResponse:
+        captured_contexts.append(request.system or "")
+        return _llm_response("result")
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = _capture
+    deps = _make_deps(store, router, tmp_path)
+
+    # Write two files that together exceed 1 MiB
+    half = (_MAX_FETCHED_CONTEXT_BYTES // 2) + 1000
+    (tmp_path / "a.txt").write_bytes(b"A" * half)
+    (tmp_path / "b.txt").write_bytes(b"B" * half)
+
+    defn = PipelineDefinition(
+        sources=[
+            Source(kind="file", locator="a.txt"),
+            Source(kind="file", locator="b.txt"),
+        ],
+        analysis_prompts=["Analyze"],
+    )
+    run_pipeline("p_ctx", defn, deps=deps, owner_user_id="alice")
+
+    assert captured_contexts, "No LLM calls captured"
+    # analyze call system prompt contains the context
+    ctx_sys = captured_contexts[0]
+    marker = f"[context truncated at {_MAX_FETCHED_CONTEXT_BYTES} bytes]"
+    assert marker in ctx_sys, "Truncation marker missing — context not capped"
+    assert len(ctx_sys.encode("utf-8")) <= _MAX_FETCHED_CONTEXT_BYTES + 5000  # +headroom for system text
+
+
+def test_fetched_context_under_limit_unaffected(tmp_path: Path) -> None:
+    """Context under 1 MiB is not truncated and has no marker."""
+    from orchestrator.pipeline.runner import _MAX_FETCHED_CONTEXT_BYTES
+
+    store = _make_store()
+    captured_contexts: list[str] = []
+
+    def _capture(request: Any) -> LLMResponse:
+        captured_contexts.append(request.system or "")
+        return _llm_response("result")
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = _capture
+    deps = _make_deps(store, router, tmp_path)
+
+    (tmp_path / "small.txt").write_bytes(b"X" * 1000)
+    defn = PipelineDefinition(
+        sources=[Source(kind="file", locator="small.txt")],
+        analysis_prompts=["Analyze"],
+    )
+    run_pipeline("p_small", defn, deps=deps, owner_user_id="alice")
+
+    marker = f"[context truncated at {_MAX_FETCHED_CONTEXT_BYTES} bytes]"
+    assert all(marker not in ctx for ctx in captured_contexts), "Unexpected truncation marker"
+
+
 def test_countdown_auto_fire_none(tmp_path: Path) -> None:
     """process_tool_calls is called with countdown_auto_fire=None (ADR-041 D5)."""
     store = _make_store()

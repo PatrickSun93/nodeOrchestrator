@@ -265,6 +265,56 @@ def test_web_source_truncates_oversized(monkeypatch: pytest.MonkeyPatch) -> None
     assert len(result.content.encode("utf-8")) <= 100
 
 
+def _make_rss_xml(n_items: int) -> str:
+    """Build an RSS 2.0 feed with n_items items."""
+    items = "".join(
+        f"<item><title>Item {i}</title><link>https://example.com/{i}</link></item>"
+        for i in range(n_items)
+    )
+    return f'<?xml version="1.0"?><rss version="2.0"><channel><title>Test</title>{items}</channel></rss>'
+
+
+# ---------------------------------------------------------------------------
+# A3: H2 RSS entry cap (P6.11-A3)
+# ---------------------------------------------------------------------------
+
+
+def test_rss_entry_cap_applied() -> None:
+    """H2-b revert-gate: feed with 300 entries renders exactly 256 (cap applied).
+
+    Revert the _MAX_FEED_ENTRIES slice → all 300 entries rendered.
+    """
+    from orchestrator.sources.rss import _MAX_FEED_ENTRIES
+
+    xml = _make_rss_xml(300)
+    xml_bytes = xml.encode("utf-8")
+    mock_client = _mock_streaming_client([xml_bytes])
+
+    with patch("orchestrator.sources.rss.build_ssrf_client", return_value=mock_client):
+        s = Source(kind="rss", locator="https://example.com/feed.xml")
+        result = read_source(s)
+
+    lines = [ln for ln in result.content.splitlines() if ln.strip()]
+    assert len(lines) == _MAX_FEED_ENTRIES, f"Expected {_MAX_FEED_ENTRIES} entries, got {len(lines)}"
+
+
+def test_rss_entry_cap_under_limit_unaffected() -> None:
+    """Feed with fewer than _MAX_FEED_ENTRIES entries is not truncated."""
+    from orchestrator.sources.rss import _MAX_FEED_ENTRIES
+
+    n = _MAX_FEED_ENTRIES - 1
+    xml = _make_rss_xml(n)
+    xml_bytes = xml.encode("utf-8")
+    mock_client = _mock_streaming_client([xml_bytes])
+
+    with patch("orchestrator.sources.rss.build_ssrf_client", return_value=mock_client):
+        s = Source(kind="rss", locator="https://example.com/feed.xml")
+        result = read_source(s)
+
+    lines = [ln for ln in result.content.splitlines() if ln.strip()]
+    assert len(lines) == n
+
+
 def test_read_source_result_is_immutable() -> None:
     s = Source(kind="web", locator="http://example.com")
     r = SourceReadResult(source=s, content="data")

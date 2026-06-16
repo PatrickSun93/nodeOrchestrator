@@ -12,7 +12,15 @@ import defusedxml.ElementTree as _defused_ET
 import httpx
 from defusedxml import DTDForbidden, EntitiesForbidden
 
-from orchestrator.sources.schema import Source, SourceReadError, SourceReadResult, _SOURCE_MAX_BYTES_CEILING
+from orchestrator.sources.schema import (
+    Source,
+    SourceReadError,
+    SourceReadResult,
+    _SOURCE_MAX_BYTES_CEILING,
+)
+
+# Safety ceiling on RSS entries rendered per feed (ADR-041 D4 hardening, P6.11-A3).
+_MAX_FEED_ENTRIES: int = 256
 from orchestrator.tools.net_trust import build_ssrf_client
 from orchestrator.tools.network_tools import _stream_bounded
 
@@ -137,7 +145,7 @@ def read_rss_source(source: Source) -> SourceReadResult:
         raise SourceReadError(f"rss_fetch_failed: {exc}") from exc
 
     # Over-cap fetch → truncated XML → ParseError → SourceReadError (fail-closed, no OOM).
-    entries = _parse_feed(xml_text)
+    entries = _parse_feed(xml_text)[:_MAX_FEED_ENTRIES]
 
     lines: list[str] = []
     for i, entry in enumerate(entries):

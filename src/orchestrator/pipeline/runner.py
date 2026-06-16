@@ -57,6 +57,10 @@ _log = logging.getLogger("orchestrator.pipeline.runner")
 _PIPELINE_MAX_PASSES: int = 4
 _PIPELINE_MAX_WALL_CLOCK_S: float = 120.0
 
+# Aggregate fetched-context ceiling (ADR-041 D4 hardening, P6.11-A3).
+# Hardcoded — bounds LLM cost + memory across every analyze branch (≈250k tokens at 1 MiB).
+_MAX_FETCHED_CONTEXT_BYTES: int = 1 * 1024 * 1024  # 1 MiB
+
 # The single ephemeral agent identity for all analyze branches.
 PIPELINE_AGENT_ID: str = "pipeline"
 
@@ -306,6 +310,12 @@ def run_pipeline(
             )
 
     fetched_context = "\n\n".join(r.content for r in fetch_results) if fetch_results else ""
+    fetched_context_bytes = fetched_context.encode("utf-8")
+    if len(fetched_context_bytes) > _MAX_FETCHED_CONTEXT_BYTES:
+        fetched_context = (
+            fetched_context_bytes[:_MAX_FETCHED_CONTEXT_BYTES].decode("utf-8", errors="replace")
+            + f"\n\n[context truncated at {_MAX_FETCHED_CONTEXT_BYTES} bytes]"
+        )
 
     # ---------------------------------------------------------------------------
     # Stage (ii): Fan-out (analyze x N) — sequential (ADR-041 D3)
