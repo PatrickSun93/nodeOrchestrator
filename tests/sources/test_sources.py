@@ -267,3 +267,32 @@ def test_read_source_result_is_immutable() -> None:
     r = SourceReadResult(source=s, content="data")
     with pytest.raises(Exception):  # noqa: B017
         r.content = "mutated"
+
+
+# ---------------------------------------------------------------------------
+# A2: H2 schema ceilings (P6.11-A2)
+# ---------------------------------------------------------------------------
+
+
+def test_source_options_default_still_valid() -> None:
+    """Migration witness: default SourceOptions() validates under the new ceiling."""
+    opts = SourceOptions()
+    assert opts.max_bytes == 512 * 1024  # 512 KiB default unchanged
+
+
+def test_source_options_max_bytes_at_ceiling_accepted() -> None:
+    """Boundary: max_bytes == 5 MiB ceiling is accepted."""
+    from orchestrator.sources.schema import _SOURCE_MAX_BYTES_CEILING
+
+    opts = SourceOptions(max_bytes=_SOURCE_MAX_BYTES_CEILING)
+    assert opts.max_bytes == _SOURCE_MAX_BYTES_CEILING
+
+
+def test_source_options_max_bytes_above_ceiling_rejected() -> None:
+    """H2-c revert-gate: max_bytes > 5 MiB ceiling raises ValidationError."""
+    import pydantic
+
+    from orchestrator.sources.schema import _SOURCE_MAX_BYTES_CEILING
+
+    with pytest.raises(pydantic.ValidationError):
+        SourceOptions(max_bytes=_SOURCE_MAX_BYTES_CEILING + 1)
