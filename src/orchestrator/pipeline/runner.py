@@ -63,7 +63,7 @@ _MAX_FETCHED_CONTEXT_BYTES: int = 1 * 1024 * 1024  # 1 MiB
 
 # Fetch-stage wall-clock budget (ADR-041 risks hardening, P6.11-A4).
 # Mirrors _PIPELINE_MAX_WALL_CLOCK_S for the analyze stage; bounds the time dimension of
-# single-writer HoL that source-count cap alone leaves open (16 × 15s timeout = 240s).
+# single-writer HoL that source-count cap alone leaves open (16 x 15s timeout = 240s).
 _PIPELINE_FETCH_MAX_WALL_CLOCK_S: float = 90.0
 
 # The single ephemeral agent identity for all analyze branches.

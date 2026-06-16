@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import httpx
 
-from orchestrator.sources.schema import Source, SourceReadError, SourceReadResult, _SOURCE_MAX_BYTES_CEILING
+from orchestrator.sources.schema import (
+    _SOURCE_MAX_BYTES_CEILING,
+    Source,
+    SourceReadError,
+    SourceReadResult,
+)
 from orchestrator.tools.net_trust import build_ssrf_client
 from orchestrator.tools.network_tools import _stream_bounded
 

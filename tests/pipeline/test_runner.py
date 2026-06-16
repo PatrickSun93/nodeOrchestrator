@@ -402,7 +402,9 @@ def test_fetched_context_truncated_at_1mib(tmp_path: Path) -> None:
     ctx_sys = captured_contexts[0]
     marker = f"[context truncated at {_MAX_FETCHED_CONTEXT_BYTES} bytes]"
     assert marker in ctx_sys, "Truncation marker missing — context not capped"
-    assert len(ctx_sys.encode("utf-8")) <= _MAX_FETCHED_CONTEXT_BYTES + 5000  # +headroom for system text
+    assert (
+        len(ctx_sys.encode("utf-8")) <= _MAX_FETCHED_CONTEXT_BYTES + 5000
+    )  # +headroom for system text
 
 
 def test_fetched_context_under_limit_unaffected(tmp_path: Path) -> None:
@@ -494,7 +496,9 @@ def test_fetch_budget_exceeded_stops_loop(tmp_path: Path) -> None:
 
     # OBSERVATION event for budget exceeded is in the room
     events = store.get_room_events(RoomId(result.room_id))
-    budget_obs = [e for e in events if "budget" in e.content.lower() or "exceeded" in e.content.lower()]
+    budget_obs = [
+        e for e in events if "budget" in e.content.lower() or "exceeded" in e.content.lower()
+    ]
     assert len(budget_obs) >= 1
 
     # Run proceeds to analyze stage without crash

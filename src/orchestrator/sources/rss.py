@@ -13,16 +13,16 @@ import httpx
 from defusedxml import DTDForbidden, EntitiesForbidden
 
 from orchestrator.sources.schema import (
+    _SOURCE_MAX_BYTES_CEILING,
     Source,
     SourceReadError,
     SourceReadResult,
-    _SOURCE_MAX_BYTES_CEILING,
 )
+from orchestrator.tools.net_trust import build_ssrf_client
+from orchestrator.tools.network_tools import _stream_bounded
 
 # Safety ceiling on RSS entries rendered per feed (ADR-041 D4 hardening, P6.11-A3).
 _MAX_FEED_ENTRIES: int = 256
-from orchestrator.tools.net_trust import build_ssrf_client
-from orchestrator.tools.network_tools import _stream_bounded
 
 # ---------------------------------------------------------------------------
 # Feed entry extraction (RSS 2.0 + Atom 1.0)

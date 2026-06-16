@@ -215,13 +215,15 @@ def test_pipeline_definition_max_sources_accepted() -> None:
 
     from orchestrator.pipeline.schema import _MAX_SOURCES_PER_RUN
 
-    sources = [Source(kind="web", locator=f"https://example.com/{i}") for i in range(_MAX_SOURCES_PER_RUN)]
+    sources = [
+        Source(kind="web", locator=f"https://example.com/{i}") for i in range(_MAX_SOURCES_PER_RUN)
+    ]
     defn = PipelineDefinition(sources=sources, analysis_prompts=["p"])
     assert len(defn.sources) == _MAX_SOURCES_PER_RUN
 
     # One more must fail (revert-gate: revert max_length → this would succeed)
     with pytest.raises(pydantic.ValidationError):
         PipelineDefinition(
-            sources=sources + [Source(kind="web", locator="https://example.com/extra")],
+            sources=[*sources, Source(kind="web", locator="https://example.com/extra")],
             analysis_prompts=["p"],
         )

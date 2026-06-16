@@ -271,7 +271,10 @@ def _make_rss_xml(n_items: int) -> str:
         f"<item><title>Item {i}</title><link>https://example.com/{i}</link></item>"
         for i in range(n_items)
     )
-    return f'<?xml version="1.0"?><rss version="2.0"><channel><title>Test</title>{items}</channel></rss>'
+    return (
+        f'<?xml version="1.0"?>'
+        f'<rss version="2.0"><channel><title>Test</title>{items}</channel></rss>'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +298,9 @@ def test_rss_entry_cap_applied() -> None:
         result = read_source(s)
 
     lines = [ln for ln in result.content.splitlines() if ln.strip()]
-    assert len(lines) == _MAX_FEED_ENTRIES, f"Expected {_MAX_FEED_ENTRIES} entries, got {len(lines)}"
+    assert len(lines) == _MAX_FEED_ENTRIES, (
+        f"Expected {_MAX_FEED_ENTRIES} entries, got {len(lines)}"
+    )
 
 
 def test_rss_entry_cap_under_limit_unaffected() -> None:
@@ -336,10 +341,12 @@ def test_web_source_stream_stops_at_cap() -> None:
     max_bytes = 50
     chunks_yielded: list[int] = []
 
-    def _raise_if_drained() -> bytes:
+    def _raise_if_drained() -> None:
         raise AssertionError("iter_bytes drained past cap — full-buffer regression")
 
-    def _chunks_gen() -> bytes:
+    from collections.abc import Generator
+
+    def _chunks_gen() -> Generator[bytes, None, None]:
         # First chunk: exactly at cap
         chunks_yielded.append(max_bytes)
         yield b"A" * max_bytes
@@ -357,7 +364,11 @@ def test_web_source_stream_stops_at_cap() -> None:
     mock_client.send = MagicMock(return_value=mock_response)
 
     with patch("orchestrator.sources.web.build_ssrf_client", return_value=mock_client):
-        s = Source(kind="web", locator="https://example.com/big", options=SourceOptions(max_bytes=max_bytes))
+        s = Source(
+            kind="web",
+            locator="https://example.com/big",
+            options=SourceOptions(max_bytes=max_bytes),
+        )
         result = read_source(s)
 
     assert len(result.content.encode("utf-8")) <= max_bytes
@@ -405,7 +416,11 @@ def test_rss_source_over_cap_fails_closed() -> None:
     mock_client.send = MagicMock(return_value=mock_response)
 
     with patch("orchestrator.sources.rss.build_ssrf_client", return_value=mock_client):
-        s = Source(kind="rss", locator="https://example.com/feed.xml", options=SourceOptions(max_bytes=max_bytes))
+        s = Source(
+            kind="rss",
+            locator="https://example.com/feed.xml",
+            options=SourceOptions(max_bytes=max_bytes),
+        )
         with pytest.raises(SourceReadError, match="rss_parse_failed"):
             read_source(s)
 
@@ -418,7 +433,9 @@ def test_rss_source_stream_stops_at_cap() -> None:
     max_bytes = 30
     sentinel_hit: list[bool] = []
 
-    def _chunks_gen() -> bytes:
+    from collections.abc import Generator
+
+    def _chunks_gen() -> Generator[bytes, None, None]:
         yield b"X" * max_bytes
         sentinel_hit.append(True)
         yield b"EXTRA_BYTES_MUST_NOT_BE_READ"
@@ -434,8 +451,12 @@ def test_rss_source_stream_stops_at_cap() -> None:
     mock_client.send = MagicMock(return_value=mock_response)
 
     with patch("orchestrator.sources.rss.build_ssrf_client", return_value=mock_client):
-        s = Source(kind="rss", locator="https://example.com/feed.xml", options=SourceOptions(max_bytes=max_bytes))
-        # Will raise SourceReadError because truncated XML is invalid — that's expected (fail-closed)
+        s = Source(
+            kind="rss",
+            locator="https://example.com/feed.xml",
+            options=SourceOptions(max_bytes=max_bytes),
+        )
+        # Truncated XML is invalid → SourceReadError expected (fail-closed)
         with pytest.raises(SourceReadError):
             read_source(s)
 
