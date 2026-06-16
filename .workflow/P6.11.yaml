@@ -1,8 +1,8 @@
 task_id: P6.11
-state: awaiting_architect_decision
-cycle: 1
-last_transition_at: '2026-06-16T19:12:40.697537Z'
-cycle_started_at: '2026-06-16T00:49:28.953285Z'
+state: awaiting_junior_impl
+cycle: 2
+last_transition_at: '2026-06-16T19:30:27.743815Z'
+cycle_started_at: '2026-06-16T19:30:27.743815Z'
 override_history:
 - timestamp: '2026-06-16T17:09:37.000139Z'
   actor: architect
@@ -10,4 +10,18 @@ override_history:
   to_state: awaiting_junior_impl
   reason: 'No-ADR slice: plan_has_adr=False → junior_impl; hook mis-advanced to architect_accept
     (recurring no-ADR gotcha). ADR-041 in-place amendment, no Accept gate.'
+- timestamp: '2026-06-16T19:30:24.090379Z'
+  actor: architect
+  from_state: awaiting_senior_revision
+  to_state: awaiting_architect_decision
+  reason: 'F1/Y1 (2-of-3): unplanned >→>= breaks web_fetch byte-freeze at exact-cap.
+    Frozen-spine call routed option 1 (revert > + fix 2 tests). Restoring to architect_decision
+    for the is_rework path.'
+- timestamp: '2026-06-16T19:30:27.743815Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 α option 1 (is_rework: cycle++ + re-stamp): revert _stream_bounded
+    >= → >; rewrite the 2 stream-stop tests to use strictly-past-cap chunks; web_fetch
+    byte-frozen again, H1 OOM intent intact, everything else stands. See architect-routing-on-impl.md.'
 requires_cross_family_review: true
