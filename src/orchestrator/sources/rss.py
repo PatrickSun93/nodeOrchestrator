@@ -12,8 +12,9 @@ import defusedxml.ElementTree as _defused_ET
 import httpx
 from defusedxml import DTDForbidden, EntitiesForbidden
 
-from orchestrator.sources.schema import Source, SourceReadError, SourceReadResult
+from orchestrator.sources.schema import Source, SourceReadError, SourceReadResult, _SOURCE_MAX_BYTES_CEILING
 from orchestrator.tools.net_trust import build_ssrf_client
+from orchestrator.tools.network_tools import _stream_bounded
 
 # ---------------------------------------------------------------------------
 # Feed entry extraction (RSS 2.0 + Atom 1.0)
@@ -117,9 +118,15 @@ def read_rss_source(source: Source) -> SourceReadResult:
     )
     try:
         with build_ssrf_client(timeout=timeout) as client:
-            response = client.get(source.locator)
+            response = client.send(
+                client.build_request("GET", source.locator),
+                stream=True,
+            )
             response.raise_for_status()
-            xml_bytes = response.content
+            xml_text, truncated_at = _stream_bounded(
+                response,
+                max_bytes=min(source.options.max_bytes, _SOURCE_MAX_BYTES_CEILING),
+            )
     except SourceReadError:
         raise
     except httpx.HTTPStatusError as exc:
@@ -129,7 +136,7 @@ def read_rss_source(source: Source) -> SourceReadResult:
     except Exception as exc:
         raise SourceReadError(f"rss_fetch_failed: {exc}") from exc
 
-    xml_text = xml_bytes.decode("utf-8", errors="replace")
+    # Over-cap fetch → truncated XML → ParseError → SourceReadError (fail-closed, no OOM).
     entries = _parse_feed(xml_text)
 
     lines: list[str] = []
@@ -146,8 +153,4 @@ def read_rss_source(source: Source) -> SourceReadResult:
         lines.append(" | ".join(parts))
 
     content = "\n".join(lines)
-    encoded = content.encode("utf-8")
-    truncated = len(encoded) > source.options.max_bytes
-    if truncated:
-        content = encoded[: source.options.max_bytes].decode("utf-8", errors="replace")
-    return SourceReadResult(source=source, content=content, truncated=truncated)
+    return SourceReadResult(source=source, content=content, truncated=truncated_at is not None)

@@ -95,21 +95,24 @@ def _check_disallowed(params: dict[str, Any], allowed: frozenset[str], tool_name
         )
 
 
-def _stream_bounded(response: httpx.Response) -> tuple[str, int | None]:
-    """Stream the response body up to MAX_RESULT_BYTES; return (content, truncated_at).
+def _stream_bounded(
+    response: httpx.Response, max_bytes: int = MAX_RESULT_BYTES
+) -> tuple[str, int | None]:
+    """Stream the response body up to max_bytes; return (content, truncated_at).
 
     Never buffers an unbounded response into memory (ADR-028 D3 / ADR-035 D2 OOM guard).
     Decodes as utf-8 with errors='replace'.
+    Default max_bytes=MAX_RESULT_BYTES preserves web_fetch byte-identity (P6.11-A1 seam).
     """
     chunks: list[bytes] = []
     total = 0
     truncated_at: int | None = None
     for chunk in response.iter_bytes():
-        remaining = MAX_RESULT_BYTES - total
-        if len(chunk) > remaining:
+        remaining = max_bytes - total
+        if len(chunk) >= remaining:
             chunks.append(chunk[:remaining])
             total += remaining
-            truncated_at = MAX_RESULT_BYTES
+            truncated_at = max_bytes
             break
         chunks.append(chunk)
         total += len(chunk)

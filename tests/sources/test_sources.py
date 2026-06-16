@@ -218,38 +218,41 @@ def test_rss_parse_unknown_root_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Web source mocked success
+# Web source mocked success (streaming path — P6.11-A1)
 # ---------------------------------------------------------------------------
 
 
-def test_web_source_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Web source reads HTTP response and returns content."""
+def _mock_streaming_client(chunks: list[bytes]) -> MagicMock:
+    """Build a mock SSRF client that streams the given chunks via send(stream=True)."""
     mock_response = MagicMock()
-    mock_response.content = b"Hello, web!"
     mock_response.raise_for_status = MagicMock()
+    mock_response.iter_bytes = MagicMock(return_value=iter(chunks))
+    mock_request = MagicMock()
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
-    mock_client.get = MagicMock(return_value=mock_response)
+    mock_client.build_request = MagicMock(return_value=mock_request)
+    mock_client.send = MagicMock(return_value=mock_response)
+    return mock_client
 
+
+def test_web_source_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Web source reads HTTP response via streaming path and returns content."""
+    mock_client = _mock_streaming_client([b"Hello, web!"])
     with patch("orchestrator.sources.web.build_ssrf_client", return_value=mock_client):
         s = Source(kind="web", locator="https://example.com/page")
         result = read_source(s)
 
     assert result.content == "Hello, web!"
     assert not result.truncated
+    # Structural assertion: send(stream=True) called, not .get()
+    mock_client.send.assert_called_once()
+    assert mock_client.send.call_args[1].get("stream") is True
 
 
 def test_web_source_truncates_oversized(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Web source truncates response exceeding max_bytes."""
-    mock_response = MagicMock()
-    mock_response.content = b"X" * 200
-    mock_response.raise_for_status = MagicMock()
-    mock_client = MagicMock()
-    mock_client.__enter__ = MagicMock(return_value=mock_client)
-    mock_client.__exit__ = MagicMock(return_value=False)
-    mock_client.get = MagicMock(return_value=mock_response)
-
+    """Web source truncates response exceeding max_bytes via stream-bound (P6.11-A1)."""
+    mock_client = _mock_streaming_client([b"X" * 200])
     with patch("orchestrator.sources.web.build_ssrf_client", return_value=mock_client):
         s = Source(
             kind="web",
@@ -267,6 +270,127 @@ def test_read_source_result_is_immutable() -> None:
     r = SourceReadResult(source=s, content="data")
     with pytest.raises(Exception):  # noqa: B017
         r.content = "mutated"
+
+
+# ---------------------------------------------------------------------------
+# A1: H1 🔴 revert-gates (P6.11-A1)
+# ---------------------------------------------------------------------------
+
+
+def test_web_source_stream_stops_at_cap() -> None:
+    """OOM/stream revert-gate: reader stops iterating at cap, never drains beyond it.
+
+    A generator that raises if fully drained past max_bytes proves the reader stopped.
+    Revert to .content → full drain → generator raises AssertionError.
+    """
+    max_bytes = 50
+    chunks_yielded: list[int] = []
+
+    def _raise_if_drained() -> bytes:
+        raise AssertionError("iter_bytes drained past cap — full-buffer regression")
+
+    def _chunks_gen() -> bytes:
+        # First chunk: exactly at cap
+        chunks_yielded.append(max_bytes)
+        yield b"A" * max_bytes
+        # If the reader asks for more, the test fails
+        _raise_if_drained()
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.iter_bytes = MagicMock(return_value=_chunks_gen())
+    mock_request = MagicMock()
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.build_request = MagicMock(return_value=mock_request)
+    mock_client.send = MagicMock(return_value=mock_response)
+
+    with patch("orchestrator.sources.web.build_ssrf_client", return_value=mock_client):
+        s = Source(kind="web", locator="https://example.com/big", options=SourceOptions(max_bytes=max_bytes))
+        result = read_source(s)
+
+    assert len(result.content.encode("utf-8")) <= max_bytes
+
+
+def test_web_source_300k_not_truncated_with_default_options() -> None:
+    """Cap-honoured revert-gate: 300 KiB body with default 512 KiB options is not truncated.
+
+    Proves param carries source.options.max_bytes (512 KiB), not the 64 KiB web_fetch default.
+    Revert the parametrization → truncates at 64 KiB → result.truncated = True.
+    """
+    body = b"B" * (300 * 1024)  # 300 KiB
+    mock_client = _mock_streaming_client([body])
+    with patch("orchestrator.sources.web.build_ssrf_client", return_value=mock_client):
+        s = Source(kind="web", locator="https://example.com/page")  # default 512 KiB
+        result = read_source(s)
+
+    assert not result.truncated
+    assert len(result.content.encode("utf-8")) == 300 * 1024
+
+
+def test_rss_source_over_cap_fails_closed() -> None:
+    """RSS over-cap fail-closed revert-gate: truncated XML → SourceReadError, no OOM.
+
+    Revert to .content → full buffer + full parse, no size fail-close.
+    """
+    import textwrap
+
+    # Build a valid RSS prefix then cut it mid-document so it's malformed XML
+    valid_prefix = textwrap.dedent("""\
+        <?xml version="1.0"?>
+        <rss version="2.0"><channel><title>Test</title>
+    """).encode("utf-8")
+    # max_bytes smaller than even the valid prefix → XML is truncated mid-document
+    max_bytes = 20
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.iter_bytes = MagicMock(return_value=iter([valid_prefix]))
+    mock_request = MagicMock()
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.build_request = MagicMock(return_value=mock_request)
+    mock_client.send = MagicMock(return_value=mock_response)
+
+    with patch("orchestrator.sources.rss.build_ssrf_client", return_value=mock_client):
+        s = Source(kind="rss", locator="https://example.com/feed.xml", options=SourceOptions(max_bytes=max_bytes))
+        with pytest.raises(SourceReadError, match="rss_parse_failed"):
+            read_source(s)
+
+
+def test_rss_source_stream_stops_at_cap() -> None:
+    """OOM/stream revert-gate for RSS: reader stops iterating at cap.
+
+    Revert to .content → full drain → generator raises.
+    """
+    max_bytes = 30
+    sentinel_hit: list[bool] = []
+
+    def _chunks_gen() -> bytes:
+        yield b"X" * max_bytes
+        sentinel_hit.append(True)
+        yield b"EXTRA_BYTES_MUST_NOT_BE_READ"
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.iter_bytes = MagicMock(return_value=_chunks_gen())
+    mock_request = MagicMock()
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.build_request = MagicMock(return_value=mock_request)
+    mock_client.send = MagicMock(return_value=mock_response)
+
+    with patch("orchestrator.sources.rss.build_ssrf_client", return_value=mock_client):
+        s = Source(kind="rss", locator="https://example.com/feed.xml", options=SourceOptions(max_bytes=max_bytes))
+        # Will raise SourceReadError because truncated XML is invalid — that's expected (fail-closed)
+        with pytest.raises(SourceReadError):
+            read_source(s)
+
+    # The sentinel chunk must NOT have been yielded
+    assert not sentinel_hit, "iter_bytes was drained past cap — OOM regression"
 
 
 # ---------------------------------------------------------------------------
