@@ -18,6 +18,11 @@ class OutputConfig(BaseModel):
     room_prefix: str = Field(default="pipeline", min_length=1)
 
 
+# Safety ceiling on sources per run (ADR-041 D8 hardening, P6.11-A2).
+# Hardcoded — not operator-tunable (safety floor, not config).
+_MAX_SOURCES_PER_RUN: int = 16
+
+
 class PipelineDefinition(BaseModel):
     """Mutable operational config for one pipeline (ADR-041 D8).
 
@@ -30,7 +35,7 @@ class PipelineDefinition(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    sources: list[Source] = Field(min_length=1)
+    sources: list[Source] = Field(min_length=1, max_length=_MAX_SOURCES_PER_RUN)
     analysis_prompts: list[str] = Field(min_length=1)
     output_config: OutputConfig = Field(default_factory=OutputConfig)
 

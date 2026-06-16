@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from orchestrator.pipeline.schema import OutputConfig, PipelineDefinition
 from orchestrator.pipeline.store import (
     PIPELINE_SCHEMA,
@@ -194,3 +196,34 @@ def test_update_pipeline_run_status() -> None:
     ).fetchone()
     assert row is not None
     assert row[0] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# A2: H2 schema ceilings — sources max_length (P6.11-A2)
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_definition_default_still_valid() -> None:
+    """Migration witness: default single-source PipelineDefinition validates."""
+    defn = _sample_definition()
+    assert len(defn.sources) == 1
+
+
+def test_pipeline_definition_max_sources_accepted() -> None:
+    """Boundary: exactly _MAX_SOURCES_PER_RUN sources is accepted."""
+    import pydantic
+
+    from orchestrator.pipeline.schema import _MAX_SOURCES_PER_RUN
+
+    sources = [
+        Source(kind="web", locator=f"https://example.com/{i}") for i in range(_MAX_SOURCES_PER_RUN)
+    ]
+    defn = PipelineDefinition(sources=sources, analysis_prompts=["p"])
+    assert len(defn.sources) == _MAX_SOURCES_PER_RUN
+
+    # One more must fail (revert-gate: revert max_length → this would succeed)
+    with pytest.raises(pydantic.ValidationError):
+        PipelineDefinition(
+            sources=[*sources, Source(kind="web", locator="https://example.com/extra")],
+            analysis_prompts=["p"],
+        )

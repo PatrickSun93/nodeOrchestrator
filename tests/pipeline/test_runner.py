@@ -360,6 +360,171 @@ def test_llm_purpose_is_agent_response(tmp_path: Path) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# A3: H2-d fetched_context ceiling (P6.11-A3)
+# ---------------------------------------------------------------------------
+
+
+def test_fetched_context_truncated_at_1mib(tmp_path: Path) -> None:
+    """H2-d revert-gate: joined context > 1 MiB → analyze receives ≤1 MiB + marker.
+
+    Revert the truncation → full context, no marker.
+    """
+    from orchestrator.pipeline.runner import _MAX_FETCHED_CONTEXT_BYTES
+
+    store = _make_store()
+    captured_contexts: list[str] = []
+
+    def _capture(request: Any) -> LLMResponse:
+        captured_contexts.append(request.system or "")
+        return _llm_response("result")
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = _capture
+    deps = _make_deps(store, router, tmp_path)
+
+    # Write two files that together exceed 1 MiB
+    half = (_MAX_FETCHED_CONTEXT_BYTES // 2) + 1000
+    (tmp_path / "a.txt").write_bytes(b"A" * half)
+    (tmp_path / "b.txt").write_bytes(b"B" * half)
+
+    defn = PipelineDefinition(
+        sources=[
+            Source(kind="file", locator="a.txt"),
+            Source(kind="file", locator="b.txt"),
+        ],
+        analysis_prompts=["Analyze"],
+    )
+    run_pipeline("p_ctx", defn, deps=deps, owner_user_id="alice")
+
+    assert captured_contexts, "No LLM calls captured"
+    # analyze call system prompt contains the context
+    ctx_sys = captured_contexts[0]
+    marker = f"[context truncated at {_MAX_FETCHED_CONTEXT_BYTES} bytes]"
+    assert marker in ctx_sys, "Truncation marker missing — context not capped"
+    assert (
+        len(ctx_sys.encode("utf-8")) <= _MAX_FETCHED_CONTEXT_BYTES + 5000
+    )  # +headroom for system text
+
+
+def test_fetched_context_under_limit_unaffected(tmp_path: Path) -> None:
+    """Context under 1 MiB is not truncated and has no marker."""
+    from orchestrator.pipeline.runner import _MAX_FETCHED_CONTEXT_BYTES
+
+    store = _make_store()
+    captured_contexts: list[str] = []
+
+    def _capture(request: Any) -> LLMResponse:
+        captured_contexts.append(request.system or "")
+        return _llm_response("result")
+
+    router = MagicMock(spec=LLMRouterProtocol)
+    router.call.side_effect = _capture
+    deps = _make_deps(store, router, tmp_path)
+
+    (tmp_path / "small.txt").write_bytes(b"X" * 1000)
+    defn = PipelineDefinition(
+        sources=[Source(kind="file", locator="small.txt")],
+        analysis_prompts=["Analyze"],
+    )
+    run_pipeline("p_small", defn, deps=deps, owner_user_id="alice")
+
+    marker = f"[context truncated at {_MAX_FETCHED_CONTEXT_BYTES} bytes]"
+    assert all(marker not in ctx for ctx in captured_contexts), "Unexpected truncation marker"
+
+
+# ---------------------------------------------------------------------------
+# A4: fetch-stage wall-clock budget (P6.11-A4)
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_budget_exceeded_stops_loop(tmp_path: Path) -> None:
+    """A4 revert-gate: when fetch budget is exceeded, the loop stops early.
+
+    Stub read_source to sleep past the budget for the first source. The second source
+    must not be fetched. An OBSERVATION event recording the budget exceeded is in the room.
+    Revert the budget check → all sources fetched regardless of time.
+    """
+    import time
+
+    from orchestrator.pipeline.runner import _PIPELINE_FETCH_MAX_WALL_CLOCK_S
+
+    store = _make_store()
+    router = _mock_router("summary")
+    deps = _make_deps(store, router, tmp_path)
+
+    fetched_locators: list[str] = []
+    original_read = __import__("orchestrator.pipeline.runner", fromlist=["read_source"]).read_source
+
+    def _slow_read_source(src: Any, **kwargs: Any) -> Any:
+        fetched_locators.append(src.locator)
+        # Simulate the budget being already exceeded after the first source
+        if src.locator == "https://slow.example.com/1":
+            time.sleep(0)  # don't actually sleep; we'll mock monotonic instead
+        return original_read(src, **kwargs)
+
+    (tmp_path / "fast.txt").write_text("content", encoding="utf-8")
+
+    defn = PipelineDefinition(
+        sources=[
+            Source(kind="file", locator="fast.txt"),
+            Source(kind="web", locator="https://slow.example.com/2"),
+        ],
+        analysis_prompts=["Analyze"],
+    )
+
+    # Patch time.monotonic so the budget appears exceeded before the second source.
+    # Call order:
+    #   1: fetch_loop_start stamp → 0.0
+    #   2: check before first source (fast.txt) → 0.0 (not exceeded)
+    #   3: check before second source (web) → budget+1 (exceeded → break)
+    call_count = 0
+
+    def _mock_monotonic() -> float:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            return 0.0
+        return _PIPELINE_FETCH_MAX_WALL_CLOCK_S + 1.0
+
+    with patch("orchestrator.pipeline.runner.time") as mock_time:
+        mock_time.monotonic = _mock_monotonic
+        result = run_pipeline("p_budget", defn, deps=deps, owner_user_id="alice")
+
+    # First source was fetched; second was not (budget exceeded before iteration 2)
+    assert result.sources_read == 1
+
+    # OBSERVATION event for budget exceeded is in the room
+    events = store.get_room_events(RoomId(result.room_id))
+    budget_obs = [
+        e for e in events if "budget" in e.content.lower() or "exceeded" in e.content.lower()
+    ]
+    assert len(budget_obs) >= 1
+
+    # Run proceeds to analyze stage without crash
+    assert result.succeeded
+
+
+def test_fetch_budget_fast_sources_unaffected(tmp_path: Path) -> None:
+    """Normal fast multi-source run is unaffected by the fetch budget."""
+    store = _make_store()
+    router = _mock_router("analysis", "summary")
+    deps = _make_deps(store, router, tmp_path)
+
+    (tmp_path / "a.txt").write_text("file a", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("file b", encoding="utf-8")
+    defn = PipelineDefinition(
+        sources=[
+            Source(kind="file", locator="a.txt"),
+            Source(kind="file", locator="b.txt"),
+        ],
+        analysis_prompts=["Analyze", "Summarize"],
+    )
+    result = run_pipeline("p_fast", defn, deps=deps, owner_user_id="alice")
+    assert result.sources_read == 2
+    assert result.succeeded
+
+
 def test_countdown_auto_fire_none(tmp_path: Path) -> None:
     """process_tool_calls is called with countdown_auto_fire=None (ADR-041 D5)."""
     store = _make_store()

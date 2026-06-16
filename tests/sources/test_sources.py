@@ -218,38 +218,41 @@ def test_rss_parse_unknown_root_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Web source mocked success
+# Web source mocked success (streaming path — P6.11-A1)
 # ---------------------------------------------------------------------------
 
 
-def test_web_source_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Web source reads HTTP response and returns content."""
+def _mock_streaming_client(chunks: list[bytes]) -> MagicMock:
+    """Build a mock SSRF client that streams the given chunks via send(stream=True)."""
     mock_response = MagicMock()
-    mock_response.content = b"Hello, web!"
     mock_response.raise_for_status = MagicMock()
+    mock_response.iter_bytes = MagicMock(return_value=iter(chunks))
+    mock_request = MagicMock()
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
-    mock_client.get = MagicMock(return_value=mock_response)
+    mock_client.build_request = MagicMock(return_value=mock_request)
+    mock_client.send = MagicMock(return_value=mock_response)
+    return mock_client
 
+
+def test_web_source_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Web source reads HTTP response via streaming path and returns content."""
+    mock_client = _mock_streaming_client([b"Hello, web!"])
     with patch("orchestrator.sources.web.build_ssrf_client", return_value=mock_client):
         s = Source(kind="web", locator="https://example.com/page")
         result = read_source(s)
 
     assert result.content == "Hello, web!"
     assert not result.truncated
+    # Structural assertion: send(stream=True) called, not .get()
+    mock_client.send.assert_called_once()
+    assert mock_client.send.call_args[1].get("stream") is True
 
 
 def test_web_source_truncates_oversized(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Web source truncates response exceeding max_bytes."""
-    mock_response = MagicMock()
-    mock_response.content = b"X" * 200
-    mock_response.raise_for_status = MagicMock()
-    mock_client = MagicMock()
-    mock_client.__enter__ = MagicMock(return_value=mock_client)
-    mock_client.__exit__ = MagicMock(return_value=False)
-    mock_client.get = MagicMock(return_value=mock_response)
-
+    """Web source truncates response exceeding max_bytes via stream-bound (P6.11-A1)."""
+    mock_client = _mock_streaming_client([b"X" * 200])
     with patch("orchestrator.sources.web.build_ssrf_client", return_value=mock_client):
         s = Source(
             kind="web",
@@ -262,8 +265,229 @@ def test_web_source_truncates_oversized(monkeypatch: pytest.MonkeyPatch) -> None
     assert len(result.content.encode("utf-8")) <= 100
 
 
+def _make_rss_xml(n_items: int) -> str:
+    """Build an RSS 2.0 feed with n_items items."""
+    items = "".join(
+        f"<item><title>Item {i}</title><link>https://example.com/{i}</link></item>"
+        for i in range(n_items)
+    )
+    return (
+        f'<?xml version="1.0"?>'
+        f'<rss version="2.0"><channel><title>Test</title>{items}</channel></rss>'
+    )
+
+
+# ---------------------------------------------------------------------------
+# A3: H2 RSS entry cap (P6.11-A3)
+# ---------------------------------------------------------------------------
+
+
+def test_rss_entry_cap_applied() -> None:
+    """H2-b revert-gate: feed with 300 entries renders exactly 256 (cap applied).
+
+    Revert the _MAX_FEED_ENTRIES slice → all 300 entries rendered.
+    """
+    from orchestrator.sources.rss import _MAX_FEED_ENTRIES
+
+    xml = _make_rss_xml(300)
+    xml_bytes = xml.encode("utf-8")
+    mock_client = _mock_streaming_client([xml_bytes])
+
+    with patch("orchestrator.sources.rss.build_ssrf_client", return_value=mock_client):
+        s = Source(kind="rss", locator="https://example.com/feed.xml")
+        result = read_source(s)
+
+    lines = [ln for ln in result.content.splitlines() if ln.strip()]
+    assert len(lines) == _MAX_FEED_ENTRIES, (
+        f"Expected {_MAX_FEED_ENTRIES} entries, got {len(lines)}"
+    )
+
+
+def test_rss_entry_cap_under_limit_unaffected() -> None:
+    """Feed with fewer than _MAX_FEED_ENTRIES entries is not truncated."""
+    from orchestrator.sources.rss import _MAX_FEED_ENTRIES
+
+    n = _MAX_FEED_ENTRIES - 1
+    xml = _make_rss_xml(n)
+    xml_bytes = xml.encode("utf-8")
+    mock_client = _mock_streaming_client([xml_bytes])
+
+    with patch("orchestrator.sources.rss.build_ssrf_client", return_value=mock_client):
+        s = Source(kind="rss", locator="https://example.com/feed.xml")
+        result = read_source(s)
+
+    lines = [ln for ln in result.content.splitlines() if ln.strip()]
+    assert len(lines) == n
+
+
 def test_read_source_result_is_immutable() -> None:
     s = Source(kind="web", locator="http://example.com")
     r = SourceReadResult(source=s, content="data")
     with pytest.raises(Exception):  # noqa: B017
         r.content = "mutated"
+
+
+# ---------------------------------------------------------------------------
+# A1: H1 🔴 revert-gates (P6.11-A1)
+# ---------------------------------------------------------------------------
+
+
+def test_web_source_stream_stops_at_cap() -> None:
+    """OOM/stream revert-gate: reader stops iterating at cap, never drains beyond it.
+
+    A generator with a strictly-over-cap first chunk proves the reader stops without
+    advancing to the next chunk. Revert to unbounded read → drained_past_cap flag set.
+    """
+    max_bytes = 50
+    drained_past_cap: list[bool] = []
+
+    from collections.abc import Generator
+
+    def _chunks_gen() -> Generator[bytes, None, None]:
+        # First chunk: strictly over cap — > catches it without exact-boundary ambiguity
+        yield b"A" * (max_bytes + 10)
+        # Runs only if the reader advances past the first chunk
+        drained_past_cap.append(True)
+        yield b"MORE_DATA_MUST_NOT_BE_READ"
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.iter_bytes = MagicMock(return_value=_chunks_gen())
+    mock_request = MagicMock()
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.build_request = MagicMock(return_value=mock_request)
+    mock_client.send = MagicMock(return_value=mock_response)
+
+    with patch("orchestrator.sources.web.build_ssrf_client", return_value=mock_client):
+        s = Source(
+            kind="web",
+            locator="https://example.com/big",
+            options=SourceOptions(max_bytes=max_bytes),
+        )
+        result = read_source(s)
+
+    assert len(result.content.encode("utf-8")) <= max_bytes
+    assert not drained_past_cap, "iter_bytes was drained past the cap chunk — OOM regression"
+
+
+def test_web_source_300k_not_truncated_with_default_options() -> None:
+    """Cap-honoured revert-gate: 300 KiB body with default 512 KiB options is not truncated.
+
+    Proves param carries source.options.max_bytes (512 KiB), not the 64 KiB web_fetch default.
+    Revert the parametrization → truncates at 64 KiB → result.truncated = True.
+    """
+    body = b"B" * (300 * 1024)  # 300 KiB
+    mock_client = _mock_streaming_client([body])
+    with patch("orchestrator.sources.web.build_ssrf_client", return_value=mock_client):
+        s = Source(kind="web", locator="https://example.com/page")  # default 512 KiB
+        result = read_source(s)
+
+    assert not result.truncated
+    assert len(result.content.encode("utf-8")) == 300 * 1024
+
+
+def test_rss_source_over_cap_fails_closed() -> None:
+    """RSS over-cap fail-closed revert-gate: truncated XML → SourceReadError, no OOM.
+
+    Revert to .content → full buffer + full parse, no size fail-close.
+    """
+    import textwrap
+
+    # Build a valid RSS prefix then cut it mid-document so it's malformed XML
+    valid_prefix = textwrap.dedent("""\
+        <?xml version="1.0"?>
+        <rss version="2.0"><channel><title>Test</title>
+    """).encode("utf-8")
+    # max_bytes smaller than even the valid prefix → XML is truncated mid-document
+    max_bytes = 20
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.iter_bytes = MagicMock(return_value=iter([valid_prefix]))
+    mock_request = MagicMock()
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.build_request = MagicMock(return_value=mock_request)
+    mock_client.send = MagicMock(return_value=mock_response)
+
+    with patch("orchestrator.sources.rss.build_ssrf_client", return_value=mock_client):
+        s = Source(
+            kind="rss",
+            locator="https://example.com/feed.xml",
+            options=SourceOptions(max_bytes=max_bytes),
+        )
+        with pytest.raises(SourceReadError, match="rss_parse_failed"):
+            read_source(s)
+
+
+def test_rss_source_stream_stops_at_cap() -> None:
+    """OOM/stream revert-gate for RSS: reader stops iterating at cap.
+
+    A generator with a strictly-over-cap first chunk proves the reader stops without
+    advancing to the sentinel. Revert to unbounded read → sentinel_hit flag set.
+    """
+    max_bytes = 30
+    sentinel_hit: list[bool] = []
+
+    from collections.abc import Generator
+
+    def _chunks_gen() -> Generator[bytes, None, None]:
+        # First chunk: strictly over cap — > catches it without exact-boundary ambiguity
+        yield b"X" * (max_bytes + 5)
+        sentinel_hit.append(True)
+        yield b"EXTRA_BYTES_MUST_NOT_BE_READ"
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.iter_bytes = MagicMock(return_value=_chunks_gen())
+    mock_request = MagicMock()
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.build_request = MagicMock(return_value=mock_request)
+    mock_client.send = MagicMock(return_value=mock_response)
+
+    with patch("orchestrator.sources.rss.build_ssrf_client", return_value=mock_client):
+        s = Source(
+            kind="rss",
+            locator="https://example.com/feed.xml",
+            options=SourceOptions(max_bytes=max_bytes),
+        )
+        # Truncated XML is invalid → SourceReadError expected (fail-closed)
+        with pytest.raises(SourceReadError):
+            read_source(s)
+
+    # The sentinel chunk must NOT have been yielded
+    assert not sentinel_hit, "iter_bytes was drained past cap — OOM regression"
+
+
+# ---------------------------------------------------------------------------
+# A2: H2 schema ceilings (P6.11-A2)
+# ---------------------------------------------------------------------------
+
+
+def test_source_options_default_still_valid() -> None:
+    """Migration witness: default SourceOptions() validates under the new ceiling."""
+    opts = SourceOptions()
+    assert opts.max_bytes == 512 * 1024  # 512 KiB default unchanged
+
+
+def test_source_options_max_bytes_at_ceiling_accepted() -> None:
+    """Boundary: max_bytes == 5 MiB ceiling is accepted."""
+    from orchestrator.sources.schema import _SOURCE_MAX_BYTES_CEILING
+
+    opts = SourceOptions(max_bytes=_SOURCE_MAX_BYTES_CEILING)
+    assert opts.max_bytes == _SOURCE_MAX_BYTES_CEILING
+
+
+def test_source_options_max_bytes_above_ceiling_rejected() -> None:
+    """H2-c revert-gate: max_bytes > 5 MiB ceiling raises ValidationError."""
+    import pydantic
+
+    from orchestrator.sources.schema import _SOURCE_MAX_BYTES_CEILING
+
+    with pytest.raises(pydantic.ValidationError):
+        SourceOptions(max_bytes=_SOURCE_MAX_BYTES_CEILING + 1)

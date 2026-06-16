@@ -149,6 +149,22 @@ options}` and a per-kind reader dispatched **deterministically** by the fetch st
 - **file** → reuse the path-sandbox read primitive (`_check_path` + bounded read,
   `tools/local.py`): reject traversal/symlink-escape, bounded read.
 
+**SSRF-floor scope (H3 — P6.11-A5, as-designed):** Source reads use the **in-process SSRF
+floor** (`build_ssrf_client`), not the ADR-037 D3 egress-sandbox container. The container
+defends the tool-call path's **agent-chosen** URLs (`_sandbox_web_fetch`, gated by
+`posture_resolver`); pipeline sources are **owner-configured deterministic reads** (no LLM
+chooses what to fetch) for which the SSRF floor (scheme/IP/DNS-rebind/redirect) is the
+designed defense. As-designed.
+
+**Ingress ceilings (H2 — P6.11-A2/A3, hardcoded safety floors not config):**
+- Per-source `max_bytes` ceiling: `_SOURCE_MAX_BYTES_CEILING = 5 MiB` (`le=` on
+  `SourceOptions.max_bytes`; default stays 512 KiB). Both readers also apply a `min()`
+  clamp in the stream call (belt-and-suspenders: a stored definition predating the validator
+  still cannot defeat the stream bound).
+- RSS entries per feed: `_MAX_FEED_ENTRIES = 256` (slice after `_parse_feed`).
+- Aggregate fetched context: `_MAX_FETCHED_CONTEXT_BYTES = 1 MiB` (truncate + marker in
+  runner before the fan-out stage, bounds LLM cost + memory).
+
 **Name-collision guard:** the abstraction MUST NOT live in `connectors/` — that
 directory is ADR-019 external-ground-truth **output** producers (write-only,
 `EXTERNAL_VALIDATION` events), the opposite direction of a read-source. Use `sources/`.
@@ -258,6 +274,11 @@ not.)
 (ADR-039 D1/D6) — the single source of audit ownership. **No** schedule columns
 (`cron`/`interval`/`next_fire`) in `pipelines` itself — those are in the P5.1b
 `pipeline_schedules` side table (ADR-042 D2).
+
+> **P6.11-A2 amendment:** `PipelineDefinition.sources` now carries `max_length=16`
+> (`_MAX_SOURCES_PER_RUN`), rejected at `POST /pipelines` before any run (fail-closed via
+> the endpoint's `try/except` → HTTP 422). `SourceOptions.max_bytes` carries
+> `le=5 MiB` (`_SOURCE_MAX_BYTES_CEILING`); hardcoded safety floors, not config.
 
 > **P5.1b amendment (ADR-042):** A new `pipeline_schedules` side table adds schedule
 > persistence co-located in the main DB (1:N per pipeline): `schedule_id`, `pipeline_id`,
@@ -378,7 +399,13 @@ trail of schedule edits, if wanted, is a P5.1b call.
   byte-untouched (revisitable via alternative B).
 - A manual run occupies the single writer for its duration (`N × per-branch wall-clock`)
   and can delay interactive turns (Decision 3) — acceptable for operator-initiated,
-  infrequent P5.1a runs; P5.1b may add background execution.
+  infrequent P5.1a runs; P5.1b may add background execution. **P6.11-A2/A4 amendment:**
+  the prior unbounded fetch occupancy (up to 16 × 15 s = 240 s without caps) is now
+  bounded on both dimensions: (a) source-count cap `_MAX_SOURCES_PER_RUN=16` (rejected at
+  definition time) and (b) fetch-loop wall-clock budget `_PIPELINE_FETCH_MAX_WALL_CLOCK_S=90s`
+  (mirrors the analyze-stage 120 s budget). Both source readers also stream-bound via
+  `_stream_bounded` (no full-body buffer into RAM — the ADR-028/035 D2/D3 OOM guard now
+  applied to pipeline sources as well as `web_fetch`).
 - An RSS/Atom parser is genuine new code with its own correctness + security surface
   (malformed feeds, billion-laughs/XXE on XML parsing, feed URLs through the SSRF floor) —
   Decision 4 floors it but it must be tested adversarially (Lens A).

@@ -6,13 +6,17 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Safety ceiling on per-source fetch size (ADR-041 D4/D8 hardening, P6.11-A2).
+# Hardcoded — not operator-tunable (safety floor, not config).
+_SOURCE_MAX_BYTES_CEILING: int = 5 * 1024 * 1024  # 5 MiB
+
 
 class SourceOptions(BaseModel):
     """Per-source fetch options."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    max_bytes: int = Field(default=512 * 1024, gt=0)
+    max_bytes: int = Field(default=512 * 1024, gt=0, le=_SOURCE_MAX_BYTES_CEILING)
     timeout_s: float = Field(default=15.0, gt=0.0)
 
 
