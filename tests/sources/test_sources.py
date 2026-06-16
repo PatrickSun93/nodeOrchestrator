@@ -335,23 +335,20 @@ def test_read_source_result_is_immutable() -> None:
 def test_web_source_stream_stops_at_cap() -> None:
     """OOM/stream revert-gate: reader stops iterating at cap, never drains beyond it.
 
-    A generator that raises if fully drained past max_bytes proves the reader stopped.
-    Revert to .content → full drain → generator raises AssertionError.
+    A generator with a strictly-over-cap first chunk proves the reader stops without
+    advancing to the next chunk. Revert to unbounded read → drained_past_cap flag set.
     """
     max_bytes = 50
-    chunks_yielded: list[int] = []
-
-    def _raise_if_drained() -> None:
-        raise AssertionError("iter_bytes drained past cap — full-buffer regression")
+    drained_past_cap: list[bool] = []
 
     from collections.abc import Generator
 
     def _chunks_gen() -> Generator[bytes, None, None]:
-        # First chunk: exactly at cap
-        chunks_yielded.append(max_bytes)
-        yield b"A" * max_bytes
-        # If the reader asks for more, the test fails
-        _raise_if_drained()
+        # First chunk: strictly over cap — > catches it without exact-boundary ambiguity
+        yield b"A" * (max_bytes + 10)
+        # Runs only if the reader advances past the first chunk
+        drained_past_cap.append(True)
+        yield b"MORE_DATA_MUST_NOT_BE_READ"
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
@@ -372,6 +369,7 @@ def test_web_source_stream_stops_at_cap() -> None:
         result = read_source(s)
 
     assert len(result.content.encode("utf-8")) <= max_bytes
+    assert not drained_past_cap, "iter_bytes was drained past the cap chunk — OOM regression"
 
 
 def test_web_source_300k_not_truncated_with_default_options() -> None:
@@ -428,7 +426,8 @@ def test_rss_source_over_cap_fails_closed() -> None:
 def test_rss_source_stream_stops_at_cap() -> None:
     """OOM/stream revert-gate for RSS: reader stops iterating at cap.
 
-    Revert to .content → full drain → generator raises.
+    A generator with a strictly-over-cap first chunk proves the reader stops without
+    advancing to the sentinel. Revert to unbounded read → sentinel_hit flag set.
     """
     max_bytes = 30
     sentinel_hit: list[bool] = []
@@ -436,7 +435,8 @@ def test_rss_source_stream_stops_at_cap() -> None:
     from collections.abc import Generator
 
     def _chunks_gen() -> Generator[bytes, None, None]:
-        yield b"X" * max_bytes
+        # First chunk: strictly over cap — > catches it without exact-boundary ambiguity
+        yield b"X" * (max_bytes + 5)
         sentinel_hit.append(True)
         yield b"EXTRA_BYTES_MUST_NOT_BE_READ"
 

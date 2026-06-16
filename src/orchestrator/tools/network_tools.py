@@ -109,7 +109,7 @@ def _stream_bounded(
     truncated_at: int | None = None
     for chunk in response.iter_bytes():
         remaining = max_bytes - total
-        if len(chunk) >= remaining:
+        if len(chunk) > remaining:
             chunks.append(chunk[:remaining])
             total += remaining
             truncated_at = max_bytes
