@@ -61,6 +61,11 @@ _PIPELINE_MAX_WALL_CLOCK_S: float = 120.0
 # Hardcoded — bounds LLM cost + memory across every analyze branch (≈250k tokens at 1 MiB).
 _MAX_FETCHED_CONTEXT_BYTES: int = 1 * 1024 * 1024  # 1 MiB
 
+# Fetch-stage wall-clock budget (ADR-041 risks hardening, P6.11-A4).
+# Mirrors _PIPELINE_MAX_WALL_CLOCK_S for the analyze stage; bounds the time dimension of
+# single-writer HoL that source-count cap alone leaves open (16 × 15s timeout = 240s).
+_PIPELINE_FETCH_MAX_WALL_CLOCK_S: float = 90.0
+
 # The single ephemeral agent identity for all analyze branches.
 PIPELINE_AGENT_ID: str = "pipeline"
 
@@ -288,7 +293,26 @@ def run_pipeline(
     fetch_results: list[SourceReadResult] = []
     fetch_errors: list[str] = []
 
+    fetch_loop_start = time.monotonic()
     for src in definition.sources:
+        if time.monotonic() - fetch_loop_start >= _PIPELINE_FETCH_MAX_WALL_CLOCK_S:
+            budget_msg = (
+                f"fetch_budget_exceeded: wall-clock budget of "
+                f"{_PIPELINE_FETCH_MAX_WALL_CLOCK_S}s reached; remaining sources skipped"
+            )
+            _log.warning("pipeline: %s", budget_msg)
+            deps.writer_store.append(
+                Event(
+                    id=generate_event_id(),
+                    room_id=room_id,
+                    type=EventType.OBSERVATION,
+                    author=build_author(PIPELINE_AGENT_ID),
+                    timestamp=now_ms(),
+                    content=f"Fetch budget exceeded: {budget_msg}",
+                    parent_id=run_anchor.id,
+                )
+            )
+            break
         try:
             result = read_source(src, sandbox_root=deps.sandbox_root)
             fetch_results.append(result)
