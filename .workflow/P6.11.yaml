@@ -1,7 +1,7 @@
 task_id: P6.11
-state: awaiting_senior_plan_vs_impl
+state: closed
 cycle: 2
-last_transition_at: '2026-06-16T20:08:32.672627Z'
+last_transition_at: '2026-06-16T20:28:24.692654Z'
 cycle_started_at: '2026-06-16T19:30:27.743815Z'
 override_history:
 - timestamp: '2026-06-16T17:09:37.000139Z'
@@ -24,4 +24,12 @@ override_history:
   reason: 'Cycle-2 α option 1 (is_rework: cycle++ + re-stamp): revert _stream_bounded
     >= → >; rewrite the 2 stream-stop tests to use strictly-past-cap chunks; web_fetch
     byte-frozen again, H1 OOM intent intact, everything else stands. See architect-routing-on-impl.md.'
+- timestamp: '2026-06-16T20:28:24.692654Z'
+  actor: architect
+  from_state: awaiting_PR_merge
+  to_state: closed
+  reason: 'P6.11 merged (PR #81). Holistic 🔴 H1 (web/rss .content OOM/HoL on single
+    writer) fixed via stream-bound _stream_bounded; H2 4 ingress caps; fetch wall-clock
+    90s; H3 SSRF-scope as-designed note; ADR-041 in-place amendment. cyc2 option 1
+    restored web_fetch byte-freeze (> operator). All reviews clean.'
 requires_cross_family_review: true
