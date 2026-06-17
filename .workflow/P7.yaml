@@ -1,7 +1,7 @@
 task_id: P7
-state: awaiting_PR_merge
+state: closed
 cycle: 1
-last_transition_at: '2026-06-17T16:48:10.208848Z'
+last_transition_at: '2026-06-17T17:06:42.904134Z'
 cycle_started_at: '2026-06-16T20:30:00Z'
 override_history:
 - timestamp: '2026-06-17T16:00:42.600419Z'
@@ -13,4 +13,10 @@ override_history:
     (plan_has_adr=None legacy) instead of skipping it. No ADR to accept; advancing
     per P6.1/6.3/6.8/6.9 no-ADR convention. Executed by architect-partner on explicit
     architect instruction.'
+- timestamp: '2026-06-17T17:06:42.904134Z'
+  actor: architect-partner
+  from_state: awaiting_PR_merge
+  to_state: closed
+  reason: 'PR #82 merged to main (8f85a21). P7 cycle-1 complete: 3 fixes + tests +
+    reviews + merge. All gates green.'
 requires_cross_family_review: false
