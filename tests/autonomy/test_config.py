@@ -71,6 +71,23 @@ class TestCountdownAutoFireConfig:
         assert cfg.enabled is True
         assert cfg.window_s == 60
 
+    def test_window_lt_sweep_raises(self) -> None:
+        """P7-6: window_s < sweep_interval_s must raise ValueError (ADR-040 D7)."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            CountdownAutoFireConfig(window_s=10, sweep_interval_s=30)
+
+    def test_window_equal_sweep_valid(self) -> None:
+        """P7-6: window_s == sweep_interval_s is the boundary valid case."""
+        cfg = CountdownAutoFireConfig(window_s=30, sweep_interval_s=30)
+        assert cfg.window_s == cfg.sweep_interval_s
+
+    def test_defaults_satisfy_constraint(self) -> None:
+        """P7-6: defaults (window_s=300, sweep_interval_s=30) must satisfy constraint."""
+        cfg = CountdownAutoFireConfig()
+        assert cfg.window_s >= cfg.sweep_interval_s
+
 
 # ---------------------------------------------------------------------------
 # load_countdown_auto_fire_config loader
