@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
 class CountdownAutoFireConfig(BaseModel):
@@ -28,6 +28,15 @@ class CountdownAutoFireConfig(BaseModel):
     window_s: int = Field(default=300, ge=1)
     sweep_interval_s: int = Field(default=30, ge=1)
     reversibility_floor: int = Field(default=5, ge=0, le=10)
+
+    @model_validator(mode="after")
+    def _window_ge_sweep(self) -> CountdownAutoFireConfig:
+        if self.window_s < self.sweep_interval_s:
+            raise ValueError(
+                f"window_s ({self.window_s}) must be >= sweep_interval_s "
+                f"({self.sweep_interval_s}) — ADR-040 D7 fail-closed"
+            )
+        return self
 
 
 def load_countdown_auto_fire_config(path: Path) -> CountdownAutoFireConfig:
