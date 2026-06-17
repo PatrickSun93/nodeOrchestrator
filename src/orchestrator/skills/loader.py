@@ -89,6 +89,7 @@ def load_skills(directory: Path) -> dict[str, Skill]:
         raise SkillError(f"skills directory does not exist: {directory}", path=directory)
 
     skills: dict[str, Skill] = {}
+    seen_paths: dict[str, Path] = {}
 
     for md_path in sorted(directory.rglob("*.md")):
         result, body = _parse_frontmatter(md_path)
@@ -119,9 +120,7 @@ def load_skills(directory: Path) -> dict[str, Skill]:
             )
 
         if skill.id in skills:
-            existing_path = next(
-                p for p in directory.rglob("*.md") if p.stem == skill.id and p != md_path
-            )
+            existing_path = seen_paths[skill.id]
             raise SkillError(
                 f"duplicate skill id {skill.id!r}: found in both {existing_path} and {md_path}",
                 path=md_path,
@@ -129,5 +128,6 @@ def load_skills(directory: Path) -> dict[str, Skill]:
             )
 
         skills[skill.id] = skill
+        seen_paths[skill.id] = md_path
 
     return skills

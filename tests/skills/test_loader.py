@@ -208,6 +208,22 @@ def test_duplicate_id_raises(tmp_path: Path) -> None:
     assert "duplicate" in str(exc_info.value).lower()
 
 
+def test_duplicate_id_names_both_paths_no_stopiteration(tmp_path: Path) -> None:
+    """P7-1: duplicate-id error names both paths; no bare StopIteration raised."""
+    subdir_a = tmp_path / "a"
+    subdir_a.mkdir()
+    subdir_b = tmp_path / "b"
+    subdir_b.mkdir()
+    path_a = _write_skill(subdir_a, "dup-skill", _VALID_FRONTMATTER.format(id="dup-skill"))
+    path_b = _write_skill(subdir_b, "dup-skill", _VALID_FRONTMATTER.format(id="dup-skill"))
+    with pytest.raises(SkillError) as exc_info:
+        load_skills(tmp_path)
+    err_str = str(exc_info.value)
+    assert str(path_a) in err_str, f"first path not in error: {err_str}"
+    assert str(path_b) in err_str, f"second path not in error: {err_str}"
+    assert exc_info.value.field == "id"
+
+
 def test_schema_validation_failure_raises_with_path(tmp_path: Path) -> None:
     content = dedent("""\
         ---
