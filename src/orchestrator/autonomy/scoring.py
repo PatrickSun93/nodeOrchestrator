@@ -175,6 +175,8 @@ def decide_tier(
     does not depend on it. See ADR-005 Decisions 4 and 5."""
     if user_explicit_intent:
         eff_auto = thresholds.threshold_auto - thresholds.user_intent_modifier
+        # Floor at 0: a negative eff_confirm would pull all scores into COUNTDOWN_CONFIRM,
+        # inverting the tier ladder (ADR-005 D4/D5). eff_auto intentionally has no floor.
         eff_confirm = max(0, thresholds.threshold_confirm - thresholds.user_intent_modifier)
     else:
         eff_auto = thresholds.threshold_auto
