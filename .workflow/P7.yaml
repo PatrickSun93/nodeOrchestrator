@@ -1,7 +1,16 @@
 task_id: P7
-state: awaiting_architect_accept
+state: awaiting_junior_impl
 cycle: 1
-last_transition_at: '2026-06-17T15:26:10.287039Z'
+last_transition_at: '2026-06-17T16:00:42.600419Z'
 cycle_started_at: '2026-06-16T20:30:00Z'
-override_history: []
+override_history:
+- timestamp: '2026-06-17T16:00:42.600419Z'
+  actor: architect
+  from_state: awaiting_architect_accept
+  to_state: awaiting_junior_impl
+  reason: 'Architect-dispatched advance (explicit, 2026-06-17): no-ADR task (brief-ratified);
+    senior plan lacked frontmatter so plan-land routed through awaiting_architect_accept
+    (plan_has_adr=None legacy) instead of skipping it. No ADR to accept; advancing
+    per P6.1/6.3/6.8/6.9 no-ADR convention. Executed by architect-partner on explicit
+    architect instruction.'
 requires_cross_family_review: false
