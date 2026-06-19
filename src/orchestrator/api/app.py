@@ -411,10 +411,13 @@ def _writer_approve_helper(
     room = ctx.writer_store.get_room(rid)
     if room is None:
         return _ApproveSkipped("not_found")
-    if room.state == "closed":
-        return _ApproveSkipped("room_closed")
 
     all_events = ctx.writer_store.get_room_events(rid)
+    from orchestrator.rooms.state_machine import derive_room_state as _derive_room_state
+
+    if _derive_room_state(all_events, seed=room.state) == "closed":
+        return _ApproveSkipped("room_closed")
+
     sorted_events = sorted(all_events, key=lambda e: (e.timestamp, e.id))
 
     # Find the TOOL_CALL_PENDING event.
@@ -1630,10 +1633,13 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 room = ctx.writer_store.get_room(rid)
                 if room is None:
                     raise _ConfirmAppendError("not_found")
-                if room.state == "closed":
-                    raise _ConfirmAppendError("room_closed")
 
                 all_events = ctx.writer_store.get_room_events(rid)
+                from orchestrator.rooms.state_machine import derive_room_state as _derive_room_state
+
+                if _derive_room_state(all_events, seed=room.state) == "closed":
+                    raise _ConfirmAppendError("room_closed")
+
                 sorted_events = sorted(all_events, key=lambda e: (e.timestamp, e.id))
                 pending_event = next(
                     (

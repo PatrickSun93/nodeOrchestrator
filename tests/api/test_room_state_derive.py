@@ -241,3 +241,60 @@ class TestDeriveRoomStateFromEvents:
         # Verify derived state via the event stream.
         derived = derive_room_state(all_events, seed="setup")
         assert derived == "fix_proposed", f"derive_room_state returned {derived!r}"
+
+
+class TestClosedGuardsDeriveState:
+    """C2-3 (Y1-alpha): _writer_approve_helper and _confirm_on_writer cancel-path
+    must gate on derived state, not the stale rooms.state column."""
+
+    def _setup_derived_closed_room(self) -> tuple[AppContext, RoomId]:
+        """Create a room and append a STATE_TRANSITION to 'closed' without
+        updating the DB column (simulating the write-once column from P8-1)."""
+        ctx = _make_ctx_for_state_tests()
+        with _auth_client(ctx) as client:
+            create_r = client.post("/rooms", json={"type": "research"})
+            assert create_r.status_code == 201
+        room_id_str = create_r.json()["id"]
+        rid = RoomId(room_id_str)
+
+        # Append closed transition directly — DB column stays stale ("setup").
+        _append_state_transition(ctx, rid, prior_state="setup", new_state="closed")
+
+        # Verify pre-condition: column is still stale.
+        db_room = ctx.writer_store.get_room(rid)
+        assert db_room is not None
+        assert db_room.state == "setup", (
+            f"pre-condition failed: expected stale 'setup', got {db_room.state!r}"
+        )
+        # Verify derived state is 'closed'.
+        all_ev = ctx.writer_store.get_room_events(rid)
+        assert derive_room_state(all_ev, seed="setup") == "closed", (
+            "pre-condition failed: derive_room_state did not return 'closed'"
+        )
+        return ctx, rid
+
+    def test_writer_approve_helper_skips_derived_closed_room(self) -> None:
+        """_writer_approve_helper must return _ApproveSkipped('room_closed') when
+        the room is derived-closed (stale DB column still reads 'setup')."""
+        ctx, rid = self._setup_derived_closed_room()
+        fake_pending_event_id = generate_event_id()
+        with _auth_client(ctx) as client:
+            r = client.post(
+                f"/rooms/{rid}/confirm",
+                json={"decision": "approve", "pending_event_id": fake_pending_event_id},
+            )
+        assert r.status_code == 422, f"expected 422 room_closed, got {r.status_code}: {r.text}"
+        assert "room_closed" in r.text, f"expected 'room_closed' in response, got: {r.text}"
+
+    def test_confirm_cancel_rejects_derived_closed_room(self) -> None:
+        """_confirm_on_writer cancel-path must raise _ConfirmAppendError('room_closed')
+        when the room is derived-closed (stale DB column still reads 'setup')."""
+        ctx, rid = self._setup_derived_closed_room()
+        fake_pending_event_id = generate_event_id()
+        with _auth_client(ctx) as client:
+            r = client.post(
+                f"/rooms/{rid}/confirm",
+                json={"decision": "cancel", "pending_event_id": fake_pending_event_id},
+            )
+        assert r.status_code == 422, f"expected 422 room_closed, got {r.status_code}: {r.text}"
+        assert "room_closed" in r.text, f"expected 'room_closed' in response, got: {r.text}"
