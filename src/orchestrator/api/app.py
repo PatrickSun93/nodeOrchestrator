@@ -1474,7 +1474,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
             if room is None:
                 raise _AppendFailedError(f"room {room_id!r} not found")
 
-            pre_cursor = len(ctx.writer_store.get_room_events(rid))
+            pre_cursor = ctx.writer_store.count_room_events(rid)
 
             try:
                 ctx.writer_store.append(user_event)
@@ -1486,7 +1486,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
 
             # Mark cursor just after user_event append (before pass 0 dispatch+execute).
             # The re-dispatch loop checks what the PREVIOUS pass produced starting here.
-            prev_pass_cursor = len(ctx.writer_store.get_room_events(rid))
+            prev_pass_cursor = ctx.writer_store.count_room_events(rid)
 
             # Pass 0: state machine once + dispatch + execute (ADR-033 D2).
             try:
@@ -1505,7 +1505,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 raise _TurnFailedError(str(exc), user_event.id) from exc
 
             # Post-dispatch execution stage for pass 0 (ADR-028 D1).
-            pass0_window = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
+            pass0_window = ctx.writer_store.get_room_events_since(rid, prev_pass_cursor)
             execute_pending_tool_calls(
                 window_events=pass0_window,
                 room_id=rid,
@@ -1529,7 +1529,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     break
 
                 # Check what the previous pass produced (from prev_pass_cursor to now).
-                prev_pass_events = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
+                prev_pass_events = ctx.writer_store.get_room_events_since(rid, prev_pass_cursor)
 
                 # Termination condition 1: zero new TOOL_CALL events in last pass (D3).
                 new_tool_calls = [e for e in prev_pass_events if e.type == EventType.TOOL_CALL]
@@ -1545,7 +1545,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 current_event_for_pass = result_events[-1]
 
                 # Advance cursor to start of THIS pass (before dispatch+execute).
-                prev_pass_cursor = len(ctx.writer_store.get_room_events(rid))
+                prev_pass_cursor = ctx.writer_store.count_room_events(rid)
 
                 # Re-dispatch: call dispatch_turn directly (state machine NOT re-run — D2).
                 dispatch_turn(
@@ -1561,7 +1561,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 )
 
                 # Execute TOOL_CALL events from this re-dispatch pass.
-                repass_window = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
+                repass_window = ctx.writer_store.get_room_events_since(rid, prev_pass_cursor)
                 execute_pending_tool_calls(
                     window_events=repass_window,
                     room_id=rid,
@@ -1572,7 +1572,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 )
 
             # Publish all events accumulated since the user_event append (one batch).
-            new_events = ctx.writer_store.get_room_events(rid)[pre_cursor:]
+            new_events = ctx.writer_store.get_room_events_since(rid, pre_cursor)
             loop.call_soon_threadsafe(ctx.bus.publish, rid, new_events)
 
             return IntentResponse(appended_event=user_event, turn=turn_result)
