@@ -2,105 +2,70 @@
 task_id: P8
 review_type: plan-vs-impl
 reviewer: senior
-cycle: 2
-verdict: needs_architect
+cycle: 3
+verdict: clean
 rework_commits:
-  - 4a31deb  # C2-1 (B1) mypy import fix
-  - ab9ac02  # C2-2 (B2) derive_room_state list-order tiebreak
-  - 4aefc89  # C2-3 (Y1-alpha) two closed-guards derive
-routing: "R0-A blocking (B1 mypy + B2 isolation) + Y1 column-authority → architect routed α(2 closed-guards)/β(defer _list_rooms)"
+  - 62cf19a  # C3-1 (Y2-1) ADR-012 amendment wording (timestamp,id)→(timestamp,rowid)
+  - cbe6324  # C3-2 (Y2-2) last_state_transition tiebreak → events[-1] rowid order
+routing: "cycle-2 needs_architect (Y2-1 + Y2-2 → α; N-1 sorted-class sweep → deferred)"
 plan: docs/process/senior-plans/P8.md
 amendments: ["ADR-011 (P8 #6)", "ADR-012 (P8 #1)"]
 ---
 
-# P8 plan-vs-impl — cycle 2 (rework B1 + B2 + Y1-alpha) — verdict: needs_architect
+# P8 plan-vs-impl — cycle 3 (final: Y2-1 + Y2-2 fixes) — verdict: clean
 
-The three routed fixes are **all correctly implemented**. Verdict is `needs_architect`
-**not** for a rework defect but for **two adjacent drifts surfaced by the B2 fix** that
-require architect routing: a now-incorrect line in the **Accepted ADR-012 amendment**,
-and an **identical-bug-class residual** the B2 fix left in `produce_snapshot`'s sibling
-`last_state_transition`.
+Both architect-routed α fixes are correctly and precisely implemented; the deferred
+🔵 N-1 sorted-class sweep is correctly left untouched. No drift remains. **P8 is clean.**
 
-## Rework deliverables — all correct
+## Rework deliverables — both correct
 
-### C2-1 (B1, mypy) — fixed
-`tests/api/test_context_schema.py:11` now imports `AppContext` from
-`orchestrator.api.app` (canonical source) instead of `tests.api.conftest` (which
-didn't re-export it). Resolves the deterministic `attr-defined` `mypy --strict` error
-exactly as R0-A specified. One-line, in-scope.
+### C3-1 (Y2-1) — ADR-012 amendment wording corrected ✓
+`ADR-012:534` (§ Amendment 2026-06-18 D1) changes *"folds … in `(timestamp, id)`
+order"* → *"in `(timestamp, rowid)` insertion order (as `get_room_events` returns — the
+last `state_transition` in the list)."* The Accepted ADR ink now matches the corrected
+impl (`st_events[-1]`, C2-2) instead of the UUID-tiebreak ordering C2-2 proved buggy.
+One-line amendment-text fix; no code touched.
 
-### C2-2 (B2, test-isolation) — fixed, with a **sharper root-cause than R0-A's**
-`derive_room_state` changes `max(st_events, key=lambda e: (e.timestamp, e.id))` →
-`st_events[-1]`. **The junior's diagnosis is correct and better than R0-A's
-"shared mutable global" hypothesis:** event ids are `evt_<uuid4hex>` (random, not
-time-sortable), so on a same-millisecond timestamp collision the `(timestamp, id)`
-tiebreak picked a non-deterministic "latest" → wrong derived state. `get_room_events`
-yields `(timestamp ASC, rowid ASC)` insertion order, so `st_events[-1]` is the genuinely
-most-recent transition. The co-run failure was timestamp collisions under fast
-back-to-back tests (passes in isolation = distinct ms), **not** a leaking global. The
-fix is correct; the docstring now pins the insertion-order contract. (Gate-green
-re-verification is cycle-2 R0-A's lane; the fix is diff-level sound and addresses the
-actual collision root cause.)
+### C3-2 (Y2-2) — `last_state_transition` tiebreak fixed + made consistent with `derive_room_state` ✓
+`derived/snapshot.py` D2.5 block: the filter source changes `sorted_events`
+(`sorted(events, key=(timestamp, id))`) → `events` (raw `(timestamp, rowid)` insertion
+order from `get_room_events`), and the selection changes
+`max(st_events, key=lambda e: (e.timestamp, e.id))` → `st_events[-1]`. This is exactly
+right: `last_state_transition` now selects the genuinely most-recently-appended
+transition by the same rowid insertion order `derive_room_state` uses, so a same-ms
+`Snapshot` can no longer carry `room_state` ≠ `last_state_transition.new_state`. The
+intra-snapshot divergence C2-2 had created is eliminated. The set of `STATE_TRANSITION`
+events is identical under either source — only the tiebreak order changed — so no other
+snapshot field is affected.
 
-### C2-3 (Y1-alpha, closed-guards) — faithful to the architect routing
-- `_writer_approve_helper` (`app.py:414`) and `_confirm_on_writer` cancel-path
-  (`app.py:1633`): the `room.state == "closed"` raw-column guards become
-  `derive_room_state(all_events, seed=room.state) == "closed"`. **Correctly reuses the
-  `all_events = get_room_events(rid)` fetch that already sat 3 lines below each guard**
-  (moved above the guard) — so **no new full-room read is introduced**, addressing
-  R0-A's 🔵 N-2 efficiency note.
-- `_list_rooms` (`app.py:1355`) is **untouched** — correct per the architect's β-defer
-  routing (display, low-pri).
-- New `TestClosedGuardsDeriveState` (2 tests) verifies both guards return
-  `room_closed` (422 / `_ConfirmAppendError`) when the room is derived-closed but the
-  column is stale. Good direct coverage of the fixed invariant.
+## Deferred / scope discipline — verified
 
-This realizes the ADR-012 amendment's "column never authority where stale" at the two
-material (correctness) guards, exactly as routed.
-
-## 🟡 Two adjacent drifts the B2 fix surfaced (architect routing)
-
-### Y2-1 — the **Accepted ADR-012 amendment wording is now incorrect**
-ADR-012 § "Amendment 2026-06-18 (P8 #1)" D1 (`ADR-012:534`) still reads: *"folds the
-room's `state_transition` events … **in `(timestamp, id)` order**, returning the latest
-`new_state`."* C2-2 correctly proved `(timestamp, id)` is **non-deterministic and
-incorrect** and switched the impl to insertion / `(timestamp, rowid)` order. So the
-**Accepted ADR ink now states the very ordering the impl rejects as a bug.** The
-amendment wording should be corrected to "in `(timestamp, rowid)` insertion order (as
-`get_room_events` returns), i.e. the last `state_transition` in the list." **Architect
-routing:** this is a correction to Accepted ADR text (RC-3 — senior does not self-edit
-Accepted ink); recommend α (one-line amendment-wording fix).
-
-### Y2-2 — **identical-bug-class residual in `produce_snapshot`'s sibling field**
-C2-2 fixed `derive_room_state` (which feeds `Snapshot.room_state`) but the **same
-`(timestamp, id)` UUID tiebreak survives 15 lines away in the same module** —
-`derived/snapshot.py:188`: `last_st = max(st_events, key=lambda e: (e.timestamp, e.id))`
-for `Snapshot.last_state_transition`. After C2-2, on a same-ms collision the same
-`Snapshot` can carry `room_state` (list-order, **correct**) that **disagrees** with
-`last_state_transition.new_state` (UUID-order, **buggy**) — an intra-snapshot
-inconsistency newly created by fixing only one of the two. The tiebreak is pre-existing
-(not P8-authored), but it is exactly the bug-class B2 just fixed. **Architect routing:**
-α (apply the same `st_events[-1]` fix to `last_state_transition` for consistency — the
-fetch is already sorted there) vs β (defer as pre-existing, accept the divergence).
-My lean: **α** — it's the identical one-line fix and removes a live room_state ≠
-last_state_transition divergence.
+- **🔵 N-1 (sorted-class sweep) correctly left deferred.** Per the architect routing
+  (cycle-2: N-1 deferred), the 5 `sorted(…, key=(e.timestamp, e.id))` sites are
+  **untouched**: `app.py:421/506/650/1643` (app.py has **zero** cycle-3 diff) and
+  `snapshot.py:116` (verified unchanged — still `(timestamp, e.id)`, feeding the 9 other
+  derivation predicates). The junior respected the deferral literally (no opportunistic
+  bundling — the RC-19 discipline held).
+- `sorted_events` remains used by 9 downstream predicates (D2.1–D2.x) → the C3-2 source
+  switch introduced no unused-variable / behavior change elsewhere.
+- **Scope is exactly the two routed fixes**: cycle-3 diff = ADR-012 (1 line) +
+  `snapshot.py` (D2.5 block, 3 lines). Nothing else.
 
 ## Cross-cutting affirmations
 
-- **Spine zero-diff** across all three rework commits (gate / `_execute_local_call` /
-  no new `LLMPurpose`); #5 remains split out; ADR-025 still byte-identical to pre-P8.
-- **P8-2 / P8-6** unchanged this cycle and remain clean (cycle-1 finding).
-- **Scope discipline held:** `_list_rooms` β-deferred (not touched); #3 `eff_auto`,
-  #7/#8 untouched; no new full-room reads added (N-2 respected).
+- **Spine zero-diff** (gate / `_execute_local_call` / no new `LLMPurpose`); #5 split;
+  ADR-025 byte-identical; #3 `eff_auto`, #7, #8 untouched.
+- **P8-2 / P8-6 / P8-1** logic unchanged this cycle and remain clean (cycle-1/2 findings
+  resolved). Both ADR amendments (ADR-011 #6, ADR-012 #1) now consistent with the impl.
+- Gate-green re-verification is cycle-3 R0-A's lane; cycle-3 changes are a 1-line doc
+  edit + a 3-line tiebreak alignment, both diff-level sound (R0-A confirmed GREEN at
+  cycle-2; these strictly reduce a divergence).
 
 ## Verdict
 
-**needs_architect.** The routed rework (B1 + B2 + Y1-alpha) is **correctly and
-faithfully implemented** — B2's root-cause is in fact sharper than R0-A's hypothesis,
-and Y1-alpha reuses the existing fetch (no N-2 regression). The verdict is
-`needs_architect` solely for the **two adjacent drifts the B2 fix exposed**: (Y2-1) the
-Accepted ADR-012 amendment now mis-states the ordering as `(timestamp, id)` and should
-be corrected; (Y2-2) the identical `(timestamp, id)` tiebreak survives in
-`produce_snapshot`'s `last_state_transition`, creating a same-ms `room_state` ≠
-`last_state_transition` divergence. Both are one-line α fixes per my lean; the architect
-routes. Per the senior boundary I surface with evidence and do not fix here.
+**clean.** Y2-1 (amendment wording) and Y2-2 (`last_state_transition` tiebreak) are both
+correctly fixed; the two ADR amendments now match the implementation; the deferred N-1
+sorted-class sweep is consciously left untouched per architect routing. The full
+cycle-1 → cycle-3 arc is resolved (B1/B2 gate-RED → green; Y1 column-authority → derived
+at the material guards; Y2-1/Y2-2 ordering → consistent). No drift remains — P8 is ready
+to proceed to merge.
