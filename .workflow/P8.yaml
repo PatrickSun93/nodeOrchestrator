@@ -1,0 +1,7 @@
+task_id: P8
+state: awaiting_senior_plan
+cycle: 1
+last_transition_at: '2026-06-19T05:40:10.785510Z'
+cycle_started_at: '2026-06-17T17:10:00Z'
+override_history: []
+requires_cross_family_review: false
