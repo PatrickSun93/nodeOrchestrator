@@ -1096,6 +1096,14 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
 
     _init_pipeline_schema(writer_conn)
 
+    # Initialize memory tables after event+auth+pipeline tables (FK order: memory → reentry).
+    # ADR-016 D5 / ADR-021 D5: schema-init obligation; both are idempotent.
+    from orchestrator.memory.store import init_memory_schema as _init_memory_schema
+    from orchestrator.reentry.store import init_reentry_schema as _init_reentry_schema
+
+    _init_memory_schema(writer_conn)
+    _init_reentry_schema(writer_conn)
+
     # Reader: per-thread connections eliminate the concurrent-read SQLite race.
     # WAL mode allows multiple simultaneous readers; each reader_executor worker
     # gets its own connection via the initializer — no shared-connection contention.

@@ -28,7 +28,9 @@ from orchestrator.llm.types import (
     RequestId,
     Usage,
 )
+from orchestrator.memory.store import init_memory_schema
 from orchestrator.pipeline.store import init_pipeline_schema
+from orchestrator.reentry.store import init_reentry_schema
 
 # ---------------------------------------------------------------------------
 # Test auth credentials
@@ -88,6 +90,10 @@ def ctx(db_path: Path) -> Generator[AppContext, None, None]:
 
     # Initialize pipeline tables on writer (co-located in same DB, ADR-041 D8)
     init_pipeline_schema(writer_conn)
+
+    # Initialize memory + reentry tables (ADR-016 D5 / ADR-021 D5; FK order: memory → reentry)
+    init_memory_schema(writer_conn)
+    init_reentry_schema(writer_conn)
 
     # Create a test user for authenticated fixtures
     create_user(writer_conn, TEST_USER_ID, TEST_PASSWORD)
