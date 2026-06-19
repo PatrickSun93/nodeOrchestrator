@@ -24,6 +24,7 @@ from orchestrator.core.event import (
     ToolCallPendingMeta,
 )
 from orchestrator.core.room import Room, RoomType
+from orchestrator.rooms.state_machine import derive_room_state
 
 
 class HypothesisRef(BaseModel):
@@ -183,11 +184,11 @@ def produce_snapshot(
             )
 
     # --- D2.5 last_state_transition ---
-    # STATE_TRANSITION event maximizing (timestamp, id) lex. None if absent.
-    st_events = [e for e in sorted_events if e.type == EventType.STATE_TRANSITION]
+    # STATE_TRANSITION event last in (timestamp, rowid) insertion order (matches derive_room_state).
+    st_events = [e for e in events if e.type == EventType.STATE_TRANSITION]
     last_state_transition: StateTransitionRef | None = None
     if st_events:
-        last_st = max(st_events, key=lambda e: (e.timestamp, e.id))
+        last_st = st_events[-1]
         st_meta = StateTransitionMeta.model_validate(last_st.metadata)
         last_state_transition = StateTransitionRef(
             event_id=last_st.id,
@@ -210,7 +211,7 @@ def produce_snapshot(
     return Snapshot(
         room_id=room.id,
         room_type=room.type,
-        room_state=room.state,
+        room_state=derive_room_state(events, seed=room.state),
         snapshot_at=int(snapshot_at),
         # len(events) reflects fetch-time count per ADR-011 D1 sequential dispatch;
         # revisit at async-reshape per ADR-014 D6 amendment hook.

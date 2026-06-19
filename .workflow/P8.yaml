@@ -1,7 +1,27 @@
 task_id: P8
-state: awaiting_junior_impl
-cycle: 1
-last_transition_at: '2026-06-19T07:11:12.276372Z'
-cycle_started_at: '2026-06-17T17:10:00Z'
-override_history: []
+state: awaiting_PR_merge
+cycle: 3
+last_transition_at: '2026-06-19T10:12:35.869547Z'
+cycle_started_at: '2026-06-19T09:32:26.003356Z'
+override_history:
+- timestamp: '2026-06-19T08:32:54.293255Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 rework (architect routing 2026-06-19): Y1=alpha derive at closed-guards
+    app.py:414+:1633 / beta defer list :1355 + narrow ADR-012 amendment to exclude
+    list. Rework scope: B1 (mypy test_context_schema AppContext import) + B2 (pytest
+    isolation room-state shared-global leak) + Y1-alpha. Executed by arch-partner
+    per explicit architect ''rework B1+B2+alpha'' dispatch.'
+- timestamp: '2026-06-19T09:32:26.003356Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-3 rework (architect routing 2026-06-19): Y2-1=alpha correct ADR-012
+    amendment :534 wording ''(timestamp, id)'' -> ''(timestamp, rowid) insertion order
+    / last list element''; Y2-2=alpha fix snapshot.py:191 max((timestamp,e.id)) ->
+    st_events[-1] (removes same-ms room_state != last_state_transition divergence);
+    N-1=DEFER (5 sorted((timestamp,e.id)) sites app.py:421/506/650/1643 + snapshot.py:116
+    — pre-existing latent, inscribed deferred residual). Executed by arch-partner
+    per explicit architect ''Y2-1:alpha Y2-2:alpha N-1:defer'' dispatch.'
 requires_cross_family_review: false

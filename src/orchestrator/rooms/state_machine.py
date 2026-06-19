@@ -71,7 +71,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from orchestrator.core.event import Event, EventType
+from orchestrator.core.event import Event, EventType, StateTransitionMeta
 from orchestrator.core.room import Room, RoomType
 from orchestrator.rooms.exceptions import RoomStateError
 
@@ -553,3 +553,32 @@ def next_room_state(
                 attempted_transition_rule="unknown_room_type_dispatch",
                 message=f"No state machine registered for RoomType {room.type!r}",
             )
+
+
+def derive_room_state(events: list[Event], seed: str) -> str:
+    """Fold the room's ``state_transition`` event stream to derive current state.
+
+    Pure function — no I/O, no LLM (ADR-012 D7 / Amendment 2026-06-18 D1).
+    Returns the ``new_state`` from the last STATE_TRANSITION event in the list,
+    or ``seed`` if no transition events exist (room has not yet transitioned
+    from its initial state).
+
+    **Ordering contract**: ``events`` MUST be in ``(timestamp, rowid)`` insertion
+    order as returned by ``get_room_events()``.  The last STATE_TRANSITION in
+    that list is the most recently appended.  Do NOT pass an arbitrarily ordered
+    list — using random UUID tiebreak (``evt_<uuid4hex>``) is non-deterministic
+    and incorrect.
+
+    Use ``ROOM_TEMPLATES[room.type].default_initial_state`` as ``seed`` for
+    rooms created after the P8-1 fix; pass ``room.state`` for legacy rows
+    (their stale column value is the best available seed).
+    """
+    st_events = [e for e in events if e.type == EventType.STATE_TRANSITION]
+    if not st_events:
+        return seed
+    # Use list order, not UUID tiebreak: get_room_events() yields events in
+    # (timestamp ASC, rowid ASC) order, so the last element is the most recently
+    # appended state_transition.  Callers MUST pass events as returned by
+    # get_room_events() (insertion order); do not pass an arbitrarily ordered list.
+    meta = StateTransitionMeta.model_validate(st_events[-1].metadata)
+    return meta.new_state

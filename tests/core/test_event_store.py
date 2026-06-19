@@ -460,3 +460,68 @@ class TestAppendInTransaction:
         event = _make_event(RoomId("room_" + "0" * 32))
         with pytest.raises(RoomNotFoundError):
             store.append(event)
+
+
+# ---------------------------------------------------------------------------
+# P8-6: count_room_events + get_room_events_since behavior parity
+# ---------------------------------------------------------------------------
+
+
+class TestBoundedReads:
+    """P8-6: count_room_events + get_room_events_since parity (ADR-011 Amdt 2026-06-18)."""
+
+    def _setup_room(self, store: EventStore) -> tuple[RoomId, list[Event]]:
+        room = Room(id=generate_room_id(), type=RoomType.RESEARCH, created_at=now_ms())
+        store.append_room(room)
+        events = []
+        base = now_ms()
+        for i in range(5):
+            e = _make_event(room.id, timestamp=TimestampMs(base + i), content=f"msg-{i}")
+            store.append(e)
+            events.append(e)
+        return room.id, events
+
+    def test_count_equals_len_get_room_events(self, in_memory_event_store: EventStore) -> None:
+        store = in_memory_event_store
+        rid, _ = self._setup_room(store)
+        assert store.count_room_events(rid) == len(store.get_room_events(rid))
+
+    def test_count_empty_room(self, in_memory_event_store: EventStore) -> None:
+        store = in_memory_event_store
+        rid = generate_room_id()
+        room = Room(id=rid, type=RoomType.RESEARCH, created_at=now_ms())
+        store.append_room(room)
+        assert store.count_room_events(rid) == 0
+
+    def test_get_room_events_since_equals_slice(self, in_memory_event_store: EventStore) -> None:
+        store = in_memory_event_store
+        rid, _ = self._setup_room(store)
+        full = store.get_room_events(rid)
+        for n in range(len(full) + 1):
+            since = store.get_room_events_since(rid, n)
+            assert since == full[n:], f"get_room_events_since({n}) differs from full[{n}:]"
+
+    def test_get_room_events_since_offset_zero_equals_full(
+        self, in_memory_event_store: EventStore
+    ) -> None:
+        store = in_memory_event_store
+        rid, _ = self._setup_room(store)
+        assert store.get_room_events_since(rid, 0) == store.get_room_events(rid)
+
+    def test_get_room_events_since_offset_beyond_end_returns_empty(
+        self, in_memory_event_store: EventStore
+    ) -> None:
+        store = in_memory_event_store
+        rid, _ = self._setup_room(store)
+        total = store.count_room_events(rid)
+        assert store.get_room_events_since(rid, total) == []
+        assert store.get_room_events_since(rid, total + 100) == []
+
+    def test_get_room_events_original_method_unchanged(
+        self, in_memory_event_store: EventStore
+    ) -> None:
+        """get_room_events is byte-identical (additive-only change)."""
+        store = in_memory_event_store
+        rid, appended = self._setup_room(store)
+        result = store.get_room_events(rid)
+        assert [e.id for e in result] == [e.id for e in appended]

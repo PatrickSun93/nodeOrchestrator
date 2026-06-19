@@ -411,10 +411,13 @@ def _writer_approve_helper(
     room = ctx.writer_store.get_room(rid)
     if room is None:
         return _ApproveSkipped("not_found")
-    if room.state == "closed":
-        return _ApproveSkipped("room_closed")
 
     all_events = ctx.writer_store.get_room_events(rid)
+    from orchestrator.rooms.state_machine import derive_room_state as _derive_room_state
+
+    if _derive_room_state(all_events, seed=room.state) == "closed":
+        return _ApproveSkipped("room_closed")
+
     sorted_events = sorted(all_events, key=lambda e: (e.timestamp, e.id))
 
     # Find the TOOL_CALL_PENDING event.
@@ -1096,6 +1099,14 @@ def _build_context(config_dir: Path, db_path: Path) -> AppContext:
 
     _init_pipeline_schema(writer_conn)
 
+    # Initialize memory tables after event+auth+pipeline tables (FK order: memory → reentry).
+    # ADR-016 D5 / ADR-021 D5: schema-init obligation; both are idempotent.
+    from orchestrator.memory.store import init_memory_schema as _init_memory_schema
+    from orchestrator.reentry.store import init_reentry_schema as _init_reentry_schema
+
+    _init_memory_schema(writer_conn)
+    _init_reentry_schema(writer_conn)
+
     # Reader: per-thread connections eliminate the concurrent-read SQLite race.
     # WAL mode allows multiple simultaneous readers; each reader_executor worker
     # gets its own connection via the initializer — no shared-connection contention.
@@ -1335,7 +1346,10 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/rooms", response_model=Room, status_code=201)
     async def _create_room(body: _CreateRoomBody) -> Room:
-        room = _CoreRoom(id=generate_room_id(), type=body.type)
+        from orchestrator.rooms.templates import ROOM_TEMPLATES
+
+        initial_state = ROOM_TEMPLATES[body.type].default_initial_state
+        room = _CoreRoom(id=generate_room_id(), type=body.type, state=initial_state)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(ctx.writer_executor, ctx.writer_store.append_room, room)
         return room
@@ -1461,12 +1475,21 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         def _write_and_turn() -> IntentResponse:
             from orchestrator.agents.dispatch import dispatch_turn
             from orchestrator.rooms.runtime import select_dispatch_agents
+            from orchestrator.rooms.state_machine import derive_room_state
 
             room = ctx.writer_store.get_room(rid)
             if room is None:
                 raise _AppendFailedError(f"room {room_id!r} not found")
 
-            pre_cursor = len(ctx.writer_store.get_room_events(rid))
+            # Derive current state from the event stream (ADR-012 Amdt 2026-06-18 D2).
+            # Rebuilds room with derived state so dispatch + select_dispatch_agents
+            # see the correct current state, not the stale rooms.state column.
+            _room_events_for_derive = ctx.writer_store.get_room_events(rid)
+            _derived_state = derive_room_state(_room_events_for_derive, seed=room.state)
+            if _derived_state != room.state:
+                room = room.model_copy(update={"state": _derived_state})
+
+            pre_cursor = ctx.writer_store.count_room_events(rid)
 
             try:
                 ctx.writer_store.append(user_event)
@@ -1478,7 +1501,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
 
             # Mark cursor just after user_event append (before pass 0 dispatch+execute).
             # The re-dispatch loop checks what the PREVIOUS pass produced starting here.
-            prev_pass_cursor = len(ctx.writer_store.get_room_events(rid))
+            prev_pass_cursor = ctx.writer_store.count_room_events(rid)
 
             # Pass 0: state machine once + dispatch + execute (ADR-033 D2).
             try:
@@ -1497,7 +1520,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 raise _TurnFailedError(str(exc), user_event.id) from exc
 
             # Post-dispatch execution stage for pass 0 (ADR-028 D1).
-            pass0_window = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
+            pass0_window = ctx.writer_store.get_room_events_since(rid, prev_pass_cursor)
             execute_pending_tool_calls(
                 window_events=pass0_window,
                 room_id=rid,
@@ -1521,7 +1544,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                     break
 
                 # Check what the previous pass produced (from prev_pass_cursor to now).
-                prev_pass_events = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
+                prev_pass_events = ctx.writer_store.get_room_events_since(rid, prev_pass_cursor)
 
                 # Termination condition 1: zero new TOOL_CALL events in last pass (D3).
                 new_tool_calls = [e for e in prev_pass_events if e.type == EventType.TOOL_CALL]
@@ -1537,7 +1560,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 current_event_for_pass = result_events[-1]
 
                 # Advance cursor to start of THIS pass (before dispatch+execute).
-                prev_pass_cursor = len(ctx.writer_store.get_room_events(rid))
+                prev_pass_cursor = ctx.writer_store.count_room_events(rid)
 
                 # Re-dispatch: call dispatch_turn directly (state machine NOT re-run — D2).
                 dispatch_turn(
@@ -1553,7 +1576,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 )
 
                 # Execute TOOL_CALL events from this re-dispatch pass.
-                repass_window = ctx.writer_store.get_room_events(rid)[prev_pass_cursor:]
+                repass_window = ctx.writer_store.get_room_events_since(rid, prev_pass_cursor)
                 execute_pending_tool_calls(
                     window_events=repass_window,
                     room_id=rid,
@@ -1564,7 +1587,7 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 )
 
             # Publish all events accumulated since the user_event append (one batch).
-            new_events = ctx.writer_store.get_room_events(rid)[pre_cursor:]
+            new_events = ctx.writer_store.get_room_events_since(rid, pre_cursor)
             loop.call_soon_threadsafe(ctx.bus.publish, rid, new_events)
 
             return IntentResponse(appended_event=user_event, turn=turn_result)
@@ -1610,10 +1633,13 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
                 room = ctx.writer_store.get_room(rid)
                 if room is None:
                     raise _ConfirmAppendError("not_found")
-                if room.state == "closed":
-                    raise _ConfirmAppendError("room_closed")
 
                 all_events = ctx.writer_store.get_room_events(rid)
+                from orchestrator.rooms.state_machine import derive_room_state as _derive_room_state
+
+                if _derive_room_state(all_events, seed=room.state) == "closed":
+                    raise _ConfirmAppendError("room_closed")
+
                 sorted_events = sorted(all_events, key=lambda e: (e.timestamp, e.id))
                 pending_event = next(
                     (

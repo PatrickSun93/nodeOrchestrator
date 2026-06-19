@@ -146,7 +146,7 @@ def _run_analyze_branch(
     # Process any tool calls from the analyze branch.
     if response.tool_calls:
         # Pass 0 tool calls.
-        prev_cursor = len(deps.writer_store.get_room_events(room_id))
+        prev_cursor = deps.writer_store.count_room_events(room_id)
         process_tool_calls(
             response.tool_calls,
             agent_id=PIPELINE_AGENT_ID,
@@ -157,7 +157,7 @@ def _run_analyze_branch(
             thresholds=_PIPELINE_THRESHOLDS,
             countdown_auto_fire=None,  # ADR-041 D5: no headless actuation
         )
-        pass0_window = deps.writer_store.get_room_events(room_id)[prev_cursor:]
+        pass0_window = deps.writer_store.get_room_events_since(room_id, prev_cursor)
         execute_pending_tool_calls(
             window_events=pass0_window,
             room_id=room_id,
@@ -178,7 +178,7 @@ def _run_analyze_branch(
             if time.monotonic() - loop_start >= _PIPELINE_MAX_WALL_CLOCK_S:
                 break
 
-            prev_pass_events = deps.writer_store.get_room_events(room_id)[prev_pass_cursor:]
+            prev_pass_events = deps.writer_store.get_room_events_since(room_id, prev_pass_cursor)
             new_tool_calls = [e for e in prev_pass_events if e.type == EventType.TOOL_CALL]
             if not new_tool_calls:
                 break
@@ -187,7 +187,7 @@ def _run_analyze_branch(
                 break
 
             current_event_for_pass = result_events[-1]
-            prev_pass_cursor = len(deps.writer_store.get_room_events(room_id))
+            prev_pass_cursor = deps.writer_store.count_room_events(room_id)
 
             # Re-dispatch: forced single-agent (no should_agent_speak).
             re_request = LLMRequest(
@@ -225,7 +225,7 @@ def _run_analyze_branch(
                     thresholds=_PIPELINE_THRESHOLDS,
                     countdown_auto_fire=None,  # ADR-041 D5: no headless actuation
                 )
-                repass_window = deps.writer_store.get_room_events(room_id)[prev_pass_cursor:]
+                repass_window = deps.writer_store.get_room_events_since(room_id, prev_pass_cursor)
                 execute_pending_tool_calls(
                     window_events=repass_window,
                     room_id=room_id,

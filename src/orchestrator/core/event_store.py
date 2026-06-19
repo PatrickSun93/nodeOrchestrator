@@ -378,6 +378,36 @@ class EventStore:
         ).fetchall()
         return [self._row_to_event(row) for row in rows]
 
+    def count_room_events(self, room_id: RoomId) -> int:
+        """Return the number of events in a room via SQL COUNT(*).
+
+        O(1) vs full fetch. Use instead of ``len(get_room_events(...))``
+        on the per-pass hot path (ADR-011 Amendment 2026-06-18 D1).
+        """
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM events WHERE room_id = ?",
+            (room_id,),
+        ).fetchone()
+        return int(row[0])
+
+    def get_room_events_since(self, room_id: RoomId, after_count: int) -> list[Event]:
+        """Return events after the first *after_count* events, ordered (timestamp ASC, rowid ASC).
+
+        Equivalent to ``get_room_events(room_id)[after_count:]`` but uses
+        SQL ``OFFSET`` instead of full fetch + slice (ADR-011 Amendment 2026-06-18 D1).
+        Same ordering contract as ``get_room_events``.
+        """
+        rows = self.conn.execute(
+            """SELECT id, parent_id, room_id, type, author,
+                      timestamp, content, metadata
+               FROM events
+               WHERE room_id = ?
+               ORDER BY timestamp ASC, rowid ASC
+               LIMIT -1 OFFSET ?""",
+            (room_id, after_count),
+        ).fetchall()
+        return [self._row_to_event(row) for row in rows]
+
     def get_room(self, room_id: RoomId) -> Room | None:
         """Fetch a room by id. None if not found."""
         row = self.conn.execute(
