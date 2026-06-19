@@ -599,7 +599,7 @@ upgrade path.
 
 ## Amendments
 
-### 2026-06-18 (P8 #6) — Proposed (awaiting architect Accept)
+### 2026-06-18 (P8 #6) — Accepted (architect, 2026-06-19 — R0-A-on-plan clean; inscribed by arch-partner per "Review + accept" dispatch)
 
 **Amendment to Decision 2 (as extended by the P4.1/ADR-033 snapshot-per-pass amendment) — the per-pass re-dispatch reads are bounded; the once-per-turn state-machine snapshot stays full.**
 

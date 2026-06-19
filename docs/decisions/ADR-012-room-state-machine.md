@@ -522,7 +522,7 @@ These state sets + triggers are a **senior design fork** (the "6-state Research 
 
 **Out of scope (this amendment):** populating the four scaffold **room templates'** agent lists (`rooms/templates.py:11-12` — currently `[]`, marked "P2 content work") is *related but separate content* — the state machine (code decision) is the S1 deliverable; the per-room agent rosters are a follow-on content task (noted in P2.7 plan §2-S1, architect to scope). Backward-compat: the `Room.state` field stays a free string (Decision 2 unchanged); cross-RoomType validation stays at transition time via `_guard_valid_state`.
 
-### 2026-06-18 (P8 #1) — Proposed (awaiting architect Accept)
+### 2026-06-18 (P8 #1) — Accepted (architect, 2026-06-19 — R0-A-on-plan clean; inscribed by arch-partner per "Review + accept" dispatch)
 
 **Amendment to Decisions 1 + 2 (reaffirming Rejected-Alternative-F) — room state is *derived* from the `state_transition` event stream; the `rooms.state` column is a derived cache, never authority; and a room is seeded at creation with its template `default_initial_state`.**
 
