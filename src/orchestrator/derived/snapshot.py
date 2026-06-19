@@ -184,11 +184,11 @@ def produce_snapshot(
             )
 
     # --- D2.5 last_state_transition ---
-    # STATE_TRANSITION event maximizing (timestamp, id) lex. None if absent.
-    st_events = [e for e in sorted_events if e.type == EventType.STATE_TRANSITION]
+    # STATE_TRANSITION event last in (timestamp, rowid) insertion order (matches derive_room_state).
+    st_events = [e for e in events if e.type == EventType.STATE_TRANSITION]
     last_state_transition: StateTransitionRef | None = None
     if st_events:
-        last_st = max(st_events, key=lambda e: (e.timestamp, e.id))
+        last_st = st_events[-1]
         st_meta = StateTransitionMeta.model_validate(last_st.metadata)
         last_state_transition = StateTransitionRef(
             event_id=last_st.id,
