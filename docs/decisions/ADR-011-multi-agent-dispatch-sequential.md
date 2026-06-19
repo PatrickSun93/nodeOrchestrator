@@ -596,3 +596,18 @@ upgrade path.
   §2 snapshot-semantics test) is the load-bearing impl commit;
   P1.4-4 schema lands `Agent.priority`; P1.4-6 lands
   `build_agent_context` and `decide_agents_for_room`.
+
+## Amendments
+
+### 2026-06-18 (P8 #6) — Proposed (awaiting architect Accept)
+
+**Amendment to Decision 2 (as extended by the P4.1/ADR-033 snapshot-per-pass amendment) — the per-pass re-dispatch reads are bounded; the once-per-turn state-machine snapshot stays full.**
+
+**Context.** ADR-033 extended D2 from snapshot-per-turn to snapshot-per-pass (≤ N=4 re-dispatch passes; `next_room_state` still evaluated **once per turn**). The implementation reads the room via the unbounded `EventStore.get_room_events` (`event_store.py:358`, no `LIMIT`) and, inside the per-pass loop, re-reads the **entire** room only to (a) `len(...)` it for a cursor marker or (b) slice its tail `[cursor:]` — up to 4× per turn (`api/app.py:1469,1481,1500,1524,1540,1556,1567`; `pipeline/runner.py:149,160,181,190,228`). For long-lived rooms this is read/materialize creep **linear in room age** on the hot path. It is **not** a token leak — the LLM excerpt is already capped at `MAX_SNAPSHOT_EXCERPT_CHARS = 8000` (`agents/selection.py:30,190`, ADR-033) — and **not** a crash/OOM.
+
+**Decision.**
+1. **Bounded reads (additive `EventStore` surface).** Add `count_room_events(room_id) -> int` (SQL `COUNT(*)`) and a windowed read `get_room_events_since(room_id, after_count) -> list[Event]` (`… ORDER BY timestamp ASC, rowid ASC LIMIT -1 OFFSET ?` — the same ordering contract as `get_room_events`). The existing `get_room_events` is **unchanged**.
+2. **Migrate the per-pass hot callers:** pure-count `len(get_room_events(...))` markers → `count_room_events`; pure-tail `get_room_events(...)[cursor:]` windows → `get_room_events_since`.
+3. **Preserve deep-history correctness.** The **once-per-turn** snapshot feeding `next_room_state` (`rooms/runtime.py:104`, `agents/dispatch.py:80`) and the dedup/result/approval/discovery scans (`tools/executor.py:114,308`; `api/app.py:417,482,502,646`) **stay full reads** — state-machine + trigger evaluation legitimately scan history. The bound applies to the **dispatch/excerpt re-read path only**, not state-machine evaluation.
+
+**Invariants preserved:** snapshot-per-turn/per-pass semantics (D2 + ADR-033) unchanged; `next_room_state` once-per-turn deep-history unchanged; `MAX_SNAPSHOT_EXCERPT_CHARS` cap unchanged; **no new `EventType`, no new `LLMPurpose`**; no change to `get_room_events`. Reversibility: **Low** — additive methods; reverting restores the linear re-read creep this closes.
