@@ -1,7 +1,16 @@
 task_id: P8
-state: awaiting_architect_decision
-cycle: 1
-last_transition_at: '2026-06-19T08:22:36.995252Z'
-cycle_started_at: '2026-06-17T17:10:00Z'
-override_history: []
+state: awaiting_junior_impl
+cycle: 2
+last_transition_at: '2026-06-19T08:32:54.293255Z'
+cycle_started_at: '2026-06-19T08:32:54.293255Z'
+override_history:
+- timestamp: '2026-06-19T08:32:54.293255Z'
+  actor: architect
+  from_state: awaiting_architect_decision
+  to_state: awaiting_junior_impl
+  reason: 'Cycle-2 rework (architect routing 2026-06-19): Y1=alpha derive at closed-guards
+    app.py:414+:1633 / beta defer list :1355 + narrow ADR-012 amendment to exclude
+    list. Rework scope: B1 (mypy test_context_schema AppContext import) + B2 (pytest
+    isolation room-state shared-global leak) + Y1-alpha. Executed by arch-partner
+    per explicit architect ''rework B1+B2+alpha'' dispatch.'
 requires_cross_family_review: false
