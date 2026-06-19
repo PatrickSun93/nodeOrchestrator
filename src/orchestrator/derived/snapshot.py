@@ -24,6 +24,7 @@ from orchestrator.core.event import (
     ToolCallPendingMeta,
 )
 from orchestrator.core.room import Room, RoomType
+from orchestrator.rooms.state_machine import derive_room_state
 
 
 class HypothesisRef(BaseModel):
@@ -210,7 +211,7 @@ def produce_snapshot(
     return Snapshot(
         room_id=room.id,
         room_type=room.type,
-        room_state=room.state,
+        room_state=derive_room_state(events, seed=room.state),
         snapshot_at=int(snapshot_at),
         # len(events) reflects fetch-time count per ADR-011 D1 sequential dispatch;
         # revisit at async-reshape per ADR-014 D6 amendment hook.

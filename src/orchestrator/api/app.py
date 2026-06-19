@@ -1343,7 +1343,10 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
 
     @app.post("/rooms", response_model=Room, status_code=201)
     async def _create_room(body: _CreateRoomBody) -> Room:
-        room = _CoreRoom(id=generate_room_id(), type=body.type)
+        from orchestrator.rooms.templates import ROOM_TEMPLATES
+
+        initial_state = ROOM_TEMPLATES[body.type].default_initial_state
+        room = _CoreRoom(id=generate_room_id(), type=body.type, state=initial_state)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(ctx.writer_executor, ctx.writer_store.append_room, room)
         return room
@@ -1469,10 +1472,19 @@ def _register_routes(app: FastAPI, ctx: AppContext) -> None:
         def _write_and_turn() -> IntentResponse:
             from orchestrator.agents.dispatch import dispatch_turn
             from orchestrator.rooms.runtime import select_dispatch_agents
+            from orchestrator.rooms.state_machine import derive_room_state
 
             room = ctx.writer_store.get_room(rid)
             if room is None:
                 raise _AppendFailedError(f"room {room_id!r} not found")
+
+            # Derive current state from the event stream (ADR-012 Amdt 2026-06-18 D2).
+            # Rebuilds room with derived state so dispatch + select_dispatch_agents
+            # see the correct current state, not the stale rooms.state column.
+            _room_events_for_derive = ctx.writer_store.get_room_events(rid)
+            _derived_state = derive_room_state(_room_events_for_derive, seed=room.state)
+            if _derived_state != room.state:
+                room = room.model_copy(update={"state": _derived_state})
 
             pre_cursor = ctx.writer_store.count_room_events(rid)
 

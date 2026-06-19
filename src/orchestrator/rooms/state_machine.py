@@ -71,7 +71,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from orchestrator.core.event import Event, EventType
+from orchestrator.core.event import Event, EventType, StateTransitionMeta
 from orchestrator.core.room import Room, RoomType
 from orchestrator.rooms.exceptions import RoomStateError
 
@@ -553,3 +553,23 @@ def next_room_state(
                 attempted_transition_rule="unknown_room_type_dispatch",
                 message=f"No state machine registered for RoomType {room.type!r}",
             )
+
+
+def derive_room_state(events: list[Event], seed: str) -> str:
+    """Fold the room's ``state_transition`` event stream to derive current state.
+
+    Pure function — no I/O, no LLM (ADR-012 D7 / Amendment 2026-06-18 D1).
+    Folds ``StateTransitionMeta.new_state`` in ``(timestamp, id)`` ascending
+    order; returns the latest ``new_state``, or ``seed`` if no transition
+    events exist (room has not yet transitioned from its initial state).
+
+    Use ``ROOM_TEMPLATES[room.type].default_initial_state`` as ``seed`` for
+    rooms created after the P8-1 fix; pass ``room.state`` for legacy rows
+    (their stale column value is the best available seed).
+    """
+    st_events = [e for e in events if e.type == EventType.STATE_TRANSITION]
+    if not st_events:
+        return seed
+    latest = max(st_events, key=lambda e: (e.timestamp, e.id))
+    meta = StateTransitionMeta.model_validate(latest.metadata)
+    return meta.new_state
