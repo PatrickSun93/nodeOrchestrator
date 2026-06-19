@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from tests.api.conftest import AppContext
+from orchestrator.api.app import AppContext
 
 
 def _table_names(conn: sqlite3.Connection) -> set[str]:
