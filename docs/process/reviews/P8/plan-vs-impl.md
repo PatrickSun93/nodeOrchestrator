@@ -2,139 +2,105 @@
 task_id: P8
 review_type: plan-vs-impl
 reviewer: senior
-cycle: 1
+cycle: 2
 verdict: needs_architect
-impl_commits:
-  - adcddce  # P8-2 memory+reentry schema init
-  - 853ea23  # P8-6 bounded per-pass snapshot read (ADR-011 Amdt)
-  - 352f1f3  # P8-1 derive room state + create-seed (ADR-012 Amdt)
+rework_commits:
+  - 4a31deb  # C2-1 (B1) mypy import fix
+  - ab9ac02  # C2-2 (B2) derive_room_state list-order tiebreak
+  - 4aefc89  # C2-3 (Y1-alpha) two closed-guards derive
+routing: "R0-A blocking (B1 mypy + B2 isolation) + Y1 column-authority → architect routed α(2 closed-guards)/β(defer _list_rooms)"
 plan: docs/process/senior-plans/P8.md
-brief: docs/process/architect-briefs/P8.md
 amendments: ["ADR-011 (P8 #6)", "ADR-012 (P8 #1)"]
 ---
 
-# P8 plan-vs-impl — verdict: needs_architect
+# P8 plan-vs-impl — cycle 2 (rework B1 + B2 + Y1-alpha) — verdict: needs_architect
 
-Verdict formed **independently** from a diff-level read of the three atomics
-against `senior-plans/P8.md` + the two ADR amendments, before any R0-A. Two atomics
-are clean; **P8-1 implements its named acceptance surface faithfully but drifts on a
-plan-implied invariant** (the ADR-012 amendment's "column = derived cache, never
-authority") at three unenumerated column-readers — one routing call for the architect.
+The three routed fixes are **all correctly implemented**. Verdict is `needs_architect`
+**not** for a rework defect but for **two adjacent drifts surfaced by the B2 fix** that
+require architect routing: a now-incorrect line in the **Accepted ADR-012 amendment**,
+and an **identical-bug-class residual** the B2 fix left in `produce_snapshot`'s sibling
+`last_state_transition`.
 
-## Per-atomic audit
+## Rework deliverables — all correct
 
-### P8-2 — `_build_context` + fixture memory/reentry schema (adcddce) — clean
+### C2-1 (B1, mypy) — fixed
+`tests/api/test_context_schema.py:11` now imports `AppContext` from
+`orchestrator.api.app` (canonical source) instead of `tests.api.conftest` (which
+didn't re-export it). Resolves the deterministic `attr-defined` `mypy --strict` error
+exactly as R0-A specified. One-line, in-scope.
 
-- `init_memory_schema(writer_conn)` then `init_reentry_schema(writer_conn)`, placed
-  after `_init_pipeline_schema` (so after `init_schema` → auth → pipeline), on the
-  **writer** conn, via the existing local-import idiom. FK order memory→reentry
-  preserved. Mirrored into `tests/api/conftest.py`'s `ctx` fixture.
-- New `tests/api/test_context_schema.py`: asserts `hypothesis` / `verified_knowledge`
-  / `reentry_marker` present on the built context, and double-init idempotency.
-- **Acceptance met.** No dead-subsystem internals touched (#7/#8 untouched). Spine
-  zero-diff.
+### C2-2 (B2, test-isolation) — fixed, with a **sharper root-cause than R0-A's**
+`derive_room_state` changes `max(st_events, key=lambda e: (e.timestamp, e.id))` →
+`st_events[-1]`. **The junior's diagnosis is correct and better than R0-A's
+"shared mutable global" hypothesis:** event ids are `evt_<uuid4hex>` (random, not
+time-sortable), so on a same-millisecond timestamp collision the `(timestamp, id)`
+tiebreak picked a non-deterministic "latest" → wrong derived state. `get_room_events`
+yields `(timestamp ASC, rowid ASC)` insertion order, so `st_events[-1]` is the genuinely
+most-recent transition. The co-run failure was timestamp collisions under fast
+back-to-back tests (passes in isolation = distinct ms), **not** a leaking global. The
+fix is correct; the docstring now pins the insertion-order contract. (Gate-green
+re-verification is cycle-2 R0-A's lane; the fix is diff-level sound and addresses the
+actual collision root cause.)
 
-### P8-6 — bounded per-pass snapshot read [ADR-011 Amdt] (853ea23) — clean
+### C2-3 (Y1-alpha, closed-guards) — faithful to the architect routing
+- `_writer_approve_helper` (`app.py:414`) and `_confirm_on_writer` cancel-path
+  (`app.py:1633`): the `room.state == "closed"` raw-column guards become
+  `derive_room_state(all_events, seed=room.state) == "closed"`. **Correctly reuses the
+  `all_events = get_room_events(rid)` fetch that already sat 3 lines below each guard**
+  (moved above the guard) — so **no new full-room read is introduced**, addressing
+  R0-A's 🔵 N-2 efficiency note.
+- `_list_rooms` (`app.py:1355`) is **untouched** — correct per the architect's β-defer
+  routing (display, low-pri).
+- New `TestClosedGuardsDeriveState` (2 tests) verifies both guards return
+  `room_closed` (422 / `_ConfirmAppendError`) when the room is derived-closed but the
+  column is stale. Good direct coverage of the fixed invariant.
 
-- `EventStore` gains `count_room_events` (`COUNT(*)`) + `get_room_events_since`
-  (`… ORDER BY timestamp ASC, rowid ASC LIMIT -1 OFFSET ?`); existing
-  `get_room_events` byte-identical. Same ordering contract → exact parity with
-  `len(...)` / `[cursor:]`.
-- Migrations are exactly the per-pass re-dispatch hot callers: pure-count `len(...)` →
-  `count_room_events` (`app.py:1474,1486,1545`; `runner.py:146,187`); pure-tail
-  `[cursor:]` → `get_room_events_since` (`app.py:1505,1529,1561,1572`;
-  `runner.py:157,178,225`). Line numbers shifted +~5 from the plan's by the P8-2
-  insertion — same logical sites.
-- **Full-read callers untouched** (verified by the changed-file set =
-  event_store/app/runner only): the once-per-turn `next_room_state` snapshots
-  (`rooms/runtime.py:104`, `agents/dispatch.py:80`), the executor dedup/result scans
-  (`tools/executor.py:114,308`), and the approval/discovery scans
-  (`app.py:417,482,502,646`) — deep-history correctness preserved per the amendment.
-- `MAX_SNAPSHOT_EXCERPT_CHARS` untouched; spine zero-diff; parity tests added.
-- **Acceptance met.** (Nit, non-blocking: the commit-message prose says
-  "api/app.py (5 sites)" while the table + code show 7 = 3 count + 4 since — message
-  prose only, code is correct.)
+This realizes the ADR-012 amendment's "column never authority where stale" at the two
+material (correctness) guards, exactly as routed.
 
-### P8-1 — derive room state + create-seed [ADR-012 Amdt] (352f1f3) — named sites met; 🟡 invariant drift
+## 🟡 Two adjacent drifts the B2 fix surfaced (architect routing)
 
-**Faithful at the plan's named sites:**
-- `derive_room_state(events, seed)` (`rooms/state_machine.py`) — pure, folds
-  `StateTransitionMeta.new_state` by `(timestamp, id)` asc, returns latest or `seed`;
-  matches the amendment + `snapshot.py:185–196`'s existing last-transition logic.
-- `_create_room` seeds `ROOM_TEMPLATES[type].default_initial_state` (`"setup"`), not
-  the model default `"open"` (`app.py:1343`). ✓
-- `_write_and_turn` derives at turn entry and `model_copy`s the room with the derived
-  state, which flows into `select_dispatch_agents` (so `rooms/runtime.py:59,63` sees
-  derived state without touching runtime.py). ✓
-- `produce_snapshot` emits `derive_room_state(events, seed=room.state)`
-  (`snapshot.py:211`). ✓
-- Test (`tests/api/test_room_state_derive.py`) drives the **real cross-turn HTTP path**
-  via `TestClient` (POST /rooms seeds setup for all 5 types; snapshot derives
-  `exploration` after a transition; cross-turn derive picks up the transitioned
-  state) — **not** the in-memory `Room(state=…)` rebuild that masked the bug. ✓
+### Y2-1 — the **Accepted ADR-012 amendment wording is now incorrect**
+ADR-012 § "Amendment 2026-06-18 (P8 #1)" D1 (`ADR-012:534`) still reads: *"folds the
+room's `state_transition` events … **in `(timestamp, id)` order**, returning the latest
+`new_state`."* C2-2 correctly proved `(timestamp, id)` is **non-deterministic and
+incorrect** and switched the impl to insertion / `(timestamp, rowid)` order. So the
+**Accepted ADR ink now states the very ordering the impl rejects as a bug.** The
+amendment wording should be corrected to "in `(timestamp, rowid)` insertion order (as
+`get_room_events` returns), i.e. the last `state_transition` in the list." **Architect
+routing:** this is a correction to Accepted ADR text (RC-3 — senior does not self-edit
+Accepted ink); recommend α (one-line amendment-wording fix).
 
-**🟡 Drift on the plan-implied invariant — column read as authority at 3 unenumerated sites.**
-The ADR-012 amendment inscribes *"the `rooms.state` column … is **never read as
-authority** where it could be stale."* The impl makes the column **write-once** — it
-is seeded at create and **never updated** (the in-memory `model_copy` is not
-persisted; the test asserts this is deliberate: *"the rooms.state column still reads
-'setup' (never updated — deliberate)"*). Derivation is applied at the dispatch +
-snapshot sites the plan named, but **three other readers still read the raw, now-
-permanently-stale column as authority**:
-  1. `_writer_approve_helper` `app.py:414` — `room = get_room(rid); if room.state ==
-     "closed": return _ApproveSkipped("room_closed")`. A room that is **derived-closed**
-     (a `state_transition`→`closed` event) has column ≠ `"closed"`, so the guard does
-     **not** fire → a tool approval proceeds on a logically-closed room.
-  2. confirm cancel path `app.py:1633` — same `get_room` + `room.state == "closed"`
-     guard, same stale read.
-  3. `_list_rooms` `app.py:1355` → `list_rooms()` returns the column state → the GUI
-     room list shows the **seed** state forever, never the derived current state.
+### Y2-2 — **identical-bug-class residual in `produce_snapshot`'s sibling field**
+C2-2 fixed `derive_room_state` (which feeds `Snapshot.room_state`) but the **same
+`(timestamp, id)` UUID tiebreak survives 15 lines away in the same module** —
+`derived/snapshot.py:188`: `last_st = max(st_events, key=lambda e: (e.timestamp, e.id))`
+for `Snapshot.last_state_transition`. After C2-2, on a same-ms collision the same
+`Snapshot` can carry `room_state` (list-order, **correct**) that **disagrees** with
+`last_state_transition.new_state` (UUID-order, **buggy**) — an intra-snapshot
+inconsistency newly created by fixing only one of the two. The tiebreak is pre-existing
+(not P8-authored), but it is exactly the bug-class B2 just fixed. **Architect routing:**
+α (apply the same `st_events[-1]` fix to `last_state_transition` for consistency — the
+fetch is already sorted there) vs β (defer as pre-existing, accept the divergence).
+My lean: **α** — it's the identical one-line fix and removes a live room_state ≠
+last_state_transition divergence.
 
-This staleness is **pre-existing** (the column was never updated before P8 either,
-so P8-1 does not *regress* these sites), but P8-1 (a) **cements** the column as
-write-once and (b) **inscribes** the "column = derived cache, never authority"
-contract — so these three readers now *contradict the freshly-laid ink*. The plan's
-acceptance criterion #3 scoped the invariant to "(dispatch + snapshot sites)", which
-the impl meets; the **broader amendment invariant** is what these sites violate.
+## Cross-cutting affirmations
 
-**This is an architect routing call (I do not decide it):**
-- **α (expand):** derive at the two `"closed"` guards (correctness) and/or
-  `_list_rooms` (display) in this cycle or an immediate follow-on — the guards are
-  the material ones.
-- **β/defer:** accept the pre-existing staleness as a known gap and narrow the
-  ADR-012 amendment's wording to "dispatch + snapshot sites" (matching the plan's
-  scoping), tracking the guards as a separate slice.
-
-### 🟢 P8-1 seed-source (non-blocking observation)
-
-Both call sites pass `seed=room.state` (the column), not the template
-`default_initial_state` the plan and the reducer's own docstring describe as the
-post-fix convention. **Benign for new rooms** — the column is now correctly seeded
-`"setup"` and never mutated, so `seed=room.state` ≡ the template default whenever
-there are zero transition events (the only case the seed is consulted). It differs
-only for **legacy column-wrong rooms** (column `"open"`, no transitions), which the
-brief scopes out ("none exist in prod"). Seeding from the template default would
-self-heal such rooms; the current form would not. No action required unless legacy
-rooms surface.
-
-## Cross-cutting
-
-- **Spine zero-diff** across all three (gate / `_execute_local_call` / no new
-  `LLMPurpose`) — #5, the only spine-adjacent change, was split out (architect
-  2026-06-18), and nothing here touches the spine.
-- **Out-of-scope items fenced:** #7/#8 (runtime-dead) untouched; #3 `eff_auto`
-  no-floor untouched (RC-19 class); ADR-025 restored byte-identical (the withdrawn #5
-  amendment).
-- **Amendments consumed correctly:** ADR-011 Amdt (bounded read) ↔ P8-6; ADR-012 Amdt
-  (derive-from-events) ↔ P8-1, with the invariant-scope gap noted above.
+- **Spine zero-diff** across all three rework commits (gate / `_execute_local_call` /
+  no new `LLMPurpose`); #5 remains split out; ADR-025 still byte-identical to pre-P8.
+- **P8-2 / P8-6** unchanged this cycle and remain clean (cycle-1 finding).
+- **Scope discipline held:** `_list_rooms` β-deferred (not touched); #3 `eff_auto`,
+  #7/#8 untouched; no new full-room reads added (N-2 respected).
 
 ## Verdict
 
-**needs_architect.** P8-2 + P8-6 are clean. P8-1 meets its named acceptance surface
-(create-seed + derive at dispatch/snapshot, cross-turn HTTP test) but the ADR-012
-amendment's "column never authority where stale" invariant is violated at three
-unenumerated column-readers — two `"closed"` gate guards (correctness) and the rooms
-list (display) — now made permanent by the deliberate write-once column. **The
-architect routes α (extend derivation to the guards / list) vs β (narrow the
-amendment wording + defer).** Per the senior plan-vs-impl boundary I surface the drift
-with evidence and do not fix it here. The 🟢 seed-source note is advisory only.
+**needs_architect.** The routed rework (B1 + B2 + Y1-alpha) is **correctly and
+faithfully implemented** — B2's root-cause is in fact sharper than R0-A's hypothesis,
+and Y1-alpha reuses the existing fetch (no N-2 regression). The verdict is
+`needs_architect` solely for the **two adjacent drifts the B2 fix exposed**: (Y2-1) the
+Accepted ADR-012 amendment now mis-states the ordering as `(timestamp, id)` and should
+be corrected; (Y2-2) the identical `(timestamp, id)` tiebreak survives in
+`produce_snapshot`'s `last_state_transition`, creating a same-ms `room_state` ≠
+`last_state_transition` divergence. Both are one-line α fixes per my lean; the architect
+routes. Per the senior boundary I surface with evidence and do not fix here.
