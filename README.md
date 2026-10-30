@@ -2,6 +2,8 @@
 
 # Orchestrator
 
+[![CI](https://github.com/PatrickSun93/nodeOrchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/PatrickSun93/nodeOrchestrator/actions/workflows/ci.yml)
+
 **AI research and decision assistant — honest interlocutor, not obedient executor.**
 
 Orchestrator is a multi-agent conversation platform for independent developers who want to think things through rather than just get answers. The agents push back, ask questions, and surface disagreement — they won't make decisions for you, but they'll sharpen yours.
@@ -19,7 +21,7 @@ The assistant rooms are backed by a multi-agent orchestrator, an append-only eve
 - **Three-layer LLM config** — providers / models / per-agent config are independent; switch from DeepSeek to a local Ollama without touching agent definitions
 - **MCP support** — connect external tools (filesystem, database, remote services) via the Model Context Protocol
 - **Multi-user auth** — session-cookie auth, fail-closed (no unauthenticated access), per-thread WAL reader pool
-- **GUI** — React frontend with chat view, plugin management (E2), and config overview (E3)
+- **GUI** — React + TypeScript (Vite) frontend with chat view, plugin management (E2), and config overview (E3); HTTP client types are generated from the committed OpenAPI contract
 
 ---
 
@@ -117,8 +119,9 @@ Open `http://localhost:5173`, log in, create a room, start thinking.
 ## Design & dev docs
 
 - [`handoff.md`](handoff.md) — architecture, design principles, ADR index
-- [`docs/architecture/`](docs/architecture/) — ADR documents (ADR-001..040)
-- [`docs/decisions/`](docs/decisions/) — full ADR text
+- [`docs/architecture/`](docs/architecture/) — architecture notes (event model, LLM layer, sources vs connectors, test coverage standard)
+- [`docs/decisions/`](docs/decisions/) — ADRs (ADR-001..043)
+- [`docs/contributing.md`](docs/contributing.md) — PR template and the local gates (the same commands CI runs)
 
 ---
 

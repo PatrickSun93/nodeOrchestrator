@@ -2,6 +2,8 @@
 
 # Orchestrator
 
+[![CI](https://github.com/PatrickSun93/nodeOrchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/PatrickSun93/nodeOrchestrator/actions/workflows/ci.yml)
+
 **AI 研究与决策助手 — 诚实的对话者，而非听话的执行者。**
 
 Orchestrator 是一个多智能体（multi-agent）对话平台，专为希望深入思考而非仅求答案的独立开发者而设计。系统中的 agent 会提出反驳、追问问题、揭示分歧 — 它们不替你做决定，但会帮你磨砺自己的判断。
@@ -19,7 +21,7 @@ Orchestrator 是一个多智能体（multi-agent）对话平台，专为希望�
 - **三层 LLM 配置** — provider / 模型 / 单 agent 配置相互独立；从 DeepSeek 切换到本地 Ollama 无需修改 agent 定义
 - **MCP 支持** — 通过模型上下文协议（Model Context Protocol）接入外部工具（文件系统、数据库、远程服务等）
 - **多用户认证** — 基于 session cookie 的认证，默认关闭（fail-closed，无未认证访问），每线程独立的 WAL reader pool
-- **GUI** — React 前端，含聊天视图、插件管理（E2）及配置总览（E3）
+- **GUI** — React + TypeScript（Vite）前端，含聊天视图、插件管理（E2）及配置总览（E3）；HTTP 客户端类型由仓库内的 OpenAPI 契约生成
 
 ---
 
@@ -117,8 +119,9 @@ cd ui && npm run dev
 ## 设计与开发文档
 
 - [`handoff.md`](handoff.md) — 架构、设计原则、ADR 索引
-- [`docs/architecture/`](docs/architecture/) — ADR 文档（ADR-001..040）
-- [`docs/decisions/`](docs/decisions/) — ADR 完整正文
+- [`docs/architecture/`](docs/architecture/) — 架构笔记（事件模型、LLM 层、sources 与 connectors、测试覆盖标准）
+- [`docs/decisions/`](docs/decisions/) — ADR（ADR-001..043）
+- [`docs/contributing.md`](docs/contributing.md) — PR 模板与本地 gate（CI 跑的就是这些命令）
 
 ---
 

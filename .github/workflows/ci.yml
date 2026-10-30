@@ -1,0 +1,67 @@
+# CI — runs the same gates documented in docs/contributing.md.
+#
+# No service containers on purpose: the product persists to sqlite only (no
+# Redis / Postgres), LLM calls in tests go through MockProvider or recordings
+# (tests/llm/), and the sandbox / MCP tests mock the docker CLI
+# (SandboxRuntime(cli="/usr/bin/docker") + patched subprocess). Tests that need
+# a local config/*.yaml (gitignored; only *.example is tracked) skip themselves
+# with pytest.skip, so they are reported as skipped here, not failed.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag past v7; pin the full version
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      # --locked: fail if uv.lock is out of date with pyproject.toml.
+      # --all-extras: api/ and mcp/ need the [api] / [mcp] extras, otherwise
+      # mypy and pytest fail with import-not-found (see docs/contributing.md).
+      - run: uv sync --all-extras --locked
+
+      - run: uv run --no-sync ruff check
+      - run: uv run --no-sync ruff format --check
+      - run: uv run --no-sync mypy
+      - run: uv run --no-sync pytest --cov=orchestrator --cov-report=term
+
+  ui:
+    name: ui
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node version comes from ui/.nvmrc (24), matching package.json engines.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ui/.nvmrc
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm ci
+
+      # gate = lint + format:check + typecheck + vitest + codegen:check.
+      # codegen:check regenerates src/api/schema.ts from the committed
+      # src/orchestrator/api/openapi.json and fails on `git diff --exit-code`.
+      # openapi.json is maintained in-repo (no build step produces it), so a
+      # plain checkout is all this job needs — no artifact from the python job.
+      - run: npm run gate

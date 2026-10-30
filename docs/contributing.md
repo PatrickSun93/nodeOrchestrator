@@ -203,7 +203,9 @@ The `api/` package (from P3.2) depends on the **`[api]` optional extra**
 (`fastapi`, `uvicorn`). Install it before running the gates, or `mypy`/`pytest`
 break on `api/` with import-not-found: set up with `uv sync --all-extras` (or run
 the gate per-command as `uv run --extra api mypy --strict` / `uv run --extra api
-pytest`). There is no CI workflow — the gates are these local commands.
+pytest`). CI (`.github/workflows/ci.yml`) runs the same gates on every push to `main`
+and every pull request: a `python` job (`ruff check`, `ruff format --check`, `mypy`,
+`pytest --cov`) and a `ui` job (`npm run gate`).
 `plugins/` is not in the canonical mypy scope (bundles are loaded by path at runtime
 and may contain same-named `tools_impl.py` files; they are excluded from the global
 `[tool.mypy] files` setting in `pyproject.toml`).
